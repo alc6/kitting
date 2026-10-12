@@ -98,6 +98,27 @@ Short log of choices made where the brief left room. Newest at the bottom of eac
   columns against the Drizzle schema, and replaces everything in one D1 batch (deferred foreign keys, multi-row
   inserts sized for D1's 100-parameter limit).
 
+## Builds
+
+- **D60. Pick-list choices and serials are plain form fields** (`choice:<path>`, `serial:<partId>:<n>`),
+  like the import preview. Changing a "use stock / build now" choice re-renders the pick list (htmx GET with
+  the form's values, or a Recalculate button without JavaScript). Completion never trusts client quantities:
+  it re-explodes the build with current stock and the submitted choices, then validates.
+- **D61. Completion rules:** every unit of a serial-tracked requirement (buy part, or make part taken from
+  stock) needs a non-empty serial, no duplicates; a serial-tracked product needs its own serial and is built
+  one unit at a time; a sub-assembly that must be built but has no active BoM blocks completion. The
+  "picked" checkboxes are a shop-floor aid, not validated. Consuming below zero is allowed with a warning.
+- **D62. One batch, fixed order:** consume moves → output move → as-built lines → status update
+  (`WHERE status IN ('planned','in_progress')`). A second completion fails on the unique `build_output`
+  index and the whole batch rolls back.
+- **D63. The as-built record** has one line per serial for tracked parts (qty 1 each) and one aggregated line
+  otherwise. Each line freezes the unit cost at completion; the output move freezes the build's unit cost
+  including fees. Sub-assemblies "built now" inside a build are not recorded as lines: their components are.
+- **D64. Serial traceability:** a component serial that was itself produced by a build links to that build
+  (sub-assembly genealogy); the builds search also matches component serials ("where did LED X go?").
+- **D65. Cancelling a build frees its serial** (the unique index ignores cancelled builds — migration 0001).
+- **D66. Build numbers** are sequential `B-0001`, computed as max + 1 with one retry on a unique conflict.
+
 ## CSV import / export
 
 - **D30. Dialects.** Delimiter auto-detected (`,` `;` tab), decimals with `.` or `,`, UTF-8 with

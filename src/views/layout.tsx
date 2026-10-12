@@ -22,6 +22,7 @@ type NavKey = "dashboard" | "parts" | "suppliers" | "boms" | "builds" | "purchas
 export const NAV: { key: NavKey; href: string }[] = [
 	{ key: "dashboard", href: "/" },
 	{ key: "parts", href: "/parts" },
+	{ key: "builds", href: "/builds" },
 	{ key: "boms", href: "/boms" },
 	{ key: "stock", href: "/stock" },
 	{ key: "suppliers", href: "/suppliers" },

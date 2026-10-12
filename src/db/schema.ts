@@ -212,7 +212,10 @@ export const builds = sqliteTable(
 	},
 	(t) => [
 		uniqueIndex("builds_number_unique").on(t.number),
-		uniqueIndex("builds_part_serial_unique").on(t.partId, t.serial).where(sql`serial IS NOT NULL`),
+		// A serial identifies one unit of a product; cancelled builds free their serial.
+		uniqueIndex("builds_part_serial_unique")
+			.on(t.partId, t.serial)
+			.where(sql`serial IS NOT NULL AND status != 'cancelled'`),
 		index("builds_status_idx").on(t.status),
 		check("builds_status_check", inList("status", BUILD_STATUSES)),
 		check("builds_qty_check", sql`${t.qtyMilli} > 0`),

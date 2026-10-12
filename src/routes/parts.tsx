@@ -3,6 +3,7 @@ import type { Context } from "hono";
 import { Hono } from "hono";
 import { PART_KINDS, type Part, parts, stockMoves, suppliers } from "../db/schema";
 import { partBomSummary, type WhereUsedRow, whereUsed } from "../domain/boms";
+import { listBuilds } from "../domain/builds";
 import {
 	findRefClash,
 	getPart,
@@ -43,6 +44,7 @@ import {
 	TextArea,
 	TextField,
 } from "../views/ui";
+import { BuildsTable } from "./builds";
 import { MoveReference } from "./stock";
 
 export const partRoutes = new Hono<AppEnv>();
@@ -286,6 +288,7 @@ function PartDetail(props: {
 	moves: (typeof stockMoves.$inferSelect)[];
 	bomSummary: Awaited<ReturnType<typeof partBomSummary>>;
 	usedIn: WhereUsedRow[];
+	builds: Awaited<ReturnType<typeof listBuilds>>;
 	ok?: string | undefined;
 	err?: string | undefined;
 }) {
@@ -397,6 +400,15 @@ function PartDetail(props: {
 				</section>
 			</div>
 			{p.kind === "make" || p.kind === "kit" ? <PartBoms part={p} summary={props.bomSummary} /> : null}
+			{p.kind === "make" ? (
+				<section class="card">
+					<div class="section-header">
+						<h2>{t.builds.recent}</h2>
+						<LinkButton href={`/builds/new?part=${p.id}`} label={t.builds.new} variant="secondary" />
+					</div>
+					<BuildsTable rows={props.builds} />
+				</section>
+			) : null}
 			<WhereUsed rows={props.usedIn} />
 			{stocked ? (
 				<section class="card">
@@ -541,7 +553,7 @@ partRoutes.get("/:id", async (c) => {
 	const part = id ? await getPart(c.var.db, id) : undefined;
 	if (!part) return notFound(c);
 	const db = c.var.db;
-	const [supplierRows, onHand, moves, bomSummary, usedIn] = await Promise.all([
+	const [supplierRows, onHand, moves, bomSummary, usedIn, recent] = await Promise.all([
 		part.supplierId
 			? db
 					.select({ id: suppliers.id, name: suppliers.name, email: suppliers.email, phone: suppliers.phone })
@@ -557,6 +569,7 @@ partRoutes.get("/:id", async (c) => {
 			.limit(100),
 		partBomSummary(db, part.id),
 		whereUsed(db, part.id),
+		part.kind === "make" ? listBuilds(db, { status: "all", partId: part.id, limit: 10 }) : Promise.resolve([]),
 	]);
 	return page(
 		c,
@@ -568,6 +581,7 @@ partRoutes.get("/:id", async (c) => {
 			moves={moves}
 			bomSummary={bomSummary}
 			usedIn={usedIn}
+			builds={recent}
 			ok={c.req.query("ok")}
 			err={c.req.query("err")}
 		/>,

@@ -851,3 +851,110 @@ input.qty {
 		display: none;
 	}
 }
+
+/* Builds */
+.inline-row {
+	display: flex;
+	gap: 0.5rem;
+	align-items: center;
+}
+
+.inline-row select {
+	flex: 1;
+}
+
+.choices {
+	display: inline-flex;
+	flex-wrap: wrap;
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	overflow: hidden;
+}
+
+.choice {
+	display: inline-flex;
+	align-items: center;
+	cursor: pointer;
+}
+
+.choice input {
+	position: absolute;
+	opacity: 0;
+	width: 1px;
+	height: 1px;
+}
+
+.choice span {
+	display: inline-flex;
+	align-items: center;
+	min-height: var(--tap);
+	padding: 0 0.9rem;
+	border-right: 1px solid var(--border);
+	white-space: nowrap;
+}
+
+.choice:last-child span {
+	border-right: none;
+}
+
+.choice input:checked + span {
+	background: var(--primary);
+	color: var(--primary-text);
+	font-weight: 700;
+}
+
+.choice input:focus-visible + span {
+	outline: 3px solid color-mix(in srgb, var(--primary) 45%, transparent);
+}
+
+.depth-1 {
+	padding-left: 1.75rem !important;
+}
+
+.depth-2 {
+	padding-left: 2.75rem !important;
+}
+
+.depth-3,
+.depth-4 {
+	padding-left: 3.75rem !important;
+}
+
+.serials {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.4rem;
+}
+
+.serial {
+	display: inline-flex;
+	flex-direction: column;
+}
+
+.serial input {
+	width: 11rem;
+}
+
+.serial.has-error input {
+	border-color: var(--danger);
+}
+
+.serial .error {
+	color: var(--danger);
+	font-weight: 600;
+}
+
+.picklist input[type="checkbox"] {
+	width: 2rem;
+	height: 2rem;
+}
+
+.button.big {
+	min-height: 56px;
+	padding: 0 2rem;
+	font-size: 1.1rem;
+}
+
+details.card > summary {
+	font-weight: 700;
+}

@@ -38,15 +38,15 @@ After M2 the catalogue and BoMs can be loaded; after M4 real builds can run.
 - [x] JSON export of the whole database (backup) and restore (admin, preview first)
 - [x] Moves ledger with filters and CSV export
 
-## M4: Builds
+## M4: Builds ✅
 
-- [ ] New build: part + variant (active BoM), qty, serial (required if tracked, unique), planned date
-- [ ] Pick list: exploded components, make lines "use stock" / "build now", checkboxes, serial inputs
-- [ ] Atomic completion (one D1 batch): consume moves, output move with serial, build_lines
-- [ ] Refuse completion when a serial-tracked component has no serial
-- [ ] Build detail with the as-built record; serial traceability (component serial → build)
-- [ ] Sub-assembly pre-builds (make parts without the final product)
-- [ ] Builds list (planned / in progress / done / cancelled)
+- [x] New build: part + variant (active BoM), qty, serial (required if tracked, unique), planned date
+- [x] Pick list: exploded components, make lines "use stock" / "build now", checkboxes, serial inputs
+- [x] Atomic completion (one D1 batch): consume moves, output move with serial, build_lines
+- [x] Refuse completion when a serial-tracked component has no serial
+- [x] Build detail with the as-built record; serial traceability (component serial → build)
+- [x] Sub-assembly pre-builds (make parts without the final product)
+- [x] Builds list (planned / in progress / done / cancelled)
 
 ## M5: Purchasing
 

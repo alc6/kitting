@@ -6,9 +6,8 @@ stock, purchasing and builds with per-serial traceability.
 It runs entirely on Cloudflare (Workers + D1 + Access): no server to manage, and the free
 tiers cover a small workshop. Deployment is one command.
 
-> **Status:** milestones M1 (foundation), M2 (BoMs) and M3 (stock) are done: load your
-> catalogue, BoMs and stock, adjust and count stock, value it. Builds and purchasing come
-> next. See [docs/plan.md](docs/plan.md).
+> **Status:** milestones M1–M4 are done: catalogue, BoMs, stock and builds with per-serial
+> traceability. Purchasing (shortages, POs, receiving) is next. See [docs/plan.md](docs/plan.md).
 
 ## What it does
 
@@ -24,6 +23,11 @@ tiers cover a small workshop. Deployment is one command.
   Adjustments with a reason, inventory count sheet (enter counted quantities, the
   differences are posted), moves ledger with filters, valuation (on-hand × cost, with an
   "as of" date) and CSV exports for year-end.
+- **Builds** of finished products or sub-assemblies: pick the variant, plan a date, enter the
+  serial; the pick list explodes the BoM, takes sub-assemblies from stock when available (or
+  "build now"), asks one serial per serial-tracked unit, and completion posts everything in one
+  transaction. The as-built record answers "what exactly is inside serial #0042", and search
+  answers "which build used LED serial X".
 - **CSV import** for suppliers, parts, BoMs and initial stock, with a dry-run preview and
   row-level errors. Nothing is written until you confirm, and the commit is atomic.
   Works with Excel files from French or English locales (`;` or `,`, decimal comma or point).

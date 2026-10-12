@@ -7,6 +7,7 @@ import { dict, isLocale, type Locale } from "./i18n";
 import { accessAuth } from "./middleware/auth";
 import { originCheck, securityHeaders } from "./middleware/security";
 import { bomRoutes } from "./routes/boms";
+import { buildRoutes } from "./routes/builds";
 import { dashboardRoutes } from "./routes/dashboard";
 import { importRoutes } from "./routes/import";
 import { partRoutes } from "./routes/parts";
@@ -55,6 +56,7 @@ export function createApp() {
 	app.route("/", dashboardRoutes);
 	app.route("/suppliers", supplierRoutes);
 	app.route("/parts", partRoutes);
+	app.route("/builds", buildRoutes);
 	app.route("/boms", bomRoutes);
 	app.route("/stock", stockRoutes);
 	app.route("/import", importRoutes);
