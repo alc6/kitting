@@ -82,6 +82,22 @@ Short log of choices made where the brief left room. Newest at the bottom of eac
 - **D28. The tree view shows the full structure** (no stock consumption); the exploded list can optionally
   take sub-assemblies from stock, as builds will.
 
+## Stock
+
+- **D50. One count engine** (`planCounts` in `src/domain/stock.ts`) for `stock.csv` and the count screen:
+  the counted quantity becomes a `count` move for the difference with on-hand at commit time.
+- **D51. Adjustments need a reason** (stored in the move's note) and refuse `kit`/`fee` parts. A serial on a
+  serial-tracked part implies a quantity of ±1. Negative on-hand is allowed (the stock list flags it): the
+  ledger records reality rather than blocking the shop floor.
+- **D52. Every move snapshots `unit_cost_cents`** (standard cost for adjustments and counts, PO price for
+  receipts), for later audits. Valuation itself uses current costs: buy parts at standard cost, make parts at
+  their BoM roll-up (or standard cost without BoM), with an "as of" date that sums moves up to the end of that
+  day (UTC). Missing costs are flagged and make the total understated.
+- **D53. JSON backup = every table, in foreign-key order, with ids**, plus the last applied D1 migration.
+  Restore is admin-only, shows the row counts first, refuses backups from another schema version, whitelists
+  columns against the Drizzle schema, and replaces everything in one D1 batch (deferred foreign keys, multi-row
+  inserts sized for D1's 100-parameter limit).
+
 ## CSV import / export
 
 - **D30. Dialects.** Delimiter auto-detected (`,` `;` tab), decimals with `.` or `,`, UTF-8 with

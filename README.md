@@ -6,9 +6,9 @@ stock, purchasing and builds with per-serial traceability.
 It runs entirely on Cloudflare (Workers + D1 + Access): no server to manage, and the free
 tiers cover a small workshop. Deployment is one command.
 
-> **Status:** milestones M1 (foundation) and M2 (BoMs) are done: you can load your
-> catalogue, BoMs and initial stock. Stock operations, builds and purchasing come next,
-> one milestone at a time. See [docs/plan.md](docs/plan.md).
+> **Status:** milestones M1 (foundation), M2 (BoMs) and M3 (stock) are done: load your
+> catalogue, BoMs and stock, adjust and count stock, value it. Builds and purchasing come
+> next. See [docs/plan.md](docs/plan.md).
 
 ## What it does
 
@@ -21,6 +21,9 @@ tiers cover a small workshop. Deployment is one command.
   cumulative quantities and cost roll-up (flagged incomplete when a cost is missing), flat
   exploded list for N units (CSV), and where-used on every part.
 - **Stock** as an append-only ledger of moves: on-hand is always the sum of moves.
+  Adjustments with a reason, inventory count sheet (enter counted quantities, the
+  differences are posted), moves ledger with filters, valuation (on-hand × cost, with an
+  "as of" date) and CSV exports for year-end.
 - **CSV import** for suppliers, parts, BoMs and initial stock, with a dry-run preview and
   row-level errors. Nothing is written until you confirm, and the commit is atomic.
   Works with Excel files from French or English locales (`;` or `,`, decimal comma or point).
@@ -179,13 +182,14 @@ current data.
 
 ## Backups
 
-Until the JSON export lands, back up with Wrangler:
+- **Import / Export → Backup** downloads the whole database as one JSON file. An admin can
+  restore it (same Kitting version) on the same or another deployment: a preview shows what
+  the file contains, then everything is replaced in one transaction.
+- D1 also keeps 30 days of point-in-time history (*Time Travel*), and Wrangler can dump SQL:
 
-```bash
-npx wrangler d1 export kitting --remote --output kitting-backup.sql
-```
-
-D1 also keeps 30 days of point-in-time history (*Time Travel*).
+  ```bash
+  npx wrangler d1 export kitting --remote --output kitting-backup.sql
+  ```
 
 ## License
 

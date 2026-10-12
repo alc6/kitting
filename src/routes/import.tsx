@@ -1,5 +1,6 @@
 import type { Context } from "hono";
 import { Hono } from "hono";
+import { exportBackup, planRestore, type RestorePlan, restoreStatements } from "../domain/backup";
 import {
 	headerOf,
 	IMPORTERS,
@@ -22,6 +23,7 @@ import { Flash, PageHeader } from "../views/ui";
 export const importRoutes = new Hono<AppEnv>();
 
 const MAX_CSV_BYTES = 2 * 1024 * 1024;
+const MAX_JSON_BYTES = 50 * 1024 * 1024;
 
 /** Locale-appropriate CSV dialect: French spreadsheets expect ";" and decimal commas. */
 export function csvDelimiter(c: Context<AppEnv>): string {
@@ -187,6 +189,128 @@ function Preview(props: { plan: ImportPlan; csv: string }) {
 	);
 }
 
+function BackupCard() {
+	const { t, isAdmin } = useApp();
+	return (
+		<section class="card" id="backup">
+			<h2>{t.import.backupTitle}</h2>
+			<p>{t.import.backupIntro}</p>
+			<p class="links">
+				<a href="/import/backup.json">{t.import.backupDownload}</a>
+			</p>
+			{isAdmin ? (
+				<>
+					<h3>{t.import.restoreTitle}</h3>
+					<p class="muted">{t.import.restoreIntro}</p>
+					<form method="post" action="/import/restore/preview" enctype="multipart/form-data" class="form">
+						<div class="field">
+							<label for="restore-file">{t.import.file}</label>
+							<input id="restore-file" type="file" name="file" accept=".json,application/json" required />
+						</div>
+						<div class="form-actions">
+							<button type="submit" class="button secondary">
+								{t.import.restorePreview}
+							</button>
+						</div>
+					</form>
+				</>
+			) : null}
+		</section>
+	);
+}
+
+importRoutes.get("/backup.json", async (c) => {
+	const now = nowIso();
+	const backup = await exportBackup(c.env.DB, now);
+	c.header("Content-Type", "application/json; charset=utf-8");
+	c.header("Content-Disposition", `attachment; filename="kitting-backup-${now.slice(0, 10)}.json"`);
+	return c.body(JSON.stringify(backup));
+});
+
+async function readJsonInput(c: Context<AppEnv>): Promise<string> {
+	const body = await c.req.parseBody();
+	const file = body.file;
+	if (file instanceof File && file.size > 0) {
+		return file.size > MAX_JSON_BYTES ? "" : new TextDecoder().decode(await file.arrayBuffer());
+	}
+	return typeof body.json === "string" && body.json.length <= MAX_JSON_BYTES ? body.json : "";
+}
+
+function RestorePreview(props: { plan: RestorePlan; json: string }) {
+	const { t } = useApp();
+	const { plan } = props;
+	return (
+		<>
+			<PageHeader title={t.import.restoreTitle} />
+			{plan.ok ? (
+				<section class="card warning">
+					<p>{fmt(t.import.restoreSummary, { at: plan.backup.exported_at.replace("T", " ").slice(0, 16) })}</p>
+					<table class="table">
+						<thead>
+							<tr>
+								<th>{t.import.table}</th>
+								<th class="num">{t.import.rows}</th>
+							</tr>
+						</thead>
+						<tbody>
+							{plan.counts.map((r) => (
+								<tr>
+									<td>
+										<code>{r.table}</code>
+									</td>
+									<td class="num">{r.rows}</td>
+								</tr>
+							))}
+						</tbody>
+					</table>
+					<form
+						method="post"
+						action="/import/restore/commit"
+						class="form-actions"
+						data-confirm={t.import.restoreConfirmPrompt}
+					>
+						<textarea name="json" hidden>
+							{props.json}
+						</textarea>
+						<button type="submit" class="button danger">
+							{t.import.restoreConfirm}
+						</button>
+						<a class="button secondary" href="/import#backup">
+							{t.common.cancel}
+						</a>
+					</form>
+				</section>
+			) : (
+				<section class="card danger">
+					<h2>{t.import.restoreInvalid}</h2>
+					<ul>
+						{plan.errors.map((e) => (
+							<li>{e}</li>
+						))}
+					</ul>
+					<a class="button secondary" href="/import#backup">
+						{t.common.back}
+					</a>
+				</section>
+			)}
+		</>
+	);
+}
+
+importRoutes.post("/restore/preview", requireAdmin, async (c) => {
+	const json = await readJsonInput(c);
+	const plan = await planRestore(c.env.DB, json);
+	return page(c, c.var.t.import.restoreTitle, <RestorePreview plan={plan} json={json} />, plan.ok ? 200 : 422);
+});
+
+importRoutes.post("/restore/commit", requireAdmin, async (c) => {
+	const json = await readJsonInput(c);
+	const plan = await planRestore(c.env.DB, json);
+	if (!plan.ok) return page(c, c.var.t.import.restoreTitle, <RestorePreview plan={plan} json={json} />, 422);
+	await c.env.DB.batch(restoreStatements(c.env.DB, plan.backup));
+	return c.redirect("/import?restored=1", 303);
+});
+
 importRoutes.get("/", (c) => {
 	const t = c.var.t;
 	const done = importerFor(c.req.query("done") ?? "");
@@ -203,6 +327,7 @@ importRoutes.get("/", (c) => {
 					})}`}
 				/>
 			) : null}
+			{c.req.query("restored") ? <Flash message={t.import.restored} /> : null}
 			<p>{t.import.intro}</p>
 			<p class="muted">{t.import.order}</p>
 			<div class="cards">
@@ -210,6 +335,7 @@ importRoutes.get("/", (c) => {
 					<ImporterCard importer={i} />
 				))}
 			</div>
+			<BackupCard />
 		</>,
 	);
 });

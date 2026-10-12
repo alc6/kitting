@@ -29,13 +29,14 @@ After M2 the catalogue and BoMs can be loaded; after M4 real builds can run.
 - [x] `boms.csv` import (group by parent/code/revision, replace lines) + export
 - [x] Cost roll-up shown on part detail for make/kit parts
 
-## M3: Stock
+## M3: Stock ✅
 
-- [ ] Stock page: on-hand list with search, filters (below zero, below MOQ)
-- [ ] Manual adjustment with reason (adjust move, signed qty, optional serial)
-- [ ] Inventory count screen (enter counted qty → count move for the difference)
-- [ ] Valuation report (on-hand × standard cost, make parts at rolled-up cost) + CSV export
-- [ ] JSON export of the whole database (backup)
+- [x] Stock page: on-hand list with search, filters (below zero, below MOQ)
+- [x] Manual adjustment with reason (adjust move, signed qty, optional serial)
+- [x] Inventory count screen (enter counted qty → count move for the difference)
+- [x] Valuation report (on-hand × standard cost, make parts at rolled-up cost) + CSV export
+- [x] JSON export of the whole database (backup) and restore (admin, preview first)
+- [x] Moves ledger with filters and CSV export
 
 ## M4: Builds
 
@@ -54,4 +55,3 @@ After M2 the catalogue and BoMs can be loaded; after M4 real builds can run.
 - [ ] PO edit, mark sent, cancel
 - [ ] Receiving (partial), receipt moves, PO status
 - [ ] Dashboard: shortages, parts below zero / below MOQ, open POs, last builds
-- [ ] JSON import (restore) of the whole database

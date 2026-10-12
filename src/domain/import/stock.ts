@@ -1,8 +1,9 @@
 import { asc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
-import { type Part, parts, stockMoves } from "../../db/schema";
+import { parts, stockMoves } from "../../db/schema";
 import { formatCentsInput, formatQtyInput } from "../../lib/units";
 import { field, validate } from "../../lib/validation";
+import { type CountGroup, type CountResult, isStocked, moveValues, planCounts } from "../stock";
 import { checkHeader, emptyPlan, fieldIssues, type Importer, type PlanRow, type RowIssue } from "./types";
 
 const stockRow = z.object({
@@ -11,8 +12,6 @@ const stockRow = z.object({
 	serial: field.text(100),
 	unit_cost: field.money(),
 });
-
-type Move = { partId: number; qtyMilli: number; serial: string | null; unitCostCents: number | null };
 
 /**
  * stock.csv sets on-hand to a counted quantity: one `count` move for the difference.
@@ -46,10 +45,7 @@ export const stockImporter: Importer = {
 
 		const issues: RowIssue[] = [];
 		// Group valid rows by part, preserving file order.
-		const groups = new Map<
-			number,
-			{ part: Part; lines: { line: number; qty: number; serial: string; unitCost: number | null }[] }
-		>();
+		const groups = new Map<number, CountGroup>();
 		for (const rec of table.records) {
 			const v = validate(stockRow, rec.values);
 			if (!v.ok) {
@@ -61,76 +57,18 @@ export const stockImporter: Importer = {
 				issues.push({ line: rec.line, column: "ref", key: "unknown_part", vars: { ref: v.data.ref } });
 				continue;
 			}
-			if (part.kind !== "buy" && part.kind !== "make") {
+			if (!isStocked(part.kind)) {
 				issues.push({ line: rec.line, column: "ref", key: "not_stocked", vars: { kind: part.kind } });
 				continue;
 			}
 			const g = groups.get(part.id) ?? { part, lines: [] };
-			g.lines.push({ line: rec.line, qty: v.data.qty, serial: v.data.serial, unitCost: v.data.unit_cost });
+			g.lines.push({ line: rec.line, qtyMilli: v.data.qty, serial: v.data.serial, unitCostCents: v.data.unit_cost });
 			groups.set(part.id, g);
 		}
 
-		const rows: PlanRow[] = [];
-		const moves: Move[] = [];
-		for (const { part, lines } of groups.values()) {
-			const first = lines[0];
-			if (!first) continue;
-			const current = onHand.get(part.id) ?? 0;
-			const withSerial = lines.filter((l) => l.serial !== "");
-			if (withSerial.length > 0) {
-				// Serial rows: every row needs a serial and qty 1, the part must be tracked and have no stock yet.
-				const bad = lines.find((l) => l.serial === "" || l.qty !== 1000);
-				if (!part.trackSerial || bad) {
-					issues.push({ line: (bad ?? first).line, column: "serial", key: "serial_qty" });
-					continue;
-				}
-				if (current !== 0) {
-					issues.push({ line: first.line, column: "serial", key: "serial_initial_only" });
-					continue;
-				}
-				const seen = new Map<string, number>();
-				let dup = false;
-				for (const l of lines) {
-					const prev = seen.get(l.serial);
-					if (prev !== undefined) {
-						issues.push({ line: l.line, column: "serial", key: "duplicate_in_file", vars: { line: prev } });
-						dup = true;
-					}
-					seen.set(l.serial, l.line);
-				}
-				if (dup) continue;
-				for (const l of lines) {
-					moves.push({
-						partId: part.id,
-						qtyMilli: 1000,
-						serial: l.serial,
-						unitCostCents: l.unitCost ?? part.costCents,
-					});
-				}
-				rows.push(
-					planRow(
-						part,
-						first.line,
-						current,
-						lines.length * 1000,
-						lines.map((l) => l.serial),
-					),
-				);
-				continue;
-			}
-			if (lines.length > 1) {
-				for (const l of lines.slice(1)) {
-					issues.push({ line: l.line, column: "ref", key: "duplicate_in_file", vars: { line: first.line } });
-				}
-				continue;
-			}
-			const delta = first.qty - current;
-			if (delta !== 0) {
-				moves.push({ partId: part.id, qtyMilli: delta, serial: null, unitCostCents: first.unitCost ?? part.costCents });
-			}
-			rows.push(planRow(part, first.line, current, first.qty, []));
-		}
-		rows.sort((a, b) => a.line - b.line);
+		const counted = planCounts([...groups.values()], onHand);
+		issues.push(...counted.issues);
+		const rows = counted.results.map(planRow).sort((a, b) => a.line - b.line);
 
 		return {
 			type: "stock",
@@ -139,19 +77,10 @@ export const stockImporter: Importer = {
 			errors: issues,
 			warnings,
 			statements: (user, now) =>
-				moves.map((m) =>
-					db.insert(stockMoves).values({
-						...m,
-						reason: "count",
-						refType: "import",
-						at: now,
-						by: user,
-						note: "stock.csv",
-						createdBy: user,
-						updatedBy: user,
-						createdAt: now,
-						updatedAt: now,
-					}),
+				counted.moves.map((m) =>
+					db
+						.insert(stockMoves)
+						.values(moveValues(m, { reason: "count", refType: "import", note: "stock.csv", user, now })),
 				),
 		};
 	},
@@ -177,18 +106,18 @@ export const stockImporter: Importer = {
 	},
 };
 
-function planRow(part: Part, line: number, current: number, counted: number, serials: string[]): PlanRow {
-	const delta = counted - current;
+function planRow(r: CountResult): PlanRow {
+	const delta = r.counted - r.current;
 	return {
-		line,
+		line: r.line,
 		action: delta === 0 ? "unchanged" : "update",
 		cells: [
-			part.ref,
-			part.name,
-			formatQtyInput(current),
-			formatQtyInput(counted),
+			r.part.ref,
+			r.part.name,
+			formatQtyInput(r.current),
+			formatQtyInput(r.counted),
 			`${delta > 0 ? "+" : ""}${formatQtyInput(delta)}`,
 		],
-		changes: serials.length ? [`serials: ${serials.join(", ")}`] : [],
+		changes: r.serials.length ? [`serials: ${r.serials.join(", ")}`] : [],
 	};
 }

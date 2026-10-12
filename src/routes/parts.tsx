@@ -43,6 +43,7 @@ import {
 	TextArea,
 	TextField,
 } from "../views/ui";
+import { MoveReference } from "./stock";
 
 export const partRoutes = new Hono<AppEnv>();
 
@@ -326,7 +327,7 @@ function PartDetail(props: {
 					</>
 				}
 			/>
-			<Flash ok={props.ok} />
+			<Flash ok={props.ok} message={props.ok === "adjusted" ? t.stock.adjusted : undefined} />
 			{props.err === "in_use" ? <p class="flash error">{t.errors.in_use}</p> : null}
 			<div class="cards">
 				{stocked ? (
@@ -334,6 +335,11 @@ function PartDetail(props: {
 						<h2>{t.parts.onHand}</h2>
 						<p class="big">
 							<Qty milli={props.onHand} unit={p.unit} />
+						</p>
+						<p>
+							<a class="button small" href={`/stock/adjust?part=${p.id}`}>
+								{t.stock.adjust}
+							</a>
 						</p>
 					</section>
 				) : null}
@@ -514,7 +520,9 @@ export function MovesTable(props: { moves: (typeof stockMoves.$inferSelect)[]; u
 				{props.moves.map((m) => (
 					<tr>
 						<td>{shortDateTime(m.at)}</td>
-						<td>{t.reasons[m.reason]}</td>
+						<td>
+							<MoveReference reason={m.reason} refType={m.refType} refId={m.refId} />
+						</td>
 						<td class="num">
 							<Qty milli={m.qtyMilli} unit={props.unit} />
 						</td>

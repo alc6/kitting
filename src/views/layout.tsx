@@ -23,6 +23,7 @@ export const NAV: { key: NavKey; href: string }[] = [
 	{ key: "dashboard", href: "/" },
 	{ key: "parts", href: "/parts" },
 	{ key: "boms", href: "/boms" },
+	{ key: "stock", href: "/stock" },
 	{ key: "suppliers", href: "/suppliers" },
 	{ key: "import", href: "/import" },
 ];
