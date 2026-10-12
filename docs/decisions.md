@@ -59,6 +59,29 @@ Short log of choices made where the brief left room. Newest at the bottom of eac
   as-built lines and are searchable, but a build does not require the serial to be "in stock".
   The company can start without scanning every receipt.
 
+## BoMs
+
+- **D21. Explosion and cost roll-up run in TypeScript over an in-memory graph** (`src/domain/bom-graph.ts`),
+  loaded once per request: easy to unit-test and to extend with per-line choices. Recursive CTEs are used
+  where SQL is the natural fit: where-used and the cycle check on save (`src/domain/boms.ts`).
+- **D22. Which BoM is used below the top level:** the part's active `std` variant, else its only active
+  BoM, else the active BoM with the lowest id. Variants are chosen explicitly only for the top-level BoM
+  (e.g. when planning a build).
+- **D23. Active BoMs stay editable**, with a warning; archived BoMs are read-only. "New revision" copies the
+  lines into a draft; activating it archives the previous active BoM of the same parent and code (one batch).
+  Done builds keep their as-built record, so editing a BoM never rewrites history.
+- **D24. Cycle checks cover draft and active BoMs** (archived ones are ignored), on every line added, when
+  an archived BoM is activated or restored, and on import (whole resulting graph checked in memory).
+- **D25. Costs are rolled up in millicents** (cents × 1000) so fractional quantities (0.35 m of cable)
+  stay exact to a thousandth of a cent; display rounds half away from zero. A `make`/`kit` part without an
+  active BoM falls back to its standard cost; any missing cost marks the result incomplete and names the parts.
+- **D26. Exploded quantities round up** to the thousandth (never under-pick).
+- **D27. `boms.csv` replaces the lines of each BoM it mentions**, grouped by (parent_ref, code, revision).
+  Defaults: code `std`, revision `Rev1`, status `draft`. All rows of a group must share a status; an `active`
+  group archives the previous active BoM of the same parent and code.
+- **D28. The tree view shows the full structure** (no stock consumption); the exploded list can optionally
+  take sub-assemblies from stock, as builds will.
+
 ## CSV import / export
 
 - **D30. Dialects.** Delimiter auto-detected (`,` `;` tab), decimals with `.` or `,`, UTF-8 with

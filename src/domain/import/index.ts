@@ -1,4 +1,5 @@
 import { parseCsv } from "../../lib/csv";
+import { bomsImporter } from "./boms";
 import { partsImporter } from "./parts";
 import { stockImporter } from "./stock";
 import { suppliersImporter } from "./suppliers";
@@ -7,14 +8,14 @@ import type { ImportContext, Importer, ImportPlan, ImportType } from "./types";
 export * from "./types";
 
 /** Importers in the order data should be loaded. */
-export const IMPORTERS: Importer[] = [suppliersImporter, partsImporter, stockImporter];
+export const IMPORTERS: Importer[] = [suppliersImporter, partsImporter, bomsImporter, stockImporter];
 
 export function importerFor(type: string): Importer | undefined {
 	return IMPORTERS.find((i) => i.type === type);
 }
 
 export function headerOf(importer: Importer): string[] {
-	return [...importer.required, ...importer.optional];
+	return importer.columns ?? [...importer.required, ...importer.optional];
 }
 
 export async function planImport(

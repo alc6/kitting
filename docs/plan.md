@@ -17,17 +17,17 @@ After M2 the catalogue and BoMs can be loaded; after M4 real builds can run.
 - [x] CI (typecheck, lint, tests, migrations in sync) and manual deploy workflow
 - [x] README (deploy, Access guide), CLAUDE.md, decisions log
 
-## M2: BoMs
+## M2: BoMs ✅
 
-- [ ] BoM list per part; create BoM (parent, variant code, revision, status)
-- [ ] Editor: add / remove / reorder lines (htmx), quantities in milli
-- [ ] New revision = copy of the current one; activate (archives the previous active of the same code)
-- [ ] Cycle check across BoMs on every save (recursive CTE)
-- [ ] Tree view (expandable) with qty, cumulative qty, cost roll-up (incomplete flag)
-- [ ] Flat exploded list for N units
-- [ ] Where-used (direct and indirect) on the part page
-- [ ] `boms.csv` import (group by parent/code/revision, replace lines) + export
-- [ ] Cost roll-up shown on part detail for make/kit parts
+- [x] BoM list per part; create BoM (parent, variant code, revision, status)
+- [x] Editor: add / remove / reorder lines (htmx), quantities in milli
+- [x] New revision = copy of the current one; activate (archives the previous active of the same code)
+- [x] Cycle check across BoMs on every save (recursive CTE)
+- [x] Tree view (expandable) with qty, cumulative qty, cost roll-up (incomplete flag)
+- [x] Flat exploded list for N units
+- [x] Where-used (direct and indirect) on the part page
+- [x] `boms.csv` import (group by parent/code/revision, replace lines) + export
+- [x] Cost roll-up shown on part detail for make/kit parts
 
 ## M3: Stock
 

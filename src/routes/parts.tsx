@@ -2,9 +2,11 @@ import { asc, desc, eq } from "drizzle-orm";
 import type { Context } from "hono";
 import { Hono } from "hono";
 import { PART_KINDS, type Part, parts, stockMoves, suppliers } from "../db/schema";
+import { partBomSummary, type WhereUsedRow, whereUsed } from "../domain/boms";
 import {
 	findRefClash,
 	getPart,
+	hasBoms,
 	hasStockMoves,
 	listParts,
 	onHandOf,
@@ -18,6 +20,7 @@ import { isConstraintError } from "../lib/sql";
 import { type FieldErrors, validate } from "../lib/validation";
 import { requireAdmin } from "../middleware/auth";
 import type { AppEnv } from "../types";
+import { CostView, StatusBadge } from "../views/bom";
 import { useApp } from "../views/context";
 import { idParam, notFound, nowIso, page, redirectOk, translateErrors } from "../views/render";
 import {
@@ -172,7 +175,8 @@ async function validatePart(c: Context<AppEnv>, body: Record<string, unknown>, e
 		else errors.ref = "ref_case";
 	}
 	const hasMoves = existing ? await hasStockMoves(c.var.db, existing.id) : false;
-	Object.assign(errors, partRuleErrors({ kind: d.kind, trackSerial: d.track_serial }, { hasMoves }));
+	const ownsBoms = existing ? await hasBoms(c.var.db, existing.id) : false;
+	Object.assign(errors, partRuleErrors({ kind: d.kind, trackSerial: d.track_serial }, { hasMoves, hasBoms: ownsBoms }));
 	if (Object.keys(errors).length > 0) return { ok: false as const, errors, clashRef: clash?.ref };
 	return { ok: true as const, data: d };
 }
@@ -279,6 +283,8 @@ function PartDetail(props: {
 	supplier: { id: number; name: string; email: string; phone: string } | undefined;
 	onHand: number;
 	moves: (typeof stockMoves.$inferSelect)[];
+	bomSummary: Awaited<ReturnType<typeof partBomSummary>>;
+	usedIn: WhereUsedRow[];
 	ok?: string | undefined;
 	err?: string | undefined;
 }) {
@@ -384,6 +390,8 @@ function PartDetail(props: {
 					</dl>
 				</section>
 			</div>
+			{p.kind === "make" || p.kind === "kit" ? <PartBoms part={p} summary={props.bomSummary} /> : null}
+			<WhereUsed rows={props.usedIn} />
 			{stocked ? (
 				<section class="card">
 					<h2>{t.parts.history}</h2>
@@ -395,6 +403,95 @@ function PartDetail(props: {
 				{fmt(t.common.updatedBy, { by: p.updatedBy, at: shortDateTime(p.updatedAt) })}
 			</p>
 		</>
+	);
+}
+
+function PartBoms(props: { part: Part; summary: Awaited<ReturnType<typeof partBomSummary>> }) {
+	const { t } = useApp();
+	const { summary } = props;
+	return (
+		<section class="card">
+			<div class="section-header">
+				<h2>{t.parts.boms}</h2>
+				<LinkButton href={`/boms/new?part=${props.part.id}`} label={t.boms.new} variant="secondary" />
+			</div>
+			{summary.rollup ? (
+				<p>
+					{t.boms.totalCost}: <CostView cost={summary.rollup} refs={summary.refs} long />
+				</p>
+			) : null}
+			{summary.boms.length === 0 ? (
+				<Empty>{t.boms.noBoms}</Empty>
+			) : (
+				<table class="table">
+					<thead>
+						<tr>
+							<th>{t.boms.code}</th>
+							<th>{t.boms.revision}</th>
+							<th>{t.boms.status}</th>
+							<th class="num">{t.boms.totalCost}</th>
+						</tr>
+					</thead>
+					<tbody>
+						{summary.boms.map((b) => (
+							<tr>
+								<td>
+									<a href={`/boms/${b.id}`}>{b.code}</a>
+								</td>
+								<td>{b.revision}</td>
+								<td>
+									<StatusBadge status={b.status} />
+								</td>
+								<td class="num">
+									<CostView cost={b.cost} refs={summary.refs} />
+								</td>
+							</tr>
+						))}
+					</tbody>
+				</table>
+			)}
+		</section>
+	);
+}
+
+function WhereUsed(props: { rows: WhereUsedRow[] }) {
+	const { t } = useApp();
+	return (
+		<section class="card">
+			<h2>{t.parts.whereUsed}</h2>
+			{props.rows.length === 0 ? (
+				<Empty />
+			) : (
+				<table class="table">
+					<thead>
+						<tr>
+							<th>{t.boms.parent}</th>
+							<th>{t.boms.code}</th>
+							<th>{t.boms.revision}</th>
+							<th>{t.boms.status}</th>
+							<th>{t.boms.level}</th>
+							<th class="num">{t.boms.qty}</th>
+						</tr>
+					</thead>
+					<tbody>
+						{props.rows.map((r) => (
+							<tr>
+								<td>
+									<a href={`/boms/${r.bomId}`}>{r.parentRef}</a> {r.parentName}
+								</td>
+								<td>{r.code}</td>
+								<td>{r.revision}</td>
+								<td>
+									<StatusBadge status={r.status} />
+								</td>
+								<td>{r.depth === 1 ? t.boms.direct : fmt(t.boms.via, { ref: r.viaRef })}</td>
+								<td class="num">{r.depth === 1 ? <Qty milli={r.qtyMilli} /> : null}</td>
+							</tr>
+						))}
+					</tbody>
+				</table>
+			)}
+		</section>
 	);
 }
 
@@ -436,7 +533,7 @@ partRoutes.get("/:id", async (c) => {
 	const part = id ? await getPart(c.var.db, id) : undefined;
 	if (!part) return notFound(c);
 	const db = c.var.db;
-	const [supplierRows, onHand, moves] = await Promise.all([
+	const [supplierRows, onHand, moves, bomSummary, usedIn] = await Promise.all([
 		part.supplierId
 			? db
 					.select({ id: suppliers.id, name: suppliers.name, email: suppliers.email, phone: suppliers.phone })
@@ -450,6 +547,8 @@ partRoutes.get("/:id", async (c) => {
 			.where(eq(stockMoves.partId, part.id))
 			.orderBy(desc(stockMoves.at), desc(stockMoves.id))
 			.limit(100),
+		partBomSummary(db, part.id),
+		whereUsed(db, part.id),
 	]);
 	return page(
 		c,
@@ -459,6 +558,8 @@ partRoutes.get("/:id", async (c) => {
 			supplier={supplierRows[0]}
 			onHand={onHand}
 			moves={moves}
+			bomSummary={bomSummary}
+			usedIn={usedIn}
 			ok={c.req.query("ok")}
 			err={c.req.query("err")}
 		/>,

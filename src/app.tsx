@@ -6,6 +6,7 @@ import * as schema from "./db/schema";
 import { dict, isLocale, type Locale } from "./i18n";
 import { accessAuth } from "./middleware/auth";
 import { originCheck, securityHeaders } from "./middleware/security";
+import { bomRoutes } from "./routes/boms";
 import { dashboardRoutes } from "./routes/dashboard";
 import { importRoutes } from "./routes/import";
 import { partRoutes } from "./routes/parts";
@@ -53,6 +54,7 @@ export function createApp() {
 	app.route("/", dashboardRoutes);
 	app.route("/suppliers", supplierRoutes);
 	app.route("/parts", partRoutes);
+	app.route("/boms", bomRoutes);
 	app.route("/import", importRoutes);
 
 	app.notFound((c) => (c.var.t ? notFound(c) : c.text("Not found", 404)));

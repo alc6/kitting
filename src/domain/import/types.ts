@@ -38,6 +38,8 @@ export interface Importer {
 	required: string[];
 	/** Other recognised columns. */
 	optional: string[];
+	/** Column order for templates and exports (defaults to required + optional). */
+	columns?: string[];
 	/** Example rows for the downloadable template (canonical format: "," and "."). */
 	example: string[][];
 	plan(ctx: ImportContext, table: CsvTable): Promise<ImportPlan>;

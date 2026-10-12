@@ -1,6 +1,15 @@
 import { createExecutionContext } from "cloudflare:test";
 import { env } from "cloudflare:workers";
+import { drizzle } from "drizzle-orm/d1";
+import demoBoms from "../examples/demo/boms.csv?raw";
+import demoParts from "../examples/demo/parts.csv?raw";
+import demoStock from "../examples/demo/stock.csv?raw";
+import demoSuppliers from "../examples/demo/suppliers.csv?raw";
+import * as schema from "../src/db/schema";
+import { planImport } from "../src/domain/import";
 import app from "../src/index";
+import { runBatch } from "../src/lib/db";
+import type { Db } from "../src/types";
 
 export const ORIGIN = "https://kitting.example.com";
 export const TESTER = "tester@example.com";
@@ -101,4 +110,46 @@ export async function insertMove(partId: number, qtyMilli: number, reason = "adj
 	)
 		.bind(partId, qtyMilli, reason, serial)
 		.run();
+}
+
+// ---------------------------------------------------------------------------
+// Demo dataset fixture
+
+export const DEMO = { suppliers: demoSuppliers, parts: demoParts, boms: demoBoms, stock: demoStock };
+
+export function testDb(): Db {
+	return drizzle(env.DB, { schema });
+}
+
+/** Imports CSV text through the real importer; throws on validation errors. */
+export async function importCsv(type: "suppliers" | "parts" | "boms" | "stock", csv: string): Promise<void> {
+	const db = testDb();
+	const plan = await planImport({ db, locale: "en" }, type, csv);
+	if (!plan) throw new Error(`no importer ${type}`);
+	if (plan.errors.length) throw new Error(`${type} import errors: ${JSON.stringify(plan.errors)}`);
+	await runBatch(db, plan.statements("seed@example.com", new Date().toISOString()));
+}
+
+/** Loads the fictional demo dataset. Pass `stock: false` to skip initial stock. */
+export async function loadDemo(opts: { stock?: boolean } = {}): Promise<void> {
+	await importCsv("suppliers", DEMO.suppliers);
+	await importCsv("parts", DEMO.parts);
+	await importCsv("boms", DEMO.boms);
+	if (opts.stock !== false) await importCsv("stock", DEMO.stock);
+}
+
+export async function partId(ref: string): Promise<number> {
+	return (await one<{ id: number }>("SELECT id FROM parts WHERE ref = ?", ref)).id;
+}
+
+export async function bomId(parentRef: string, code = "std", revision?: string): Promise<number> {
+	const row = await one<{ id: number }>(
+		`SELECT b.id FROM boms b JOIN parts p ON p.id = b.parent_part_id
+		 WHERE p.ref = ? AND b.code = ? AND (? IS NULL AND b.status = 'active' OR b.revision = ?)`,
+		parentRef,
+		code,
+		revision ?? null,
+		revision ?? null,
+	);
+	return row.id;
 }

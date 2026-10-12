@@ -1,5 +1,5 @@
 import { asc, eq } from "drizzle-orm";
-import { type Part, parts, stockMoves, suppliers } from "../../db/schema";
+import { boms, type Part, parts, stockMoves, suppliers } from "../../db/schema";
 import { formatCentsInput, formatQtyInput } from "../../lib/units";
 import { validate } from "../../lib/validation";
 import { partColumns, partInput, partRuleErrors, partToForm } from "../parts";
@@ -68,16 +68,18 @@ export const partsImporter: Importer = {
 		const { errors, warnings } = checkHeader(this, table);
 		if (errors.length) return emptyPlan("parts", errors, warnings);
 
-		const [allParts, allSuppliers, withMoves] = await Promise.all([
+		const [allParts, allSuppliers, withMoves, withBoms] = await Promise.all([
 			db.select().from(parts),
 			db.select({ id: suppliers.id, name: suppliers.name }).from(suppliers),
 			db.select({ partId: stockMoves.partId }).from(stockMoves).groupBy(stockMoves.partId),
+			db.select({ partId: boms.parentPartId }).from(boms).groupBy(boms.parentPartId),
 		]);
 		const byRef = new Map(allParts.map((p) => [p.ref, p]));
 		const byLowerRef = new Map(allParts.map((p) => [p.ref.toLowerCase(), p]));
 		const supplierByName = new Map(allSuppliers.map((s) => [s.name.toLowerCase(), s]));
 		const supplierName = new Map(allSuppliers.map((s) => [s.id, s.name]));
 		const hasMoves = new Set(withMoves.map((r) => r.partId));
+		const ownsBoms = new Set(withBoms.map((r) => r.partId));
 		const present = new Set(table.header);
 
 		const issues: RowIssue[] = [];
@@ -118,7 +120,10 @@ export const partsImporter: Importer = {
 			else {
 				const rules = partRuleErrors(
 					{ kind: v.data.kind, trackSerial: v.data.track_serial },
-					{ hasMoves: current ? hasMoves.has(current.id) : false },
+					{
+						hasMoves: current ? hasMoves.has(current.id) : false,
+						hasBoms: current ? ownsBoms.has(current.id) : false,
+					},
 				);
 				lineIssues.push(...fieldIssues(rec.line, rules, fieldToColumn));
 			}

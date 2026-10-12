@@ -8,10 +8,15 @@ export default defineConfig(async () => {
 			cloudflareTest({
 				wrangler: { configPath: "./wrangler.example.jsonc" },
 				miniflare: {
+					// Every var is pinned so a local .dev.vars cannot change test results.
 					bindings: {
 						ENVIRONMENT: "development",
 						DEV_AUTH_EMAIL: "tester@example.com",
 						ADMIN_EMAILS: "tester@example.com",
+						TEAM_DOMAIN: "kitting-test.cloudflareaccess.com",
+						ACCESS_AUD: "test-aud",
+						DEFAULT_LOCALE: "en",
+						CURRENCY: "EUR",
 						TEST_MIGRATIONS: migrations,
 					},
 				},

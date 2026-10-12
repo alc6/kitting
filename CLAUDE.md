@@ -27,6 +27,8 @@ Record every new non-obvious choice in `docs/decisions.md`.
 - `src/middleware/`: `auth.ts` (Access JWT, dev bypass, `requireAdmin`), `security.ts` (CSP, CSRF).
 - `src/db/schema.ts`: Drizzle schema, the single source of truth for tables.
 - `src/domain/`: business logic and queries, framework-free where possible (unit-testable).
+  `bom-graph.ts` is pure (explosion, cost roll-up, cycle detection over an in-memory graph);
+  `boms.ts` loads the graph and holds the recursive CTEs (where-used, cycle check on save).
   `src/domain/import/`: one importer per CSV type, all implementing `Importer`.
 - `src/routes/*.tsx`: one Hono router per area, with its page components.
 - `src/views/`: layout, shared UI components (`ui.tsx`), render helpers, view context (`useApp()`).

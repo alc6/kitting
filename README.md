@@ -6,9 +6,9 @@ stock, purchasing and builds with per-serial traceability.
 It runs entirely on Cloudflare (Workers + D1 + Access): no server to manage, and the free
 tiers cover a small workshop. Deployment is one command.
 
-> **Status:** milestone M1 (foundation) is done: suppliers, parts, CSV import with
-> dry-run, initial stock. BoMs, stock operations, builds and purchasing are coming
-> next, one milestone at a time. See [docs/plan.md](docs/plan.md).
+> **Status:** milestones M1 (foundation) and M2 (BoMs) are done: you can load your
+> catalogue, BoMs and initial stock. Stock operations, builds and purchasing come next,
+> one milestone at a time. See [docs/plan.md](docs/plan.md).
 
 ## What it does
 
@@ -16,8 +16,12 @@ tiers cover a small workshop. Deployment is one command.
   `kit` (phantom: always exploded into its parent) and `fee` (cost only, e.g. eco-fees).
   Units (pcs, m, kg…), standard cost, supplier, MOQ, pack size, lead time, serial tracking.
 - **Suppliers** with contact details.
+- **Bills of materials** with variants (e.g. `std`, `warm`) and revisions: line editor,
+  "new revision" copies, one active BoM per variant, cycle protection, expandable tree with
+  cumulative quantities and cost roll-up (flagged incomplete when a cost is missing), flat
+  exploded list for N units (CSV), and where-used on every part.
 - **Stock** as an append-only ledger of moves: on-hand is always the sum of moves.
-- **CSV import** for suppliers, parts and initial stock, with a dry-run preview and
+- **CSV import** for suppliers, parts, BoMs and initial stock, with a dry-run preview and
   row-level errors. Nothing is written until you confirm, and the commit is atomic.
   Works with Excel files from French or English locales (`;` or `,`, decimal comma or point).
 - **CSV export** in the same formats, for round-trips and backups.
@@ -89,7 +93,7 @@ You need a Cloudflare account with a domain on it, Node.js 20+, and this reposit
    Run the same command for every update.
 
 Then open your hostname, sign in through Access, and load your data from
-**Import / Export** (suppliers → parts → stock). To try the app first, import the
+**Import / Export** (suppliers → parts → BoMs → stock). To try the app first, import the
 fictional dataset in [`examples/demo/`](examples/demo/).
 
 ### Deploy from GitHub Actions instead
@@ -168,7 +172,10 @@ current data.
 - `stock.csv`: `ref,qty,serial,unit_cost`. Sets on-hand to the counted `qty` with a
   `count` move for the difference. For serial-tracked parts that have no stock yet, use one
   row per serial with `qty` 1.
-- `boms.csv` (milestone M2): `parent_ref,code,revision,status,component_ref,qty`.
+- `boms.csv`: `parent_ref,code,revision,status,component_ref,qty` (+ optional `notes`).
+  One row per line, grouped by `parent_ref` + `code` + `revision`; each BoM mentioned gets
+  exactly the lines in the file. `code` defaults to `std`, `revision` to `Rev1`, `status` to
+  `draft`. Importing a BoM as `active` archives the previously active one of the same variant.
 
 ## Backups
 

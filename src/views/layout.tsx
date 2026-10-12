@@ -7,6 +7,13 @@ const HTMX_CONFIG = JSON.stringify({
 	allowEval: false,
 	allowScriptTags: false,
 	historyCacheSize: 0,
+	// Swap 422 responses too: validation errors re-render the form fragment.
+	responseHandling: [
+		{ code: "204", swap: false },
+		{ code: "[23]..", swap: true },
+		{ code: "422", swap: true },
+		{ code: "[45]..", swap: false, error: true },
+	],
 });
 
 type NavKey = "dashboard" | "parts" | "suppliers" | "boms" | "builds" | "purchasing" | "stock" | "import";
@@ -15,6 +22,7 @@ type NavKey = "dashboard" | "parts" | "suppliers" | "boms" | "builds" | "purchas
 export const NAV: { key: NavKey; href: string }[] = [
 	{ key: "dashboard", href: "/" },
 	{ key: "parts", href: "/parts" },
+	{ key: "boms", href: "/boms" },
 	{ key: "suppliers", href: "/suppliers" },
 	{ key: "import", href: "/import" },
 ];

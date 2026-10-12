@@ -111,6 +111,15 @@ describe("parts", () => {
 		expect(await upd.text()).toContain("cannot become a kit or a fee");
 	});
 
+	it("keeps parts that own BoMs as make or kit", async () => {
+		const id = await insertPart("ASSY", "make");
+		await postForm("/boms", { parent_part_id: String(id), code: "std", revision: "Rev1", notes: "", copy_from: "" });
+		const res = await postForm(`/parts/${id}`, partForm({ ref: "ASSY", kind: "buy" }));
+		expect(res.status).toBe(422);
+		expect(await res.text()).toContain("This part has BoMs: it must stay a make or kit part.");
+		expect((await postForm(`/parts/${id}`, partForm({ ref: "ASSY", kind: "kit" }))).status).toBe(303);
+	});
+
 	it("filters the list by search, kind and archived flag", async () => {
 		await insertPart("BOLT-1", "buy");
 		await insertPart("SUB-1", "make");

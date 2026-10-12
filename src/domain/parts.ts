@@ -1,6 +1,6 @@
 import { and, asc, eq, ne, type SQL, sql } from "drizzle-orm";
 import { z } from "zod";
-import { PART_KINDS, type Part, type PartKind, parts, stockMoves, suppliers } from "../db/schema";
+import { boms, PART_KINDS, type Part, type PartKind, parts, stockMoves, suppliers } from "../db/schema";
 import { likePattern } from "../lib/sql";
 import { formatCentsInput, formatQtyInput, type NumberLocale } from "../lib/units";
 import { type FieldErrors, field } from "../lib/validation";
@@ -58,11 +58,20 @@ export function partToForm(p: Part, locale: NumberLocale): Record<string, string
 }
 
 /** Business rules shared by the form and the CSV import. Returns field -> error key. */
-export function partRuleErrors(d: { kind: PartKind; trackSerial: boolean }, ctx: { hasMoves: boolean }): FieldErrors {
+export function partRuleErrors(
+	d: { kind: PartKind; trackSerial: boolean },
+	ctx: { hasMoves: boolean; hasBoms?: boolean },
+): FieldErrors {
 	const errors: FieldErrors = {};
 	if (d.trackSerial && (d.kind === "kit" || d.kind === "fee")) errors.track_serial = "serial_kind";
 	if (ctx.hasMoves && (d.kind === "kit" || d.kind === "fee")) errors.kind = "kind_has_stock";
+	if (ctx.hasBoms && d.kind !== "make" && d.kind !== "kit") errors.kind = "kind_has_boms";
 	return errors;
+}
+
+export async function hasBoms(db: Db, partId: number): Promise<boolean> {
+	const rows = await db.select({ id: boms.id }).from(boms).where(eq(boms.parentPartId, partId)).limit(1);
+	return rows.length > 0;
 }
 
 export const onHandSql = sql<number>`(SELECT COALESCE(SUM(sm.qty_milli), 0) FROM stock_moves sm WHERE sm.part_id = ${parts.id})`;
