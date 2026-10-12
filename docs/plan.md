@@ -56,9 +56,20 @@ After M2 the catalogue and BoMs can be loaded; after M4 real builds can run.
 - [x] Receiving (partial), receipt moves, PO status
 - [x] Dashboard: shortages, parts below zero / below MOQ, open POs, last builds
 
+## M6: UI refresh ✅
+
+- [x] shadcn/ui design system on Tailwind CSS v4 (official skill in `.claude/skills/shadcn`), components ported to Hono JSX
+- [x] Left sidebar (grouped, collapsible to icons, off-canvas on phones), header with breadcrumb and search
+- [x] Light / dark / system theme, stored in a cookie (no flash, no inline script)
+- [x] Every page rebuilt on the components (cards, tables, fields, badges, alerts, empty states, stat cards)
+- [x] Dashboard with KPI cards
+- [x] BoM structure diagram (nested sub-assemblies and kits) with depth and "assemblies only" views, zoom and pan
+- [x] Global search across parts, BoMs, builds (incl. serials), POs and suppliers
+
 ## After v1 (ideas, not planned)
 
 - Serial inventory (which serials are in stock) enforced at build time, if the shop starts scanning receipts.
 - Reservations of stock for planned builds; build scheduling.
 - PDF purchase orders; supplier price history.
 - Multi-level "build all missing sub-assemblies" helper from the shortage list.
+- Where-used diagram (the BoM diagram reversed) on the part page; SVG/PDF export of diagrams.

@@ -1,13 +1,37 @@
 import { Hono } from "hono";
+import type { Child } from "hono/jsx";
 import { listBuilds } from "../domain/builds";
 import { listParts } from "../domain/parts";
 import { computeShortages, listPos } from "../domain/purchasing";
 import { isStocked, valuation } from "../domain/stock";
 import { fmt } from "../i18n";
+import { cn } from "../lib/cn";
 import type { AppEnv } from "../types";
 import { useApp } from "../views/context";
+import { icons } from "../views/icons";
 import { nowIso, page } from "../views/render";
-import { Empty, LinkButton, Money, PageHeader, Qty } from "../views/ui";
+import {
+	Alert,
+	Badge,
+	Button,
+	Card,
+	CardAction,
+	CardContent,
+	CardDescription,
+	CardHeader,
+	CardTitle,
+	EmptyState,
+	Money,
+	PageHeader,
+	Qty,
+	StatCard,
+	Table,
+	TableBody,
+	TableCell,
+	TableHead,
+	TableHeader,
+	TableRow,
+} from "../views/ui";
 import { BuildsTable } from "./builds";
 import { PoTable } from "./purchasing";
 
@@ -15,13 +39,43 @@ export const dashboardRoutes = new Hono<AppEnv>();
 
 const LIMIT = 10;
 
-function More(props: { total: number; href: string }) {
+/** A dashboard section: a card with a title, an optional "view all" link and a footer count. */
+function Section(props: {
+	title: string;
+	description?: Child;
+	href?: string;
+	action?: Child;
+	total?: number;
+	class?: string;
+	children: Child;
+}) {
 	const { t } = useApp();
-	return props.total > LIMIT ? (
-		<p class="small">
-			<a href={props.href}>{fmt(t.dashboard.more, { n: props.total - LIMIT })}</a>
-		</p>
-	) : null;
+	return (
+		<Card class={cn("gap-4", props.class)}>
+			<CardHeader>
+				<CardTitle>{props.title}</CardTitle>
+				{props.description ? <CardDescription>{props.description}</CardDescription> : null}
+				{props.action || props.href ? (
+					<CardAction>
+						{props.action ??
+							(props.href ? (
+								<Button href={props.href} variant="ghost" size="sm">
+									{t.dashboard.viewAll}
+								</Button>
+							) : null)}
+					</CardAction>
+				) : null}
+			</CardHeader>
+			<CardContent class="flex flex-col gap-3">
+				{props.children}
+				{props.total !== undefined && props.total > LIMIT && props.href ? (
+					<a href={props.href} class="text-sm">
+						{fmt(t.dashboard.more, { n: props.total - LIMIT })}
+					</a>
+				) : null}
+			</CardContent>
+		</Card>
+	);
 }
 
 dashboardRoutes.get("/", async (c) => {
@@ -35,138 +89,168 @@ dashboardRoutes.get("/", async (c) => {
 		listBuilds(db, { status: "done", limit: LIMIT }),
 		valuation(db),
 	]);
+	const today = nowIso().slice(0, 10);
 	const stocked = allParts.filter((p) => isStocked(p.kind));
 	const belowZero = stocked.filter((p) => p.onHandMilli < 0);
 	const belowMoq = stocked.filter((p) => p.moqMilli > 0 && p.onHandMilli >= 0 && p.onHandMilli < p.moqMilli);
 	const shortageLines = shortages.groups.flatMap((g) => g.lines.map((l) => ({ ...l, supplierName: g.supplierName })));
+	const shortSuppliers = new Set(shortageLines.map((l) => l.supplierName)).size;
+	const overdue = openPos.filter((p) => p.expectedAt && p.expectedAt < today).length;
+	const inProgress = open.filter((b) => b.status === "in_progress").length;
+	const alerts = [
+		...belowZero.map((p) => ({ p, label: t.dashboard.belowZero, negative: true })),
+		...belowMoq.map((p) => ({ p, label: t.dashboard.belowMoq, negative: false })),
+	];
 	return page(
 		c,
 		t.dashboard.title,
 		<>
-			<PageHeader title={t.dashboard.title} />
+			<PageHeader
+				title={t.dashboard.title}
+				actions={
+					<Button href="/builds/new" icon={icons.plus}>
+						{t.builds.new}
+					</Button>
+				}
+			/>
 			{allParts.length === 0 ? (
-				<section class="card">
-					<h2>{t.dashboard.welcome}</h2>
-					<p>{t.dashboard.gettingStarted}</p>
-					<LinkButton href="/import" label={t.nav.import} />
-				</section>
+				<EmptyState
+					class="mb-6"
+					icon={icons.fileSpreadsheet}
+					title={t.dashboard.welcome}
+					description={t.dashboard.gettingStarted}
+				>
+					<Button href="/import" icon={icons.upload}>
+						{t.nav.import}
+					</Button>
+				</EmptyState>
 			) : null}
-			<div class="cards stats">
-				<a class="card stat link" href="/builds">
-					<h2>{t.dashboard.openBuilds}</h2>
-					<p class="big">{open.length}</p>
-				</a>
-				<a class="card stat link" href="/purchasing">
-					<h2>{t.dashboard.shortageLines}</h2>
-					<p class={shortageLines.length ? "big warn" : "big"}>{shortageLines.length}</p>
-				</a>
-				<a class="card stat link" href="/purchasing/po">
-					<h2>{t.dashboard.openPos}</h2>
-					<p class="big">{openPos.length}</p>
-				</a>
-				<a class="card stat link" href="/stock/valuation">
-					<h2>{t.dashboard.stockValue}</h2>
-					<p class="big">
-						<Money cents={value.totalCents} />
-						{value.incomplete ? <span class="warn"> *</span> : null}
-					</p>
-				</a>
+
+			<div class="mb-6 grid grid-cols-2 gap-3 md:gap-4 xl:grid-cols-4">
+				<StatCard
+					label={t.dashboard.openBuilds}
+					value={open.length}
+					icon={icons.hammer}
+					href="/builds"
+					hint={fmt(t.dashboard.inProgress, { n: inProgress })}
+				/>
+				<StatCard
+					label={t.dashboard.shortageLines}
+					value={shortageLines.length}
+					icon={icons.shoppingCart}
+					href="/purchasing"
+					tone={shortageLines.length ? "warning" : "default"}
+					hint={shortageLines.length ? fmt(t.dashboard.suppliersToOrder, { n: shortSuppliers }) : undefined}
+				/>
+				<StatCard
+					label={t.dashboard.openPos}
+					value={openPos.length}
+					icon={icons.truck}
+					href="/purchasing/po"
+					tone={overdue ? "destructive" : "default"}
+					hint={overdue ? fmt(t.dashboard.overdue, { n: overdue }) : t.dashboard.allOnTime}
+				/>
+				<StatCard
+					label={t.dashboard.stockValue}
+					value={
+						<>
+							<Money cents={value.totalCents} />
+							{value.incomplete ? <span class="text-warning"> *</span> : null}
+						</>
+					}
+					icon={icons.wallet}
+					href="/stock/valuation"
+					hint={value.incomplete ? t.dashboard.valueIncomplete : t.dashboard.valueAt}
+				/>
 			</div>
 
-			<section class="card">
-				<div class="section-header">
-					<h2>{t.dashboard.shortages}</h2>
-					<a href="/purchasing">{t.dashboard.viewAll}</a>
-				</div>
-				{shortages.missingBoms.map((m) => (
-					<p class="flash warning">{fmt(t.boms.missingBom, { ref: m.ref })}</p>
-				))}
-				{shortageLines.length === 0 ? (
-					<Empty>{t.dashboard.noShortages}</Empty>
-				) : (
-					<table class="table">
-						<thead>
-							<tr>
-								<th>{t.purchasing.part}</th>
-								<th>{t.purchasing.supplier}</th>
-								<th class="num">{t.purchasing.net}</th>
-								<th class="num">{t.purchasing.order}</th>
-							</tr>
-						</thead>
-						<tbody>
-							{shortageLines.slice(0, LIMIT).map((l) => (
-								<tr>
-									<td>
-										<a href={`/parts/${l.part.id}`}>{l.part.ref}</a> {l.part.name}
-									</td>
-									<td>{l.supplierName || <span class="warn">—</span>}</td>
-									<td class="num warn">
-										<Qty milli={l.netMilli} unit={l.part.unit} />
-									</td>
-									<td class="num">
-										<Qty milli={l.orderMilli} unit={l.part.unit} />
-									</td>
-								</tr>
-							))}
-						</tbody>
-					</table>
-				)}
-				<More total={shortageLines.length} href="/purchasing" />
-			</section>
-
-			<div class="cards">
-				<section class="card">
-					<h2>{t.dashboard.alerts}</h2>
-					{belowZero.length === 0 && belowMoq.length === 0 ? (
-						<Empty>{t.dashboard.noAlerts}</Empty>
+			<div class="mb-6 grid grid-cols-1 items-start gap-4 lg:grid-cols-3">
+				<Section title={t.dashboard.shortages} href="/purchasing" total={shortageLines.length} class="lg:col-span-2">
+					{shortages.missingBoms.map((m) => (
+						<Alert variant="warning" class="mb-0">
+							{fmt(t.boms.missingBom, { ref: m.ref })}
+						</Alert>
+					))}
+					{shortageLines.length === 0 ? (
+						<EmptyState icon={icons.circleCheck} description={t.dashboard.noShortages} class="md:p-6" />
 					) : (
-						<table class="table">
-							<tbody>
-								{[
-									...belowZero.map((p) => ({ p, label: t.dashboard.belowZero })),
-									...belowMoq.map((p) => ({ p, label: t.dashboard.belowMoq })),
-								]
-									.slice(0, LIMIT * 2)
-									.map(({ p, label }) => (
-										<tr>
-											<td>
-												<a href={`/parts/${p.id}`}>{p.ref}</a> {p.name}
-											</td>
-											<td class="small muted">{label}</td>
-											<td class={p.onHandMilli < 0 ? "num negative" : "num warn"}>
-												<Qty milli={p.onHandMilli} unit={p.unit} />
-											</td>
-										</tr>
-									))}
-							</tbody>
-						</table>
+						<Table>
+							<TableHeader>
+								<TableRow>
+									<TableHead class="pl-0">{t.purchasing.part}</TableHead>
+									<TableHead>{t.purchasing.supplier}</TableHead>
+									<TableHead class="text-right">{t.purchasing.net}</TableHead>
+									<TableHead class="pr-0 text-right">{t.purchasing.order}</TableHead>
+								</TableRow>
+							</TableHeader>
+							<TableBody>
+								{shortageLines.slice(0, LIMIT).map((l) => (
+									<TableRow>
+										<TableCell class="pl-0">
+											<a href={`/parts/${l.part.id}`} class="font-mono text-[0.8125rem] font-medium">
+												{l.part.ref}
+											</a>{" "}
+											<span class="text-muted-foreground">{l.part.name}</span>
+										</TableCell>
+										<TableCell>{l.supplierName || <span class="text-warning">—</span>}</TableCell>
+										<TableCell class="text-right text-warning">
+											<Qty milli={l.netMilli} unit={l.part.unit} />
+										</TableCell>
+										<TableCell class="pr-0 text-right font-medium">
+											<Qty milli={l.orderMilli} unit={l.part.unit} />
+										</TableCell>
+									</TableRow>
+								))}
+							</TableBody>
+						</Table>
 					)}
-				</section>
-				<section class="card">
-					<div class="section-header">
-						<h2>{t.dashboard.openPos}</h2>
-						<a href="/purchasing/po">{t.dashboard.viewAll}</a>
-					</div>
-					<PoTable rows={openPos.slice(0, LIMIT)} today={nowIso().slice(0, 10)} />
-					<More total={openPos.length} href="/purchasing/po" />
-				</section>
+				</Section>
+
+				<Section title={t.dashboard.alerts} href="/stock" total={alerts.length}>
+					{alerts.length === 0 ? (
+						<EmptyState icon={icons.circleCheck} description={t.dashboard.noAlerts} class="md:p-6" />
+					) : (
+						<ul class="m-0 flex list-none flex-col divide-y p-0">
+							{alerts.slice(0, LIMIT).map(({ p, label, negative }) => (
+								<li class="flex items-center gap-3 py-2.5 text-sm">
+									<div class="flex min-w-0 flex-1 flex-col">
+										<a href={`/parts/${p.id}`} class="w-fit font-mono text-[0.8125rem] font-medium">
+											{p.ref}
+										</a>
+										<span class="truncate text-muted-foreground">{p.name}</span>
+									</div>
+									<Badge variant={negative ? "destructive" : "warning"}>{label}</Badge>
+									<span class="w-16 text-right">
+										<Qty milli={p.onHandMilli} unit={p.unit} />
+									</span>
+								</li>
+							))}
+						</ul>
+					)}
+				</Section>
 			</div>
 
-			<section class="card">
-				<div class="section-header">
-					<h2>{t.dashboard.upcoming}</h2>
-					<LinkButton href="/builds/new" label={t.builds.new} variant="secondary" />
-				</div>
-				<BuildsTable rows={[...open].reverse().slice(0, LIMIT)} />
-				<More total={open.length} href="/builds" />
-			</section>
-			<section class="card">
-				<div class="section-header">
-					<h2>{t.dashboard.lastBuilds}</h2>
-					<a href="/builds?status=done">{t.dashboard.viewAll}</a>
-				</div>
+			<div class="mb-6 grid grid-cols-1 items-start gap-4 xl:grid-cols-2">
+				<Section
+					title={t.dashboard.upcoming}
+					href="/builds"
+					total={open.length}
+					action={
+						<Button href="/builds/new" variant="outline" size="sm" icon={icons.plus}>
+							{t.builds.new}
+						</Button>
+					}
+				>
+					<BuildsTable rows={[...open].reverse().slice(0, LIMIT)} />
+				</Section>
+				<Section title={t.dashboard.openPos} href="/purchasing/po" total={openPos.length}>
+					<PoTable rows={openPos.slice(0, LIMIT)} today={today} />
+				</Section>
+			</div>
+
+			<Section title={t.dashboard.lastBuilds} href="/builds?status=done">
 				<BuildsTable rows={done} />
-			</section>
+			</Section>
 		</>,
 	);
 });

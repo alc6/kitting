@@ -19,6 +19,7 @@ import {
 	type Shortages,
 } from "../domain/purchasing";
 import { errorText, fmt } from "../i18n";
+import { cn } from "../lib/cn";
 import { runBatch } from "../lib/db";
 import { isConstraintError } from "../lib/sql";
 import { formatCentsInput, formatQtyInput, lineCostCents, MILLI, parseCents, parseMilli } from "../lib/units";
@@ -26,23 +27,46 @@ import { type FieldErrors, validate } from "../lib/validation";
 import { requireAdmin } from "../middleware/auth";
 import type { AppEnv } from "../types";
 import { useApp } from "../views/context";
+import { Icon, icons } from "../views/icons";
 import { idParam, notFound, nowIso, page, redirectOk, translateErrors } from "../views/render";
 import {
+	Alert,
+	Badge,
+	Button,
+	Card,
+	CardAction,
+	CardContent,
+	CardDescription,
+	CardFooter,
+	CardHeader,
+	CardTitle,
+	CollapsibleCard,
 	Empty,
+	EmptyState,
 	ErrorBanner,
+	FieldGroup,
 	Flash,
 	type FormErrors,
 	type FormValues,
-	LinkButton,
+	LinkTabs,
 	Money,
 	PageHeader,
 	PostButton,
 	Qty,
 	SearchBar,
 	SelectField,
+	StatCard,
+	Table,
+	TableBody,
+	TableCell,
+	TableFooter,
+	TableHead,
+	TableHeader,
+	TableRow,
 	TextArea,
 	TextField,
 } from "../views/ui";
+
 import { csvResponse } from "./import";
 
 export const purchasingRoutes = new Hono<AppEnv>();
@@ -52,20 +76,41 @@ type Tab = "shortages" | "pos";
 function PurchasingTabs(props: { active: Tab }) {
 	const { t } = useApp();
 	return (
-		<nav class="tabs">
-			<a href="/purchasing" class={props.active === "shortages" ? "active" : undefined}>
-				{t.purchasing.tabs.shortages}
-			</a>
-			<a href="/purchasing/po" class={props.active === "pos" ? "active" : undefined}>
-				{t.purchasing.tabs.pos}
-			</a>
-		</nav>
+		<LinkTabs
+			items={[
+				{
+					href: "/purchasing",
+					label: t.purchasing.tabs.shortages,
+					active: props.active === "shortages",
+					icon: icons.trendingDown,
+				},
+				{ href: "/purchasing/po", label: t.purchasing.tabs.pos, active: props.active === "pos", icon: icons.receipt },
+			]}
+		/>
 	);
 }
 
 export function PoStatusBadge(props: { status: PoStatus }) {
 	const { t } = useApp();
 	return <span class={`status status-${props.status}`}>{t.purchasing.statuses[props.status]}</span>;
+}
+
+/** An open PO whose expected date is in the past. */
+function isOverdue(expectedAt: string | null, status: PoStatus, today: string): boolean {
+	return expectedAt !== null && expectedAt < today && OPEN_PO_STATUSES.includes(status);
+}
+
+/** Part reference (linked), name and optional supplier reference, for the first cell of a line. */
+function PartCell(props: { id: number; ref: string; name: string; supplierRef?: string | null }) {
+	return (
+		<TableCell class="min-w-44">
+			<span class="whitespace-nowrap">
+				<a href={`/parts/${props.id}`}>{props.ref}</a>
+			</span>{" "}
+			<span class="text-muted-foreground">{props.name}</span>
+			{props.supplierRef ? <div class="text-xs text-muted-foreground">{props.supplierRef}</div> : null}
+		</TableCell>
+	);
 }
 
 // ---------------------------------------------------------------------------
@@ -77,78 +122,85 @@ export function ShortageTables(props: { shortages: Shortages; selectable?: boole
 	return (
 		<>
 			{shortages.missingBoms.length ? (
-				<section class="card warning">
-					<h2>{t.purchasing.missingBoms}</h2>
-					<ul>
+				<Alert variant="warning" title={t.purchasing.missingBoms} class="mb-0">
+					<ul class="m-0 flex list-disc flex-col gap-1 pl-4">
 						{shortages.missingBoms.map((m) => (
 							<li>
-								<strong>{m.ref}</strong> {m.name} × <Qty milli={m.qtyMilli} /> ({m.builds.join(", ")})
+								<span class="font-medium">{m.ref}</span> {m.name} × <Qty milli={m.qtyMilli} /> ({m.builds.join(", ")})
 							</li>
 						))}
 					</ul>
-				</section>
+				</Alert>
 			) : null}
 			{shortages.groups.map((g) => (
-				<section class="card">
-					<div class="section-header">
-						<h2>
-							{g.supplierId === null ? (
-								<span class="warn">{t.purchasing.unassigned}</span>
-							) : props.selectable ? (
-								<label class="check">
-									<input type="checkbox" name={`supplier_${g.supplierId}`} value="on" checked />
-									<span>{g.supplierName}</span>
-								</label>
-							) : (
+				<Card class={cn("gap-4", g.supplierId === null && "border-warning/40")}>
+					<CardHeader>
+						{g.supplierId === null ? (
+							<CardTitle class="flex items-center gap-2 text-warning">
+								<Icon icon={icons.triangleAlert} class="size-4" />
+								{t.purchasing.unassigned}
+							</CardTitle>
+						) : (
+							<CardTitle class="flex items-center gap-2">
+								<Icon icon={icons.factory} class="size-4 text-muted-foreground" />
 								<a href={`/suppliers/${g.supplierId}`}>{g.supplierName}</a>
-							)}
-						</h2>
-						<span class="muted">
-							{t.purchasing.estimated}: <Money cents={g.totalCents} />
-						</span>
-					</div>
-					<div class="scroll-x">
-						<table class="table">
-							<thead>
-								<tr>
-									<th>{t.purchasing.part}</th>
-									<th class="num">{t.purchasing.need}</th>
-									<th class="num">{t.purchasing.onHand}</th>
-									<th class="num">{t.purchasing.onOrder}</th>
-									<th class="num">{t.purchasing.net}</th>
-									<th class="num">{t.purchasing.order}</th>
-									<th>{t.purchasing.builds}</th>
-								</tr>
-							</thead>
-							<tbody>
+							</CardTitle>
+						)}
+						<CardDescription>
+							{fmt(t.purchasing.partCount, { n: g.lines.length })} · {t.purchasing.estimated}:{" "}
+							<Money cents={g.totalCents} />
+						</CardDescription>
+						{props.selectable && g.supplierId !== null ? (
+							<CardAction>
+								<label class="flex min-h-(--control-h) cursor-pointer items-center gap-3 text-sm font-medium">
+									<input type="checkbox" data-slot="checkbox" name={`supplier_${g.supplierId}`} value="on" checked />
+									<span>
+										{t.purchasing.include}
+										<span class="sr-only"> {g.supplierName}</span>
+									</span>
+								</label>
+							</CardAction>
+						) : null}
+					</CardHeader>
+					<CardContent class="px-2">
+						<Table>
+							<TableHeader>
+								<TableRow>
+									<TableHead>{t.purchasing.part}</TableHead>
+									<TableHead class="text-right">{t.purchasing.need}</TableHead>
+									<TableHead class="text-right">{t.purchasing.onHand}</TableHead>
+									<TableHead class="text-right">{t.purchasing.onOrder}</TableHead>
+									<TableHead class="text-right">{t.purchasing.net}</TableHead>
+									<TableHead class="text-right">{t.purchasing.order}</TableHead>
+									<TableHead>{t.purchasing.builds}</TableHead>
+								</TableRow>
+							</TableHeader>
+							<TableBody>
 								{g.lines.map((l) => (
-									<tr>
-										<td>
-											<a href={`/parts/${l.part.id}`}>{l.part.ref}</a> {l.part.name}
-											{l.part.supplierRef ? <div class="muted small">{l.part.supplierRef}</div> : null}
-										</td>
-										<td class="num">
+									<TableRow>
+										<PartCell id={l.part.id} ref={l.part.ref} name={l.part.name} supplierRef={l.part.supplierRef} />
+										<TableCell class="text-right">
 											<Qty milli={l.needMilli} unit={l.part.unit} />
-										</td>
-										<td class="num">
+										</TableCell>
+										<TableCell class="text-right">
 											<Qty milli={l.onHandMilli} unit={l.part.unit} />
-										</td>
-										<td class="num">{l.onOrderMilli ? <Qty milli={l.onOrderMilli} unit={l.part.unit} /> : ""}</td>
-										<td class="num warn">
+										</TableCell>
+										<TableCell class="text-right">
+											{l.onOrderMilli ? <Qty milli={l.onOrderMilli} unit={l.part.unit} /> : ""}
+										</TableCell>
+										<TableCell class="text-right font-medium text-warning">
 											<Qty milli={l.netMilli} unit={l.part.unit} />
-										</td>
-										<td class="num">
-											<strong>
-												<Qty milli={l.orderMilli} unit={l.part.unit} />
-											</strong>
-										</td>
-										<td class="small">{l.builds.join(", ")}</td>
-									</tr>
+										</TableCell>
+										<TableCell class="text-right font-semibold">
+											<Qty milli={l.orderMilli} unit={l.part.unit} />
+										</TableCell>
+										<TableCell class="text-xs text-muted-foreground">{l.builds.join(", ")}</TableCell>
+									</TableRow>
 								))}
-							</tbody>
-						</table>
-					</div>
-				</section>
+							</TableBody>
+						</Table>
+					</CardContent>
+				</Card>
 			))}
 		</>
 	);
@@ -162,20 +214,29 @@ purchasingRoutes.get("/", async (c) => {
 		c,
 		t.purchasing.title,
 		<>
-			<PageHeader title={t.purchasing.title} />
+			<PageHeader
+				title={t.purchasing.title}
+				actions={
+					orderable ? (
+						<Button form="draft-pos" icon={icons.shoppingCart}>
+							{t.purchasing.createDrafts}
+						</Button>
+					) : undefined
+				}
+			/>
 			<PurchasingTabs active="shortages" />
-			<p>{fmt(t.purchasing.shortagesIntro, { n: shortages.buildCount })}</p>
+			<p class="mb-4 max-w-3xl text-sm text-muted-foreground">
+				{fmt(t.purchasing.shortagesIntro, { n: shortages.buildCount })}
+			</p>
 			{shortages.groups.length === 0 && shortages.missingBoms.length === 0 ? (
-				<Empty>{t.purchasing.noShortages}</Empty>
+				<EmptyState icon={icons.circleCheck} description={t.purchasing.noShortages} />
 			) : (
-				<form method="post" action="/purchasing/draft-pos">
+				<form id="draft-pos" method="post" action="/purchasing/draft-pos" class="flex flex-col gap-4">
 					<ShortageTables shortages={shortages} selectable />
 					{orderable ? (
-						<div class="form-actions">
-							<button type="submit" class="button primary">
-								{t.purchasing.createDrafts}
-							</button>
-							<small class="hint">{t.purchasing.createDraftsHint}</small>
+						<div class="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-muted/50 px-6 py-4">
+							<p class="text-sm text-muted-foreground">{t.purchasing.createDraftsHint}</p>
+							<Button icon={icons.shoppingCart}>{t.purchasing.createDrafts}</Button>
 						</div>
 					) : null}
 				</form>
@@ -218,10 +279,14 @@ purchasingRoutes.get("/po", async (c) => {
 		<>
 			<PageHeader
 				title={t.purchasing.title}
-				actions={<LinkButton href="/purchasing/po/new" label={t.purchasing.newPo} />}
+				actions={
+					<Button href="/purchasing/po/new" icon={icons.plus}>
+						{t.purchasing.newPo}
+					</Button>
+				}
 			/>
 			<PurchasingTabs active="pos" />
-			{created ? <Flash message={fmt(t.purchasing.draftsCreated, { n: created })} /> : null}
+			<Flash ok={c.req.query("ok")} message={created ? fmt(t.purchasing.draftsCreated, { n: created }) : undefined} />
 			<SearchBar action="/purchasing/po" q={q}>
 				<select name="status" aria-label={t.purchasing.status}>
 					<option value="open">{t.purchasing.statusFilter.open}</option>
@@ -236,51 +301,67 @@ purchasingRoutes.get("/po", async (c) => {
 				</select>
 			</SearchBar>
 			<div id="results">
-				<PoTable rows={rows} today={today} />
+				{rows.length === 0 ? (
+					<EmptyState icon={icons.receipt} description={t.purchasing.noPos}>
+						<Button href="/purchasing/po/new" variant="outline" icon={icons.plus}>
+							{t.purchasing.newPo}
+						</Button>
+					</EmptyState>
+				) : (
+					<Card class="gap-0 overflow-hidden py-0">
+						<PoTable rows={rows} today={today} />
+					</Card>
+				)}
 			</div>
 		</>,
 	);
 });
 
+/** The PO list as a bare table (or an empty state); callers put it in a card. */
 export function PoTable(props: { rows: Awaited<ReturnType<typeof listPos>>; today: string }) {
 	const { t } = useApp();
 	if (props.rows.length === 0) return <Empty>{t.purchasing.noPos}</Empty>;
 	return (
-		<table class="table">
-			<thead>
-				<tr>
-					<th>{t.purchasing.number}</th>
-					<th>{t.purchasing.supplier}</th>
-					<th>{t.purchasing.status}</th>
-					<th>{t.purchasing.expectedAt}</th>
-					<th class="num">{t.purchasing.lines}</th>
-					<th class="num">{t.purchasing.total}</th>
-				</tr>
-			</thead>
-			<tbody>
-				{props.rows.map((po) => (
-					<tr>
-						<td>
-							<a href={`/purchasing/po/${po.id}`}>{po.number}</a>
-						</td>
-						<td>{po.supplierName}</td>
-						<td>
-							<PoStatusBadge status={po.status} />
-						</td>
-						<td class="nowrap">
-							{po.expectedAt ?? ""}
-							{po.expectedAt && po.expectedAt < props.today && OPEN_PO_STATUSES.includes(po.status) ? (
-								<span class="tag warn">{t.purchasing.overdue}</span>
-							) : null}
-						</td>
-						<td class="num">{po.lineCount}</td>
-						<td class="num">
-							<Money cents={po.totalCents} />
-						</td>
-					</tr>
-				))}
-			</tbody>
-		</table>
+		<Table>
+			<TableHeader>
+				<TableRow>
+					<TableHead>{t.purchasing.number}</TableHead>
+					<TableHead>{t.purchasing.supplier}</TableHead>
+					<TableHead>{t.purchasing.status}</TableHead>
+					<TableHead>{t.purchasing.expectedAt}</TableHead>
+					<TableHead class="text-right">{t.purchasing.lines}</TableHead>
+					<TableHead class="text-right">{t.purchasing.total}</TableHead>
+				</TableRow>
+			</TableHeader>
+			<TableBody>
+				{props.rows.map((po) => {
+					const overdue = isOverdue(po.expectedAt, po.status, props.today);
+					return (
+						<TableRow>
+							<TableCell class="font-medium">
+								<a href={`/purchasing/po/${po.id}`}>{po.number}</a>
+							</TableCell>
+							<TableCell>{po.supplierName}</TableCell>
+							<TableCell>
+								<PoStatusBadge status={po.status} />
+							</TableCell>
+							<TableCell class="whitespace-nowrap">
+								<span class={cn("tabular-nums", overdue && "text-destructive")}>{po.expectedAt ?? ""}</span>
+								{overdue ? (
+									<Badge variant="destructive" class="ml-2">
+										{t.purchasing.overdue}
+									</Badge>
+								) : null}
+							</TableCell>
+							<TableCell class="text-right tabular-nums">{po.lineCount}</TableCell>
+							<TableCell class="text-right">
+								<Money cents={po.totalCents} />
+							</TableCell>
+						</TableRow>
+					);
+				})}
+			</TableBody>
+		</Table>
 	);
 }
 
@@ -292,26 +373,35 @@ function NewPoForm(props: { values: FormValues; errors: FormErrors; suppliers: {
 	const { t } = useApp();
 	const p = { values: props.values, errors: props.errors };
 	return (
-		<form method="post" action="/purchasing/po" class="card form">
-			<ErrorBanner show={Object.keys(props.errors).length > 0} />
-			<SelectField
-				name="supplier_id"
-				label={t.purchasing.supplier}
-				required
-				options={[{ value: "", label: "—" }, ...props.suppliers.map((s) => ({ value: String(s.id), label: s.name }))]}
-				{...p}
-			/>
-			<TextField name="expected_at" label={t.purchasing.expectedAt} type="date" {...p} />
-			<TextArea name="notes" label={t.common.notes} {...p} />
-			<div class="form-actions">
-				<button type="submit" class="button primary">
-					{t.common.create}
-				</button>
-				<a class="button secondary" href="/purchasing/po">
-					{t.common.cancel}
-				</a>
-			</div>
-		</form>
+		<Card class="max-w-3xl">
+			<form method="post" action="/purchasing/po" class="flex flex-col gap-6">
+				<CardContent>
+					<ErrorBanner show={Object.keys(props.errors).length > 0} />
+					<FieldGroup>
+						<div class="grid gap-4 md:grid-cols-2">
+							<SelectField
+								name="supplier_id"
+								label={t.purchasing.supplier}
+								required
+								options={[
+									{ value: "", label: "—" },
+									...props.suppliers.map((s) => ({ value: String(s.id), label: s.name })),
+								]}
+								{...p}
+							/>
+							<TextField name="expected_at" label={t.purchasing.expectedAt} type="date" {...p} />
+						</div>
+						<TextArea name="notes" label={t.common.notes} {...p} />
+					</FieldGroup>
+				</CardContent>
+				<CardFooter class="border-t">
+					<Button icon={icons.plus}>{t.common.create}</Button>
+					<Button href="/purchasing/po" variant="outline">
+						{t.common.cancel}
+					</Button>
+				</CardFooter>
+			</form>
+		</Card>
 	);
 }
 
@@ -383,285 +473,400 @@ async function loadPo(c: Context<AppEnv>) {
 	return id ? getPo(c.var.db, id) : undefined;
 }
 
+const linesTotal = (lines: PoLineRow[]) =>
+	lines.reduce((s, l) => s + lineCostCents(l.line.qtyMilli, l.line.unitPriceCents), 0);
+
+/** Key figures of a PO: line count, total, expected date and how much has arrived. */
+function PoStats(props: { po: PoData["po"]; lines: PoLineRow[]; today: string }) {
+	const { t } = useApp();
+	const { po, lines } = props;
+	const ordered = lines.reduce((s, l) => s + l.line.qtyMilli, 0);
+	const received = lines.reduce((s, l) => s + Math.min(l.line.receivedQtyMilli, l.line.qtyMilli), 0);
+	// Integer floor division, so a nearly complete PO never reads 100 %.
+	const pct = ordered > 0 ? (received * 100 - ((received * 100) % ordered)) / ordered : 0;
+	const complete = lines.filter((l) => l.line.receivedQtyMilli >= l.line.qtyMilli).length;
+	const overdue = isOverdue(po.expectedAt, po.status, props.today);
+	return (
+		<div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+			<StatCard label={t.purchasing.lines} value={lines.length} icon={icons.list} />
+			<StatCard label={t.purchasing.total} value={<Money cents={linesTotal(lines)} />} icon={icons.coins} />
+			<StatCard
+				label={t.purchasing.expectedAt}
+				value={<span class="whitespace-nowrap">{po.expectedAt ?? t.common.none}</span>}
+				icon={icons.calendarClock}
+				tone={overdue ? "destructive" : "default"}
+				hint={overdue ? <Badge variant="destructive">{t.purchasing.overdue}</Badge> : undefined}
+			/>
+			<StatCard
+				label={t.purchasing.received}
+				value={fmt(t.purchasing.percent, { n: pct })}
+				icon={icons.packageCheck}
+				tone={lines.length > 0 && complete === lines.length ? "success" : "default"}
+				hint={fmt(t.purchasing.linesComplete, { done: complete, n: lines.length })}
+			/>
+		</div>
+	);
+}
+
+/**
+ * Editable lines of a draft PO. Everything inside #po-lines (figures, lines, add-line form) is
+ * swapped by htmx after each change, so the totals never go stale.
+ */
 function DraftLines(props: {
 	po: PoData["po"];
 	lines: PoLineRow[];
 	options: { ref: string; name: string }[];
 	values: FormValues;
 	errors: FormErrors;
+	today: string;
 }) {
 	const { t, locale } = useApp();
 	const { po } = props;
 	const hx = { "hx-target": "#po-lines", "hx-select": "#po-lines", "hx-swap": "outerHTML" };
-	const total = props.lines.reduce((s, l) => s + lineCostCents(l.line.qtyMilli, l.line.unitPriceCents), 0);
 	return (
-		<section class="card" id="po-lines">
-			{props.lines.length === 0 ? (
-				<Empty />
-			) : (
-				<div class="scroll-x">
-					<table class="table lines">
-						<thead>
-							<tr>
-								<th>{t.purchasing.part}</th>
-								<th class="num">{t.purchasing.qty}</th>
-								<th class="num">{t.purchasing.price}</th>
-								<th class="num">{t.purchasing.lineTotal}</th>
-								<th class="narrow" />
-							</tr>
-						</thead>
-						<tbody>
-							{props.lines.map((l) => (
-								<tr>
-									<td>
-										<a href={`/parts/${l.line.partId}`}>{l.ref}</a> {l.name}
-										{l.supplierRef ? <div class="muted small">{l.supplierRef}</div> : null}
-									</td>
-									<td class="num" colspan={2}>
-										<form
-											method="post"
-											action={`/purchasing/po/${po.id}/lines/${l.line.id}`}
-											class="qty-form"
-											hx-post={`/purchasing/po/${po.id}/lines/${l.line.id}`}
-											hx-trigger="change"
-											{...hx}
-										>
-											<input
-												type="text"
-												name="qty"
-												inputmode="decimal"
-												class="qty"
-												value={formatQtyInput(l.line.qtyMilli, locale)}
-												aria-label={`${t.purchasing.qty} ${l.ref}`}
-												data-select-on-focus
-											/>
-											<span class="unit">{l.unit !== "pcs" ? l.unit : ""}</span>
-											<input
-												type="text"
-												name="price"
-												inputmode="decimal"
-												class="qty"
-												value={formatCentsInput(l.line.unitPriceCents, locale)}
-												aria-label={`${t.purchasing.price} ${l.ref}`}
-												data-select-on-focus
-											/>
-											<button type="submit" class="button small">
-												{t.common.save}
-											</button>
-										</form>
-									</td>
-									<td class="num">
-										<Money cents={lineCostCents(l.line.qtyMilli, l.line.unitPriceCents)} />
-									</td>
-									<td class="narrow">
-										<form
-											method="post"
-											action={`/purchasing/po/${po.id}/lines/${l.line.id}/delete`}
-											class="inline"
-											hx-post={`/purchasing/po/${po.id}/lines/${l.line.id}/delete`}
-											{...hx}
-										>
-											<button
-												type="submit"
-												class="button small icon danger"
-												aria-label={t.boms.remove}
-												title={t.boms.remove}
+		<div id="po-lines" class="flex flex-col gap-4">
+			<PoStats po={po} lines={props.lines} today={props.today} />
+			<Card class="gap-4">
+				<CardHeader>
+					<CardTitle>{t.purchasing.lines}</CardTitle>
+				</CardHeader>
+				<CardContent class="px-2">
+					{props.lines.length === 0 ? (
+						<EmptyState icon={icons.list} description={t.purchasing.noLines} class="mx-4" />
+					) : (
+						<Table>
+							<TableHeader>
+								<TableRow>
+									<TableHead>{t.purchasing.part}</TableHead>
+									<TableHead>
+										{/* Same widths as the inputs below, so the labels sit over their fields. */}
+										<div class="flex items-center justify-end gap-2">
+											<span class="w-24 text-right">{t.purchasing.qty}</span>
+											<span class="w-10" />
+											<span class="w-28 text-right">{t.purchasing.price}</span>
+											<span class="w-(--control-h-sm)" />
+										</div>
+									</TableHead>
+									<TableHead class="text-right">{t.purchasing.lineTotal}</TableHead>
+									<TableHead class="w-px">
+										<span class="sr-only">{t.common.actions}</span>
+									</TableHead>
+								</TableRow>
+							</TableHeader>
+							<TableBody>
+								{props.lines.map((l) => (
+									<TableRow>
+										<PartCell id={l.line.partId} ref={l.ref} name={l.name} supplierRef={l.supplierRef} />
+										<TableCell>
+											<form
+												method="post"
+												action={`/purchasing/po/${po.id}/lines/${l.line.id}`}
+												class="flex items-center justify-end gap-2"
+												hx-post={`/purchasing/po/${po.id}/lines/${l.line.id}`}
+												hx-trigger="change"
+												{...hx}
 											>
-												✕
-											</button>
-										</form>
-									</td>
-								</tr>
+												<input
+													type="text"
+													name="qty"
+													inputmode="decimal"
+													class="w-24 text-right tabular-nums"
+													value={formatQtyInput(l.line.qtyMilli, locale)}
+													aria-label={`${t.purchasing.qty} ${l.ref}`}
+													data-select-on-focus
+												/>
+												<span class="w-10 truncate text-sm text-muted-foreground">
+													{l.unit !== "pcs" ? l.unit : ""}
+												</span>
+												<input
+													type="text"
+													name="price"
+													inputmode="decimal"
+													class="w-28 text-right tabular-nums"
+													value={formatCentsInput(l.line.unitPriceCents, locale)}
+													aria-label={`${t.purchasing.price} ${l.ref}`}
+													data-select-on-focus
+												/>
+												<Button
+													variant="outline"
+													size="icon-sm"
+													icon={icons.check}
+													aria-label={t.common.save}
+													title={t.common.save}
+												/>
+											</form>
+										</TableCell>
+										<TableCell class="text-right">
+											<Money cents={lineCostCents(l.line.qtyMilli, l.line.unitPriceCents)} />
+										</TableCell>
+										<TableCell class="w-px">
+											<form
+												method="post"
+												action={`/purchasing/po/${po.id}/lines/${l.line.id}/delete`}
+												class="inline"
+												hx-post={`/purchasing/po/${po.id}/lines/${l.line.id}/delete`}
+												{...hx}
+											>
+												<Button
+													variant="destructive"
+													size="icon-sm"
+													icon={icons.trash}
+													aria-label={t.boms.remove}
+													title={t.boms.remove}
+												/>
+											</form>
+										</TableCell>
+									</TableRow>
+								))}
+							</TableBody>
+							<TableFooter>
+								<TableRow>
+									<TableCell colspan={2}>{t.purchasing.total}</TableCell>
+									<TableCell class="text-right">
+										<Money cents={linesTotal(props.lines)} />
+									</TableCell>
+									<TableCell />
+								</TableRow>
+							</TableFooter>
+						</Table>
+					)}
+				</CardContent>
+				<CardFooter class="border-t">
+					<form
+						method="post"
+						action={`/purchasing/po/${po.id}/lines`}
+						class="w-full"
+						hx-post={`/purchasing/po/${po.id}/lines`}
+						{...hx}
+					>
+						<ErrorBanner show={Object.keys(props.errors).length > 0} />
+						<div class="grid gap-4 md:grid-cols-[2fr_1fr_1fr_auto] md:items-start">
+							<TextField
+								name="part"
+								label={t.purchasing.part}
+								list="po-parts"
+								required
+								values={props.values}
+								errors={props.errors}
+							/>
+							<TextField
+								name="qty"
+								label={t.purchasing.qty}
+								inputmode="decimal"
+								required
+								values={props.values}
+								errors={props.errors}
+							/>
+							<TextField
+								name="price"
+								label={t.purchasing.price}
+								hint={t.purchasing.priceHint}
+								inputmode="decimal"
+								values={props.values}
+								errors={props.errors}
+							/>
+							<div class="flex flex-col gap-2">
+								{/* Takes the height of a field label, so the button lines up with the inputs. */}
+								<span aria-hidden="true" class="hidden text-sm leading-snug select-none md:block">
+									{" "}
+								</span>
+								<Button icon={icons.plus}>{t.purchasing.addLine}</Button>
+							</div>
+						</div>
+						<datalist id="po-parts">
+							{props.options.map((o) => (
+								<option value={o.ref}>{o.name}</option>
 							))}
-						</tbody>
-						<tfoot>
-							<tr>
-								<td colspan={3}>{t.purchasing.total}</td>
-								<td class="num">
-									<Money cents={total} />
-								</td>
-								<td />
-							</tr>
-						</tfoot>
-					</table>
-				</div>
-			)}
-			<form
-				method="post"
-				action={`/purchasing/po/${po.id}/lines`}
-				class="add-line"
-				hx-post={`/purchasing/po/${po.id}/lines`}
-				{...hx}
-			>
-				<ErrorBanner show={Object.keys(props.errors).length > 0} />
-				<div class="add-line-grid">
-					<TextField
-						name="part"
-						label={t.purchasing.part}
-						list="po-parts"
-						required
-						values={props.values}
-						errors={props.errors}
-					/>
-					<TextField
-						name="qty"
-						label={t.purchasing.qty}
-						inputmode="decimal"
-						required
-						values={props.values}
-						errors={props.errors}
-					/>
-					<TextField
-						name="price"
-						label={t.purchasing.price}
-						hint={t.purchasing.priceHint}
-						inputmode="decimal"
-						values={props.values}
-						errors={props.errors}
-					/>
-					<div class="field">
-						<span class="label-spacer" />
-						<button type="submit" class="button primary">
-							{t.purchasing.addLine}
-						</button>
-					</div>
-				</div>
-				<datalist id="po-parts">
-					{props.options.map((o) => (
-						<option value={o.ref}>{o.name}</option>
-					))}
-				</datalist>
-			</form>
-		</section>
+						</datalist>
+					</form>
+				</CardFooter>
+			</Card>
+		</div>
 	);
 }
 
 function ReceiveForm(props: { po: PoData["po"]; lines: PoLineRow[]; values: FormValues; errors: FieldErrors }) {
 	const { t, locale } = useApp();
 	const { po } = props;
+	const hasErrors = Object.keys(props.errors).length > 0;
 	return (
-		<form method="post" action={`/purchasing/po/${po.id}/receive`} class="card form" id="receive">
-			<h2>{t.purchasing.receiveTitle}</h2>
-			<p class="muted">{t.purchasing.receiveIntro}</p>
-			<ErrorBanner show={Object.keys(props.errors).length > 0} />
-			{props.errors._ ? <p class="flash error">{errorText(t, props.errors._)}</p> : null}
-			<div class="scroll-x">
-				<table class="table">
-					<thead>
-						<tr>
-							<th>{t.purchasing.part}</th>
-							<th class="num">{t.purchasing.qty}</th>
-							<th class="num">{t.purchasing.received}</th>
-							<th class="num">{t.purchasing.receiveNow}</th>
-							<th>{t.purchasing.serials}</th>
-						</tr>
-					</thead>
-					<tbody>
-						{props.lines.map((l) => {
-							const remaining = Math.max(0, l.line.qtyMilli - l.line.receivedQtyMilli);
-							const qtyName = `recv_${l.line.id}`;
-							const serialName = `serials_${l.line.id}`;
-							return (
-								<tr>
-									<td>
-										<a href={`/parts/${l.line.partId}`}>{l.ref}</a> {l.name}
-									</td>
-									<td class="num">
-										<Qty milli={l.line.qtyMilli} unit={l.unit} />
-									</td>
-									<td class="num">
-										<Qty milli={l.line.receivedQtyMilli} unit={l.unit} />
-									</td>
-									<td class="num">
-										<input
-											type="text"
-											name={qtyName}
-											inputmode="decimal"
-											class="qty"
-											value={props.values[qtyName] ?? (remaining ? formatQtyInput(remaining, locale) : "")}
-											aria-label={`${t.purchasing.receiveNow} ${l.ref}`}
-											data-select-on-focus
-										/>
-										{props.errors[qtyName] ? (
-											<div class="error small">{errorText(t, props.errors[qtyName] ?? "")}</div>
-										) : null}
-									</td>
-									<td>
-										{l.trackSerial ? (
-											<>
-												<textarea name={serialName} rows={2} aria-label={`${t.purchasing.serials} ${l.ref}`}>
-													{props.values[serialName] ?? ""}
-												</textarea>
-												{props.errors[serialName] ? (
-													<div class="error small">
-														{errorText(t, props.errors[serialName] ?? "", { n: props.values[qtyName] ?? "" })}
-													</div>
+		<Card>
+			<form method="post" action={`/purchasing/po/${po.id}/receive`} class="flex flex-col gap-6" id="receive">
+				<CardHeader>
+					<CardTitle class="flex items-center gap-2">
+						<Icon icon={icons.truck} class="size-4 text-muted-foreground" />
+						{t.purchasing.receiveTitle}
+					</CardTitle>
+					<CardDescription>{t.purchasing.receiveIntro}</CardDescription>
+				</CardHeader>
+				<CardContent class="px-2">
+					{hasErrors ? (
+						<div class="px-4">
+							<ErrorBanner show />
+							{props.errors._ ? <Alert variant="destructive">{errorText(t, props.errors._)}</Alert> : null}
+						</div>
+					) : null}
+					<Table>
+						<TableHeader>
+							<TableRow>
+								<TableHead>{t.purchasing.part}</TableHead>
+								<TableHead class="text-right">{t.purchasing.qty}</TableHead>
+								<TableHead class="text-right">{t.purchasing.received}</TableHead>
+								<TableHead class="text-right">{t.purchasing.receiveNow}</TableHead>
+								<TableHead>{t.purchasing.serials}</TableHead>
+							</TableRow>
+						</TableHeader>
+						<TableBody>
+							{props.lines.map((l) => {
+								const remaining = Math.max(0, l.line.qtyMilli - l.line.receivedQtyMilli);
+								const qtyName = `recv_${l.line.id}`;
+								const serialName = `serials_${l.line.id}`;
+								const qtyError = props.errors[qtyName];
+								const serialError = props.errors[serialName];
+								return (
+									<TableRow>
+										<PartCell id={l.line.partId} ref={l.ref} name={l.name} />
+										<TableCell class="text-right">
+											<Qty milli={l.line.qtyMilli} unit={l.unit} />
+										</TableCell>
+										<TableCell class="text-right">
+											<Qty milli={l.line.receivedQtyMilli} unit={l.unit} />
+										</TableCell>
+										<TableCell>
+											<div class="flex flex-col items-end gap-1">
+												<input
+													type="text"
+													name={qtyName}
+													inputmode="decimal"
+													class="w-28 text-right tabular-nums"
+													value={props.values[qtyName] ?? (remaining ? formatQtyInput(remaining, locale) : "")}
+													aria-label={`${t.purchasing.receiveNow} ${l.ref}`}
+													aria-invalid={qtyError ? "true" : undefined}
+													aria-describedby={qtyError ? `e-${qtyName}` : undefined}
+													data-select-on-focus
+												/>
+												{qtyError ? (
+													<p id={`e-${qtyName}`} class="text-sm text-destructive">
+														{errorText(t, qtyError)}
+													</p>
 												) : null}
-											</>
-										) : null}
-									</td>
-								</tr>
-							);
-						})}
-					</tbody>
-				</table>
-			</div>
-			<div class="form-actions">
-				<button type="submit" class="button primary big">
-					{t.purchasing.postReceipt}
-				</button>
-			</div>
-		</form>
+											</div>
+										</TableCell>
+										<TableCell>
+											{l.trackSerial ? (
+												<div class="flex flex-col gap-1">
+													<textarea
+														name={serialName}
+														rows={2}
+														class="min-h-16 min-w-48"
+														aria-label={`${t.purchasing.serials} ${l.ref}`}
+														aria-invalid={serialError ? "true" : undefined}
+														aria-describedby={serialError ? `e-${serialName}` : undefined}
+													>
+														{props.values[serialName] ?? ""}
+													</textarea>
+													{serialError ? (
+														<p id={`e-${serialName}`} class="text-sm text-destructive">
+															{errorText(t, serialError, { n: props.values[qtyName] ?? "" })}
+														</p>
+													) : null}
+												</div>
+											) : null}
+										</TableCell>
+									</TableRow>
+								);
+							})}
+						</TableBody>
+					</Table>
+				</CardContent>
+				<CardFooter class="border-t">
+					<Button size="lg" icon={icons.packageCheck}>
+						{t.purchasing.postReceipt}
+					</Button>
+				</CardFooter>
+			</form>
+		</Card>
 	);
 }
 
 function ReadOnlyLines(props: { lines: PoLineRow[] }) {
 	const { t } = useApp();
-	const total = props.lines.reduce((s, l) => s + lineCostCents(l.line.qtyMilli, l.line.unitPriceCents), 0);
 	return (
-		<section class="card">
-			<table class="table">
-				<thead>
-					<tr>
-						<th>{t.purchasing.part}</th>
-						<th class="num">{t.purchasing.qty}</th>
-						<th class="num">{t.purchasing.received}</th>
-						<th class="num">{t.purchasing.price}</th>
-						<th class="num">{t.purchasing.lineTotal}</th>
-					</tr>
-				</thead>
-				<tbody>
-					{props.lines.map((l) => (
-						<tr>
-							<td>
-								<a href={`/parts/${l.line.partId}`}>{l.ref}</a> {l.name}
-								{l.supplierRef ? <div class="muted small">{l.supplierRef}</div> : null}
-							</td>
-							<td class="num">
-								<Qty milli={l.line.qtyMilli} unit={l.unit} />
-							</td>
-							<td class="num">
-								<Qty milli={l.line.receivedQtyMilli} unit={l.unit} />
-							</td>
-							<td class="num">
-								<Money cents={l.line.unitPriceCents} />
-							</td>
-							<td class="num">
-								<Money cents={lineCostCents(l.line.qtyMilli, l.line.unitPriceCents)} />
-							</td>
-						</tr>
-					))}
-				</tbody>
-				<tfoot>
-					<tr>
-						<td colspan={4}>{t.purchasing.total}</td>
-						<td class="num">
-							<Money cents={total} />
-						</td>
-					</tr>
-				</tfoot>
-			</table>
-		</section>
+		<Card class="gap-4">
+			<CardHeader>
+				<CardTitle>{t.purchasing.lines}</CardTitle>
+				<CardDescription>{t.purchasing.draftOnly}</CardDescription>
+			</CardHeader>
+			<CardContent class="px-2">
+				<Table>
+					<TableHeader>
+						<TableRow>
+							<TableHead>{t.purchasing.part}</TableHead>
+							<TableHead class="text-right">{t.purchasing.qty}</TableHead>
+							<TableHead class="text-right">{t.purchasing.received}</TableHead>
+							<TableHead class="text-right">{t.purchasing.price}</TableHead>
+							<TableHead class="text-right">{t.purchasing.lineTotal}</TableHead>
+						</TableRow>
+					</TableHeader>
+					<TableBody>
+						{props.lines.map((l) => (
+							<TableRow>
+								<PartCell id={l.line.partId} ref={l.ref} name={l.name} supplierRef={l.supplierRef} />
+								<TableCell class="text-right">
+									<Qty milli={l.line.qtyMilli} unit={l.unit} />
+								</TableCell>
+								<TableCell
+									class={cn("text-right", l.line.receivedQtyMilli >= l.line.qtyMilli && "font-medium text-success")}
+								>
+									<Qty milli={l.line.receivedQtyMilli} unit={l.unit} />
+								</TableCell>
+								<TableCell class="text-right">
+									<Money cents={l.line.unitPriceCents} />
+								</TableCell>
+								<TableCell class="text-right">
+									<Money cents={lineCostCents(l.line.qtyMilli, l.line.unitPriceCents)} />
+								</TableCell>
+							</TableRow>
+						))}
+					</TableBody>
+					<TableFooter>
+						<TableRow>
+							<TableCell colspan={4}>{t.purchasing.total}</TableCell>
+							<TableCell class="text-right">
+								<Money cents={linesTotal(props.lines)} />
+							</TableCell>
+						</TableRow>
+					</TableFooter>
+				</Table>
+			</CardContent>
+		</Card>
+	);
+}
+
+/** Expected date and notes, folded away (a <details> styled as a card) until needed. */
+function EditPo(props: { po: PoData["po"] }) {
+	const { t } = useApp();
+	const { po } = props;
+	return (
+		<CollapsibleCard title={t.purchasing.editDetails} icon={icons.pencil}>
+			<form method="post" action={`/purchasing/po/${po.id}`} class="flex flex-col gap-6">
+				<FieldGroup>
+					<div class="grid gap-4 md:grid-cols-2">
+						<TextField
+							name="expected_at"
+							label={t.purchasing.expectedAt}
+							type="date"
+							values={{ expected_at: po.expectedAt ?? "" }}
+							errors={{}}
+						/>
+					</div>
+					<TextArea name="notes" label={t.common.notes} values={{ notes: po.notes }} errors={{}} />
+				</FieldGroup>
+				<div class="flex flex-wrap items-center gap-2">
+					<Button icon={icons.save}>{t.common.save}</Button>
+				</div>
+			</form>
+		</CollapsibleCard>
 	);
 }
 
@@ -696,9 +901,12 @@ async function renderPo(
 					sent: t.purchasing.sentOk,
 					cancelled: t.purchasing.cancelledOk,
 					created: t.purchasing.createdOk,
+					closed: t.purchasing.closedOk,
 				} as Record<string, string>
 			)[ok]
 		: undefined;
+	const err = c.req.query("err");
+	const today = nowIso().slice(0, 10);
 	const isDraft = po.status === "draft";
 	const canReceive = RECEIVABLE_PO_STATUSES.includes(po.status) && lines.length > 0;
 	const anyReceived = lines.some((l) => l.line.receivedQtyMilli > 0);
@@ -709,25 +917,40 @@ async function renderPo(
 			<PageHeader
 				title={`${po.number} · ${supplier.name}`}
 				subtitle={
-					<>
+					<span class="flex flex-wrap items-center gap-x-3 gap-y-1">
 						<PoStatusBadge status={po.status} />
-						{po.sentAt ? ` · ${t.purchasing.sentAt}: ${po.sentAt.slice(0, 10)}` : ""}
-						{supplier.email ? (
-							<>
-								{" "}
-								· <a href={`mailto:${supplier.email}`}>{supplier.email}</a>
-							</>
+						{po.sentAt ? (
+							<span>
+								{t.purchasing.sentAt}: {po.sentAt.slice(0, 10)}
+							</span>
 						) : null}
-					</>
+						{supplier.email ? (
+							<a
+								href={`mailto:${supplier.email}`}
+								class="inline-flex items-center gap-1.5 underline-offset-4 hover:underline"
+							>
+								<Icon icon={icons.mail} class="size-3.5" />
+								{supplier.email}
+							</a>
+						) : null}
+					</span>
 				}
 				actions={
 					<>
-						{isDraft ? <PostButton action={`/purchasing/po/${po.id}/send`} label={t.purchasing.markSent} /> : null}
+						<Button
+							href={`/purchasing/po/${po.id}/export.csv`}
+							variant="outline"
+							icon={icons.fileSpreadsheet}
+							title={t.purchasing.downloadCsv}
+						>
+							{t.purchasing.exportCsv}
+						</Button>
 						{(po.status === "draft" || po.status === "sent") && !anyReceived ? (
 							<PostButton
 								action={`/purchasing/po/${po.id}/cancel`}
 								label={t.purchasing.cancelPo}
 								confirm={t.purchasing.confirmCancel}
+								icon={icons.ban}
 							/>
 						) : null}
 						{po.status === "sent" || po.status === "partial" ? (
@@ -735,6 +958,7 @@ async function renderPo(
 								action={`/purchasing/po/${po.id}/close`}
 								label={t.purchasing.closePo}
 								confirm={t.purchasing.confirmClose}
+								icon={icons.circleCheck}
 							/>
 						) : null}
 						{c.var.isAdmin && isDraft ? (
@@ -742,53 +966,60 @@ async function renderPo(
 								action={`/purchasing/po/${po.id}/delete`}
 								label={t.common.delete}
 								confirm={t.common.confirmDelete}
-								variant="danger"
+								variant="destructive"
+								icon={icons.trash}
+							/>
+						) : null}
+						{canReceive ? (
+							<Button href="#receive" variant={isDraft ? "outline" : "default"} icon={icons.truck}>
+								{t.purchasing.receive}
+							</Button>
+						) : null}
+						{isDraft ? (
+							<PostButton
+								action={`/purchasing/po/${po.id}/send`}
+								label={t.purchasing.markSent}
+								variant="default"
+								icon={icons.send}
 							/>
 						) : null}
 					</>
 				}
 			/>
 			<PurchasingTabs active="pos" />
-			<Flash message={flash} />
-			{c.req.query("err") ? <p class="flash error">{errorText(t, c.req.query("err") ?? "")}</p> : null}
-			{isDraft ? (
-				<DraftLines
-					po={po}
-					lines={lines}
-					options={options}
-					values={form.lineValues ?? {}}
-					errors={translateErrors(c, form.lineErrors ?? {}, form.lineVars)}
-				/>
-			) : (
-				<ReadOnlyLines lines={lines} />
-			)}
-			{canReceive ? (
-				<ReceiveForm po={po} lines={lines} values={form.receiveValues ?? {}} errors={form.receiveErrors ?? {}} />
-			) : null}
-			{po.status !== "cancelled" ? (
-				<details class="card">
-					<summary>{t.common.edit}</summary>
-					<form method="post" action={`/purchasing/po/${po.id}`} class="form">
-						<TextField
-							name="expected_at"
-							label={t.purchasing.expectedAt}
-							type="date"
-							values={{ expected_at: po.expectedAt ?? "" }}
-							errors={{}}
-						/>
-						<TextArea name="notes" label={t.common.notes} values={{ notes: po.notes }} errors={{}} />
-						<div class="form-actions">
-							<button type="submit" class="button secondary">
-								{t.common.save}
-							</button>
-						</div>
-					</form>
-				</details>
-			) : null}
-			{po.notes ? <p class="pre">{po.notes}</p> : null}
-			<p class="links">
-				<a href={`/purchasing/po/${po.id}/export.csv`}>{t.purchasing.downloadCsv}</a>
-			</p>
+			<Flash ok={ok} message={flash} />
+			{err ? <Alert variant="destructive">{errorText(t, err)}</Alert> : null}
+			<div class="flex flex-col gap-4">
+				{isDraft ? (
+					<DraftLines
+						po={po}
+						lines={lines}
+						options={options}
+						values={form.lineValues ?? {}}
+						errors={translateErrors(c, form.lineErrors ?? {}, form.lineVars)}
+						today={today}
+					/>
+				) : (
+					<>
+						<PoStats po={po} lines={lines} today={today} />
+						<ReadOnlyLines lines={lines} />
+					</>
+				)}
+				{canReceive ? (
+					<ReceiveForm po={po} lines={lines} values={form.receiveValues ?? {}} errors={form.receiveErrors ?? {}} />
+				) : null}
+				{po.notes ? (
+					<Card class="gap-3">
+						<CardHeader>
+							<CardTitle>{t.common.notes}</CardTitle>
+						</CardHeader>
+						<CardContent>
+							<p class="text-sm whitespace-pre-wrap">{po.notes}</p>
+						</CardContent>
+					</Card>
+				) : null}
+				{po.status !== "cancelled" ? <EditPo po={po} /> : null}
+			</div>
 		</>,
 		status,
 	);

@@ -23,16 +23,31 @@ import {
 } from "../domain/builds";
 import { onHandAt, serialsInStock } from "../domain/stock";
 import { errorText, fmt } from "../i18n";
+import { cn } from "../lib/cn";
 import { runBatch } from "../lib/db";
 import { isConstraintError } from "../lib/sql";
 import { formatQtyInput, lineCostCents, MILLI } from "../lib/units";
 import { type FieldErrors, validate } from "../lib/validation";
 import type { AppEnv } from "../types";
 import { useApp } from "../views/context";
+import { Icon, icons } from "../views/icons";
 import { idParam, notFound, nowIso, page, redirectOk, translateErrors } from "../views/render";
 import {
-	Empty,
-	ErrorBanner,
+	Alert,
+	Badge,
+	Button,
+	Card,
+	CardContent,
+	CardDescription,
+	CardFooter,
+	CardHeader,
+	CardTitle,
+	CollapsibleCard,
+	EmptyState,
+	FieldDescription,
+	FieldError,
+	FieldGroup,
+	FieldLabel,
 	Flash,
 	type FormErrors,
 	type FormValues,
@@ -44,7 +59,15 @@ import {
 	Qty,
 	SearchBar,
 	SelectField,
+	StatCard,
 	shortDateTime,
+	Table,
+	TableBody,
+	TableCell,
+	TableFooter,
+	TableHead,
+	TableHeader,
+	TableRow,
 	TextArea,
 	TextField,
 } from "../views/ui";
@@ -54,51 +77,64 @@ export const buildRoutes = new Hono<AppEnv>();
 type BuildRow = Awaited<ReturnType<typeof listBuilds>>[number];
 type BuildData = NonNullable<Awaited<ReturnType<typeof getBuild>>>;
 
+/** Part references and serials: monospace, like codes. */
+const CODE = "font-mono text-[0.8125rem]";
+/** A part reference link inside a table or list. */
+const REF_LINK = "font-mono text-[0.8125rem] font-medium underline-offset-4 hover:underline";
+/** Indentation of nested sub-assemblies (full class names: Tailwind scans the source). */
+const DEPTH_INDENT = ["", "pl-6", "pl-12", "pl-18", "pl-24"] as const;
+
 export function BuildStatusBadge(props: { status: BuildStatus }) {
 	const { t } = useApp();
 	return <span class={`status status-${props.status}`}>{t.builds.statuses[props.status]}</span>;
 }
 
+/** Bare table of builds (no card), also embedded by the dashboard and the part page. */
 export function BuildsTable(props: { rows: BuildRow[] }) {
 	const { t } = useApp();
-	if (props.rows.length === 0) return <Empty>{t.builds.noBuilds}</Empty>;
+	if (props.rows.length === 0) return <EmptyState icon={icons.hammer} description={t.builds.noBuilds} />;
 	return (
-		<table class="table">
-			<thead>
-				<tr>
-					<th>{t.builds.number}</th>
-					<th>{t.builds.part}</th>
-					<th>{t.builds.bom}</th>
-					<th class="num">{t.builds.qty}</th>
-					<th>{t.builds.serial}</th>
-					<th>{t.builds.status}</th>
-					<th>{t.builds.plannedFor}</th>
-				</tr>
-			</thead>
-			<tbody>
+		<Table>
+			<TableHeader>
+				<TableRow>
+					<TableHead>{t.builds.number}</TableHead>
+					<TableHead>{t.builds.part}</TableHead>
+					<TableHead>{t.builds.bom}</TableHead>
+					<TableHead class="text-right">{t.builds.qty}</TableHead>
+					<TableHead>{t.builds.serial}</TableHead>
+					<TableHead>{t.builds.status}</TableHead>
+					<TableHead>{t.builds.plannedFor}</TableHead>
+				</TableRow>
+			</TableHeader>
+			<TableBody>
 				{props.rows.map((b) => (
-					<tr>
-						<td>
-							<a href={`/builds/${b.id}`}>{b.number}</a>
-						</td>
-						<td>
-							{b.partRef} <span class="muted">{b.partName}</span>
-						</td>
-						<td>
+					<TableRow>
+						<TableCell>
+							<a href={`/builds/${b.id}`} class="font-medium whitespace-nowrap underline-offset-4 hover:underline">
+								{b.number}
+							</a>
+						</TableCell>
+						<TableCell>
+							<span class={cn(CODE, "font-medium")}>{b.partRef}</span>{" "}
+							<span class="text-muted-foreground">{b.partName}</span>
+						</TableCell>
+						<TableCell class="whitespace-nowrap text-muted-foreground">
 							{b.bomCode} · {b.bomRevision}
-						</td>
-						<td class="num">
+						</TableCell>
+						<TableCell class="text-right">
 							<Qty milli={b.qtyMilli} unit={b.unit} />
-						</td>
-						<td>{b.serial ?? ""}</td>
-						<td>
+						</TableCell>
+						<TableCell class={CODE}>{b.serial ?? ""}</TableCell>
+						<TableCell>
 							<BuildStatusBadge status={b.status} />
-						</td>
-						<td class="nowrap">{b.status === "done" ? shortDateTime(b.doneAt).slice(0, 10) : (b.plannedFor ?? "")}</td>
-					</tr>
+						</TableCell>
+						<TableCell class="whitespace-nowrap tabular-nums">
+							{b.status === "done" ? shortDateTime(b.doneAt).slice(0, 10) : (b.plannedFor ?? "")}
+						</TableCell>
+					</TableRow>
 				))}
-			</tbody>
-		</table>
+			</TableBody>
+		</Table>
 	);
 }
 
@@ -111,10 +147,14 @@ buildRoutes.get("/", async (c) => {
 		c,
 		t.builds.title,
 		<>
-			<PageHeader title={t.builds.title} actions={<LinkButton href="/builds/new" label={t.builds.new} />} />
+			<PageHeader
+				title={t.builds.title}
+				subtitle={t.builds.intro}
+				actions={<LinkButton href="/builds/new" label={t.builds.new} icon={icons.plus} />}
+			/>
 			<Flash ok={c.req.query("ok")} message={c.req.query("ok") === "cancelled" ? t.builds.cancelled : undefined} />
 			<SearchBar action="/builds" q={q}>
-				<select name="status" aria-label={t.builds.status}>
+				<select name="status" aria-label={t.builds.status} class="w-auto flex-[0_1_220px]">
 					<option value="open">{t.builds.statusFilter.open}</option>
 					{BUILD_STATUSES.map((s) => (
 						<option value={s} selected={s === status}>
@@ -127,7 +167,15 @@ buildRoutes.get("/", async (c) => {
 				</select>
 			</SearchBar>
 			<div id="results">
-				<BuildsTable rows={rows} />
+				{rows.length ? (
+					<Card class="gap-0 overflow-hidden py-0">
+						<BuildsTable rows={rows} />
+					</Card>
+				) : (
+					<EmptyState icon={icons.hammer} title={t.builds.noBuilds} description={t.builds.emptyHint}>
+						<LinkButton href="/builds/new" label={t.builds.new} icon={icons.plus} variant="outline" />
+					</EmptyState>
+				)}
 			</div>
 		</>,
 	);
@@ -154,68 +202,97 @@ function NewBuildForm(props: {
 		"hx-select": "#build-form",
 		"hx-swap": "outerHTML",
 	};
+	const partError = props.errors.part_id;
+	const ready = props.product !== undefined && props.bomOptions.length > 0;
 	return (
-		<form method="post" action="/builds" class="card form" id="build-form">
-			<ErrorBanner show={Object.keys(props.errors).length > 0} />
-			<div class="field">
-				<label for="f-part_id">
-					{t.builds.part}
-					<span class="req"> *</span>
-				</label>
-				<div class="inline-row">
-					<select id="f-part_id" name="part_id" required {...reload} hx-trigger="change">
-						<option value="">—</option>
-						{props.products.map((o) => (
-							<option value={String(o.id)} selected={String(o.id) === props.values.part_id}>
-								{o.ref} · {o.name}
-							</option>
-						))}
-					</select>
-					<button type="submit" class="button secondary" formmethod="get" formaction="/builds/new">
-						{t.builds.choosePart}
-					</button>
-				</div>
-				<small class="hint">{t.builds.partHint}</small>
-				{props.errors.part_id ? <small class="error">{props.errors.part_id}</small> : null}
-			</div>
-			{props.product ? (
-				props.bomOptions.length === 0 ? (
-					<p class="flash warning">
-						{t.builds.noActiveBom} <a href={`/boms/new?part=${props.product.id}`}>{t.boms.new}</a>
-					</p>
-				) : (
-					<>
-						<SelectField
-							name="bom_id"
-							label={t.builds.variant}
-							required
-							options={props.bomOptions.map((b) => ({ value: String(b.id), label: `${b.code} (${b.revision})` }))}
-							{...p}
-						/>
-						<div class="grid-3">
-							<TextField name="qty" label={t.builds.qty} inputmode="decimal" required {...p} />
-							<TextField
-								name="serial"
-								label={t.builds.serial}
-								hint={props.product.trackSerial ? t.builds.serialHint : undefined}
-								required={props.product.trackSerial}
-								{...p}
-							/>
-							<TextField name="planned_for" label={t.builds.plannedFor} type="date" {...p} />
+		<Card class="max-w-3xl">
+			<CardContent>
+				<form method="post" action="/builds" class="flex flex-col gap-6" id="build-form">
+					{Object.keys(props.errors).length > 0 ? (
+						<Alert variant="destructive" class="mb-0">
+							{t.common.fixErrors}
+						</Alert>
+					) : null}
+					<FieldGroup>
+						<div
+							data-slot="field"
+							data-invalid={partError ? "true" : undefined}
+							class="group/field flex w-full min-w-0 flex-col gap-2 data-[invalid=true]:text-destructive"
+						>
+							<FieldLabel for="f-part_id" required>
+								{t.builds.part}
+							</FieldLabel>
+							<div class="flex items-center gap-2">
+								<select
+									id="f-part_id"
+									name="part_id"
+									required
+									class="flex-1"
+									aria-invalid={partError ? "true" : undefined}
+									aria-describedby={partError ? "e-part_id" : undefined}
+									{...reload}
+									hx-trigger="change"
+								>
+									<option value="">—</option>
+									{props.products.map((o) => (
+										<option value={String(o.id)} selected={String(o.id) === props.values.part_id}>
+											{o.ref} · {o.name}
+										</option>
+									))}
+								</select>
+								<Button variant="outline" formmethod="get" formaction="/builds/new">
+									{t.builds.choosePart}
+								</Button>
+							</div>
+							<FieldDescription>{t.builds.partHint}</FieldDescription>
+							<FieldError id="e-part_id">{partError}</FieldError>
 						</div>
-						<TextArea name="notes" label={t.common.notes} {...p} />
-						<div class="form-actions">
-							<button type="submit" class="button primary">
-								{t.common.create}
-							</button>
-							<a class="button secondary" href="/builds">
+						{props.product ? (
+							props.bomOptions.length === 0 ? (
+								<Alert variant="warning" class="mb-0">
+									<p>
+										{t.builds.noActiveBom} <a href={`/boms/new?part=${props.product.id}`}>{t.boms.new}</a>
+									</p>
+								</Alert>
+							) : (
+								<>
+									<div class="grid gap-4 md:grid-cols-2">
+										<SelectField
+											name="bom_id"
+											label={t.builds.variant}
+											required
+											options={props.bomOptions.map((b) => ({
+												value: String(b.id),
+												label: `${b.code} (${b.revision})`,
+											}))}
+											{...p}
+										/>
+										<TextField name="qty" label={t.builds.qty} inputmode="decimal" required {...p} />
+										<TextField
+											name="serial"
+											label={t.builds.serial}
+											hint={props.product.trackSerial ? t.builds.serialHint : undefined}
+											required={props.product.trackSerial}
+											{...p}
+										/>
+										<TextField name="planned_for" label={t.builds.plannedFor} type="date" {...p} />
+									</div>
+									<TextArea name="notes" label={t.common.notes} {...p} />
+								</>
+							)
+						) : null}
+					</FieldGroup>
+					{ready ? (
+						<div class="flex flex-wrap items-center gap-2">
+							<Button icon={icons.plus}>{t.common.create}</Button>
+							<Button href="/builds" variant="outline">
 								{t.common.cancel}
-							</a>
+							</Button>
 						</div>
-					</>
-				)
-			) : null}
-		</form>
+					) : null}
+				</form>
+			</CardContent>
+		</Card>
 	);
 }
 
@@ -253,7 +330,7 @@ buildRoutes.get("/new", async (c) => {
 		c,
 		t.builds.new,
 		<>
-			<PageHeader title={t.builds.new} />
+			<PageHeader title={t.builds.new} subtitle={t.builds.newIntro} />
 			<NewBuildForm values={values} errors={{}} {...data} />
 		</>,
 	);
@@ -291,7 +368,7 @@ buildRoutes.post("/", async (c) => {
 			c,
 			t.builds.new,
 			<>
-				<PageHeader title={t.builds.new} />
+				<PageHeader title={t.builds.new} subtitle={t.builds.newIntro} />
 				<NewBuildForm values={body as FormValues} errors={translateErrors(c, errors)} {...data} />
 			</>,
 			422,
@@ -334,30 +411,30 @@ function BuildHeader(props: { data: BuildData }) {
 		<PageHeader
 			title={`${build.number} · ${part.ref}`}
 			subtitle={
-				<>
-					<BuildStatusBadge status={build.status} /> {part.name} · {t.builds.bom}:{" "}
-					<a href={`/boms/${bom.id}`}>
-						{bom.code} ({bom.revision})
-					</a>{" "}
-					· {t.builds.qty}: <Qty milli={build.qtyMilli} unit={part.unit} />
-					{build.serial ? (
-						<>
-							{" "}
-							· {t.builds.serial}: <strong>{build.serial}</strong>
-						</>
-					) : null}
-				</>
+				<span class="inline-flex flex-wrap items-center gap-x-2 gap-y-1">
+					<BuildStatusBadge status={build.status} />
+					<a href={`/parts/${part.id}`}>{part.name}</a>
+					<span aria-hidden="true">·</span>
+					<span>
+						{t.builds.bom}:{" "}
+						<a href={`/boms/${bom.id}`}>
+							{bom.code} ({bom.revision})
+						</a>
+					</span>
+				</span>
 			}
 			actions={
 				open ? (
 					<>
 						{build.status === "planned" ? (
-							<PostButton action={`/builds/${build.id}/start`} label={t.builds.start} />
+							<PostButton action={`/builds/${build.id}/start`} label={t.builds.start} icon={icons.play} />
 						) : null}
 						<PostButton
 							action={`/builds/${build.id}/cancel`}
 							label={t.builds.cancel}
 							confirm={t.builds.confirmCancel}
+							variant="destructive"
+							icon={icons.ban}
 						/>
 					</>
 				) : null
@@ -366,28 +443,31 @@ function BuildHeader(props: { data: BuildData }) {
 	);
 }
 
+/** Collapsible edit form (a <details> card, so it needs no JavaScript). */
 function EditCard(props: { data: BuildData; values: FormValues; errors: FormErrors }) {
 	const { t } = useApp();
 	const p = { values: props.values, errors: props.errors };
 	return (
-		<details class="card" open={Object.keys(props.errors).length > 0}>
-			<summary>{t.common.edit}</summary>
-			<form method="post" action={`/builds/${props.data.build.id}`} class="form">
-				<div class="grid-2">
-					<TextField name="serial" label={t.builds.serial} required={props.data.part.trackSerial} {...p} />
-					<TextField name="planned_for" label={t.builds.plannedFor} type="date" {...p} />
-				</div>
-				<TextArea name="notes" label={t.common.notes} {...p} />
-				<div class="form-actions">
-					<button type="submit" class="button secondary">
+		<CollapsibleCard title={t.common.edit} icon={icons.pencil} open={Object.keys(props.errors).length > 0}>
+			<form method="post" action={`/builds/${props.data.build.id}`} class="flex flex-col gap-6">
+				<FieldGroup>
+					<div class="grid gap-4 md:grid-cols-2">
+						<TextField name="serial" label={t.builds.serial} required={props.data.part.trackSerial} {...p} />
+						<TextField name="planned_for" label={t.builds.plannedFor} type="date" {...p} />
+					</div>
+					<TextArea name="notes" label={t.common.notes} {...p} />
+				</FieldGroup>
+				<div class="flex flex-wrap items-center gap-2">
+					<Button variant="outline" icon={icons.save}>
 						{t.builds.edit}
-					</button>
+					</Button>
 				</div>
 			</form>
-		</details>
+		</CollapsibleCard>
 	);
 }
 
+/** "Auto / use stock / build now" as a segmented control (shadcn ToggleGroup look) over radio inputs. */
 function ChoiceRadios(props: { buildId: number; node: ExplodedNode; current: string }) {
 	const { t } = useApp();
 	const name = choiceField(props.node.path);
@@ -400,16 +480,125 @@ function ChoiceRadios(props: { buildId: number; node: ExplodedNode; current: str
 		"hx-trigger": "change",
 	};
 	const option = (value: string, label: string) => (
-		<label class="choice">
-			<input type="radio" name={name} value={value} checked={props.current === value} {...recalc} />
+		<label
+			data-slot="toggle-group-item"
+			class="inline-flex min-h-(--control-h) cursor-pointer items-center justify-center border-r px-3 py-1 text-center text-sm leading-tight font-medium transition-colors select-none first:rounded-l-md last:rounded-r-md last:border-r-0 not-has-checked:hover:bg-muted has-checked:bg-primary has-checked:text-primary-foreground has-focus-visible:z-10 has-focus-visible:ring-[3px] has-focus-visible:ring-ring/50 dark:border-input"
+		>
+			<input type="radio" class="sr-only" name={name} value={value} checked={props.current === value} {...recalc} />
 			<span>{label}</span>
 		</label>
 	);
 	return (
-		<div class="choices">
+		<div
+			role="radiogroup"
+			aria-label={`${t.builds.source} ${props.node.part.ref}`}
+			data-slot="toggle-group"
+			class="grid w-full grid-cols-3 rounded-md border bg-background shadow-xs sm:inline-grid sm:w-auto dark:border-input dark:bg-input/30"
+		>
 			{option("", `${t.builds.auto} (${t.boms.modes[props.node.mode]})`)}
 			{option("stock", t.builds.useStock)}
 			{option("build", t.builds.buildNow)}
+		</div>
+	);
+}
+
+/** Pick lines that need more than the stock on hand. */
+function shortLines(pick: PickList) {
+	return pick.explosion.requirements.filter((r) => r.qtyMilli > Math.max(0, pick.onHand.get(r.part.id) ?? 0));
+}
+
+function SubAssemblies(props: { buildId: number; pick: PickList; values: Record<string, string> }) {
+	const { t, locale } = useApp();
+	const nodes = makeNodes(props.pick.explosion);
+	return (
+		<Card id="sub-assemblies">
+			<CardHeader>
+				<CardTitle icon={icons.layers}>{t.builds.subAssemblies}</CardTitle>
+				<CardDescription>{t.builds.subIntro}</CardDescription>
+			</CardHeader>
+			<CardContent class="flex flex-col gap-4">
+				<ul class="m-0 flex list-none flex-col p-0">
+					{nodes.map((n) => (
+						<li
+							class={cn(
+								"flex flex-wrap items-center gap-x-6 gap-y-3 border-b py-3 first:pt-0 last:border-b-0 last:pb-0",
+								DEPTH_INDENT[Math.min(n.depth, 4)],
+							)}
+						>
+							<div class="flex min-w-0 flex-1 basis-56 flex-col gap-1">
+								<div class="flex min-w-0 flex-wrap items-baseline gap-x-2">
+									<a href={`/parts/${n.part.id}`} class={REF_LINK}>
+										{n.part.ref}
+									</a>
+									<span class="text-muted-foreground">{n.part.name}</span>
+								</div>
+								<div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
+									<span>
+										{t.builds.need}:{" "}
+										<span class="font-medium text-foreground">
+											<Qty milli={n.qtyMilli} unit={n.part.unit} />
+										</span>
+									</span>
+									<span>
+										{fmt(t.builds.available, {
+											n: formatQtyInput(Math.max(0, props.pick.onHand.get(n.part.id) ?? 0), locale),
+										})}
+									</span>
+								</div>
+							</div>
+							<ChoiceRadios buildId={props.buildId} node={n} current={props.values[choiceField(n.path)] ?? ""} />
+						</li>
+					))}
+				</ul>
+				<noscript>
+					<Button variant="outline" formmethod="get" formaction={`/builds/${props.buildId}`} icon={icons.rotateCcw}>
+						{t.builds.recalculate}
+					</Button>
+				</noscript>
+			</CardContent>
+		</Card>
+	);
+}
+
+function SerialInputs(props: {
+	partId: number;
+	partRef: string;
+	count: number;
+	values: Record<string, string>;
+	errors: Record<string, string>;
+	hints: string[];
+}) {
+	const { t } = useApp();
+	const listId = `serials-${props.partId}`;
+	return (
+		<div class="flex flex-wrap gap-2">
+			{Array.from({ length: props.count }, (_, i) => {
+				const name = serialField(props.partId, i);
+				const error = props.errors[name];
+				const errorId = `e-serial-${props.partId}-${i}`;
+				return (
+					<div data-slot="field" data-invalid={error ? "true" : undefined} class="flex flex-col gap-1">
+						<input
+							type="text"
+							name={name}
+							value={props.values[name] ?? ""}
+							list={listId}
+							placeholder={`#${i + 1}`}
+							aria-label={`${t.builds.serial} ${props.partRef} ${i + 1}`}
+							aria-invalid={error ? "true" : undefined}
+							aria-describedby={error ? errorId : undefined}
+							autocomplete="off"
+							class="w-44 font-mono"
+						/>
+						<FieldError id={errorId}>{error ? errorText(t, error) : undefined}</FieldError>
+					</div>
+				);
+			})}
+			<datalist id={listId}>
+				{props.hints.map((s) => (
+					<option value={s} />
+				))}
+			</datalist>
 		</div>
 	);
 }
@@ -423,146 +612,122 @@ function PickListForm(props: {
 	const { t, locale } = useApp();
 	const { build } = props.data;
 	const { pick } = props;
-	const nodes = makeNodes(pick.explosion);
-	const goesNegative = pick.explosion.requirements.some(
-		(r) => r.qtyMilli > Math.max(0, pick.onHand.get(r.part.id) ?? 0),
-	);
+	const requirements = pick.explosion.requirements;
+	const goesNegative = shortLines(pick).length > 0;
 	const hasErrors = Object.keys(pick.errors).length > 0 || pick.problems.length > 0;
 	return (
 		<form
 			method="post"
 			action={`/builds/${build.id}/complete`}
 			id="picklist"
-			class="form"
+			class="flex flex-col gap-6"
 			data-confirm={t.builds.completeConfirm}
 		>
-			<ErrorBanner show={hasErrors} />
-			{pick.problems.map((p) => (
-				<p class="flash error">{errorText(t, p.key, p.vars)}</p>
-			))}
-			{nodes.length ? (
-				<section class="card">
-					<h2>{t.builds.subAssemblies}</h2>
-					<p class="muted">{t.builds.subIntro}</p>
-					<table class="table">
-						<tbody>
-							{nodes.map((n) => (
-								<tr>
-									<td class={`depth-${Math.min(n.depth, 4)}`}>
-										<a href={`/parts/${n.part.id}`}>{n.part.ref}</a> <span class="muted">{n.part.name}</span>
-									</td>
-									<td class="num">
-										<Qty milli={n.qtyMilli} unit={n.part.unit} />
-									</td>
-									<td class="muted small">
-										{fmt(t.builds.available, {
-											n: formatQtyInput(Math.max(0, pick.onHand.get(n.part.id) ?? 0), locale),
-										})}
-									</td>
-									<td>
-										<ChoiceRadios buildId={build.id} node={n} current={props.values[choiceField(n.path)] ?? ""} />
-									</td>
-								</tr>
-							))}
-						</tbody>
-					</table>
-					<noscript>
-						<button type="submit" class="button secondary" formmethod="get" formaction={`/builds/${build.id}`}>
-							{t.builds.recalculate}
-						</button>
-					</noscript>
-				</section>
+			{hasErrors ? (
+				<Alert variant="destructive" class="mb-0">
+					{t.common.fixErrors}
+				</Alert>
 			) : null}
-			<section class="card">
-				<h2>{t.builds.pickList}</h2>
-				<p class="muted">{t.builds.pickIntro}</p>
-				{goesNegative ? <p class="flash warning">{t.builds.negativeWarning}</p> : null}
-				<div class="scroll-x">
-					<table class="table picklist">
-						<thead>
-							<tr>
-								<th class="narrow">{t.builds.picked}</th>
-								<th>{t.builds.component}</th>
-								<th class="num">{t.builds.need}</th>
-								<th class="num">{t.builds.onHand}</th>
-								<th>{t.builds.serials}</th>
-							</tr>
-						</thead>
-						<tbody>
-							{pick.explosion.requirements.map((r) => {
+			{pick.problems.map((p) => (
+				<Alert variant="destructive" class="mb-0">
+					{errorText(t, p.key, p.vars)}
+				</Alert>
+			))}
+			{makeNodes(pick.explosion).length ? <SubAssemblies buildId={build.id} pick={pick} values={props.values} /> : null}
+			<Card id="pick-lines">
+				<CardHeader>
+					<CardTitle icon={icons.listChecks}>
+						{t.builds.pickList}
+						<Badge variant="secondary">{requirements.length}</Badge>
+					</CardTitle>
+					<CardDescription>{t.builds.pickIntro}</CardDescription>
+				</CardHeader>
+				{goesNegative ? (
+					<CardContent>
+						<Alert variant="warning" class="mb-0">
+							{t.builds.negativeWarning}
+						</Alert>
+					</CardContent>
+				) : null}
+				<CardContent class="px-0">
+					<Table>
+						<TableHeader>
+							<TableRow>
+								<TableHead class="w-px">{t.builds.picked}</TableHead>
+								<TableHead>{t.builds.component}</TableHead>
+								<TableHead class="text-right">{t.builds.need}</TableHead>
+								<TableHead class="text-right">{t.builds.onHand}</TableHead>
+								<TableHead>{t.builds.serials}</TableHead>
+							</TableRow>
+						</TableHeader>
+						<TableBody>
+							{requirements.map((r) => {
 								const onHand = pick.onHand.get(r.part.id) ?? 0;
 								const short = r.qtyMilli - Math.max(0, onHand);
-								const listId = `serials-${r.part.id}`;
 								return (
-									<tr>
-										<td class="narrow">
-											<input
-												type="checkbox"
-												name={`picked:${r.part.id}`}
-												aria-label={`${t.builds.picked} ${r.part.ref}`}
-											/>
-										</td>
-										<td>
-											<a href={`/parts/${r.part.id}`}>{r.part.ref}</a> {r.part.name} <KindBadge kind={r.part.kind} />
-										</td>
-										<td class="num">
-											<strong>
-												<Qty milli={r.qtyMilli} unit={r.part.unit} />
-											</strong>
-										</td>
-										<td class="num">
-											<Qty milli={onHand} unit={r.part.unit} />
-											{short > 0 ? (
-												<div class="warn small">{fmt(t.builds.short, { n: formatQtyInput(short, locale) })}</div>
-											) : null}
-										</td>
-										<td>
+									<TableRow class="has-checked:bg-success/10 has-checked:hover:bg-success/15">
+										<TableCell class="w-px py-1 pr-0">
+											<label class="flex size-12 cursor-pointer items-center justify-center rounded-md hover:bg-muted">
+												<input
+													type="checkbox"
+													name={`picked:${r.part.id}`}
+													aria-label={`${t.builds.picked} ${r.part.ref}`}
+													class="size-6"
+												/>
+											</label>
+										</TableCell>
+										<TableCell>
+											<div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+												<a href={`/parts/${r.part.id}`} class={REF_LINK}>
+													{r.part.ref}
+												</a>
+												<span>{r.part.name}</span>
+												<KindBadge kind={r.part.kind} />
+											</div>
+										</TableCell>
+										<TableCell class="text-right text-base font-semibold">
+											<Qty milli={r.qtyMilli} unit={r.part.unit} />
+										</TableCell>
+										<TableCell class="text-right">
+											<div class="flex flex-col items-end gap-1">
+												<Qty milli={onHand} unit={r.part.unit} />
+												{short > 0 ? (
+													<Badge variant="warning">{fmt(t.builds.short, { n: formatQtyInput(short, locale) })}</Badge>
+												) : null}
+											</div>
+										</TableCell>
+										<TableCell>
 											{r.part.trackSerial ? (
-												<div class="serials">
-													{Array.from({ length: serialCount(r) }, (_, i) => {
-														const name = serialField(r.part.id, i);
-														const error = pick.errors[name];
-														return (
-															<span class={error ? "serial has-error" : "serial"}>
-																<input
-																	type="text"
-																	name={name}
-																	value={props.values[name] ?? ""}
-																	list={listId}
-																	placeholder={`#${i + 1}`}
-																	aria-label={`${t.builds.serial} ${r.part.ref} ${i + 1}`}
-																	aria-invalid={error ? "true" : undefined}
-																	autocomplete="off"
-																/>
-																{error ? <small class="error">{errorText(t, error)}</small> : null}
-															</span>
-														);
-													})}
-													<datalist id={listId}>
-														{(props.serialHints.get(r.part.id) ?? []).map((s) => (
-															<option value={s} />
-														))}
-													</datalist>
-												</div>
+												<SerialInputs
+													partId={r.part.id}
+													partRef={r.part.ref}
+													count={serialCount(r)}
+													values={props.values}
+													errors={pick.errors}
+													hints={props.serialHints.get(r.part.id) ?? []}
+												/>
 											) : null}
-										</td>
-									</tr>
+										</TableCell>
+									</TableRow>
 								);
 							})}
-						</tbody>
-					</table>
-				</div>
+						</TableBody>
+					</Table>
+				</CardContent>
 				{pick.explosion.fees.length ? (
-					<p class="muted small">
-						{t.builds.fees}:{" "}
-						{pick.explosion.fees.map((f) => `${f.part.ref} × ${formatQtyInput(f.qtyMilli, locale)}`).join(", ")}
-					</p>
+					<CardFooter class="border-t text-sm text-muted-foreground">
+						<Icon icon={icons.receipt} class="size-4" />
+						<span>
+							{t.builds.fees}:{" "}
+							{pick.explosion.fees.map((f) => `${f.part.ref} × ${formatQtyInput(f.qtyMilli, locale)}`).join(", ")}
+						</span>
+					</CardFooter>
 				) : null}
-			</section>
-			<div class="form-actions">
-				<button type="submit" class="button primary big">
+			</Card>
+			<div class="sticky bottom-0 z-10 flex flex-wrap items-center justify-end gap-3 border-t bg-background/90 py-4 backdrop-blur print:hidden">
+				<Button size="lg" icon={icons.packageCheck} class="w-full sm:w-auto">
 					{t.builds.complete}
-				</button>
+				</Button>
 			</div>
 		</form>
 	);
@@ -580,72 +745,89 @@ function AsBuilt(props: {
 		0,
 	);
 	return (
-		<section class="card">
-			<h2>{t.builds.asBuilt}</h2>
-			<p class="muted">{t.builds.asBuiltIntro}</p>
-			<div class="scroll-x">
-				<table class="table">
-					<thead>
-						<tr>
-							<th>{t.builds.component}</th>
-							<th>{t.builds.serial}</th>
-							<th class="num">{t.builds.qty}</th>
-							<th class="num">{t.builds.unitCost}</th>
-							<th class="num">{t.builds.lineCost}</th>
-						</tr>
-					</thead>
-					<tbody>
+		<Card>
+			<CardHeader>
+				<CardTitle icon={icons.clipboardCheck}>{t.builds.asBuilt}</CardTitle>
+				<CardDescription>{t.builds.asBuiltIntro}</CardDescription>
+			</CardHeader>
+			<CardContent class="px-0">
+				<Table>
+					<TableHeader>
+						<TableRow>
+							<TableHead>{t.builds.component}</TableHead>
+							<TableHead>{t.builds.serial}</TableHead>
+							<TableHead class="text-right">{t.builds.qty}</TableHead>
+							<TableHead class="text-right">{t.builds.unitCost}</TableHead>
+							<TableHead class="text-right">{t.builds.lineCost}</TableHead>
+						</TableRow>
+					</TableHeader>
+					<TableBody>
 						{props.lines.map(({ line, ref, name, kind, unit, sourceBuildId, sourceBuildNumber }) => (
-							<tr>
-								<td>
-									<a href={`/parts/${line.partId}`}>{ref}</a> {name} <KindBadge kind={kind} />
-								</td>
-								<td>
-									{line.serial ?? ""}
-									{sourceBuildId ? (
-										<>
-											{" "}
-											<a class="small" href={`/builds/${sourceBuildId}`}>
-												({fmt(t.builds.builtIn, { number: sourceBuildNumber ?? "" })})
+							<TableRow>
+								<TableCell>
+									<div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+										<a href={`/parts/${line.partId}`} class={REF_LINK}>
+											{ref}
+										</a>
+										<span>{name}</span>
+										<KindBadge kind={kind} />
+									</div>
+								</TableCell>
+								<TableCell>
+									<div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+										{line.serial ? <span class={CODE}>{line.serial}</span> : null}
+										{sourceBuildId ? (
+											<a
+												href={`/builds/${sourceBuildId}`}
+												class="inline-flex items-center gap-1 text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+											>
+												<Icon icon={icons.hammer} class="size-3.5" />
+												{fmt(t.builds.builtIn, { number: sourceBuildNumber ?? "" })}
 											</a>
-										</>
-									) : null}
-								</td>
-								<td class="num">
+										) : null}
+									</div>
+								</TableCell>
+								<TableCell class="text-right">
 									<Qty milli={line.qtyMilli} unit={unit} />
-								</td>
-								<td class="num">
+								</TableCell>
+								<TableCell class="text-right">
 									<Money cents={line.unitCostCents} />
-								</td>
-								<td class="num">
+								</TableCell>
+								<TableCell class="text-right">
 									{line.unitCostCents === null ? null : (
 										<Money cents={lineCostCents(line.qtyMilli, line.unitCostCents)} />
 									)}
-								</td>
-							</tr>
+								</TableCell>
+							</TableRow>
 						))}
-					</tbody>
-					<tfoot>
-						<tr>
-							<td colspan={4}>{t.common.total}</td>
-							<td class="num">
+					</TableBody>
+					<TableFooter>
+						<TableRow>
+							<TableCell colspan={4}>{t.common.total}</TableCell>
+							<TableCell class="text-right">
 								<Money cents={materials} />
-							</td>
-						</tr>
+							</TableCell>
+						</TableRow>
 						{props.outputCost !== null ? (
-							<tr>
-								<td colspan={4}>{t.builds.totalCost}</td>
-								<td class="num">
+							<TableRow>
+								<TableCell colspan={4}>{t.builds.totalCost}</TableCell>
+								<TableCell class="text-right font-semibold">
 									<Money cents={lineCostCents(props.qtyMilli, props.outputCost)} />
-									{incomplete ? <span class="warn"> *</span> : null}
-								</td>
-							</tr>
+									{incomplete ? <span class="text-warning"> *</span> : null}
+								</TableCell>
+							</TableRow>
 						) : null}
-					</tfoot>
-				</table>
-			</div>
-			{incomplete ? <p class="warn small">{t.builds.costIncomplete}</p> : null}
-		</section>
+					</TableFooter>
+				</Table>
+			</CardContent>
+			{incomplete ? (
+				<CardFooter>
+					<Alert variant="warning" class="mb-0">
+						{t.builds.costIncomplete}
+					</Alert>
+				</CardFooter>
+			) : null}
+		</Card>
 	);
 }
 
@@ -670,6 +852,14 @@ async function renderBuild(
 						? t.builds.created
 						: undefined;
 	const open = OPEN_STATUSES.includes(build.status);
+	const qtyStat = (
+		<StatCard label={t.builds.qty} value={<Qty milli={build.qtyMilli} unit={part.unit} />} icon={icons.package} />
+	);
+	const serialStat = <StatCard label={t.builds.serial} value={build.serial ?? t.common.none} icon={icons.barcode} />;
+	const plannedStat = (
+		<StatCard label={t.builds.plannedFor} value={build.plannedFor ?? t.common.none} icon={icons.calendar} />
+	);
+	let stats: Child;
 	let body: Child;
 	if (open) {
 		const [graph, onHand] = await Promise.all([loadGraph(db), onHandAt(db)]);
@@ -677,6 +867,21 @@ async function renderBuild(
 		const tracked = pick.explosion.requirements.filter((r) => r.part.trackSerial);
 		const hints = new Map(
 			await Promise.all(tracked.map(async (r) => [r.part.id, await serialsInStock(db, r.part.id)] as const)),
+		);
+		const short = shortLines(pick).length;
+		stats = (
+			<>
+				{qtyStat}
+				{serialStat}
+				{plannedStat}
+				<StatCard
+					label={t.builds.toPick}
+					value={pick.explosion.requirements.length}
+					icon={icons.listChecks}
+					hint={short > 0 ? fmt(t.builds.shortLines, { n: short }) : t.builds.allAvailable}
+					tone={short > 0 ? "warning" : "default"}
+				/>
+			</>
 		);
 		body = (
 			<>
@@ -705,17 +910,48 @@ async function renderBuild(
 				)
 				.limit(1),
 		]);
+		const outputCost = output[0]?.unitCostCents ?? null;
+		const done = build.status === "done";
+		const doneAt = shortDateTime(build.doneAt);
+		const incomplete = lines.some((l) => l.line.unitCostCents === null);
+		stats = (
+			<>
+				{qtyStat}
+				{serialStat}
+				{done ? (
+					<StatCard
+						label={t.builds.doneAt}
+						value={doneAt.slice(0, 10)}
+						hint={`${doneAt.slice(11)} · ${build.updatedBy}`}
+						icon={icons.calendarClock}
+					/>
+				) : (
+					plannedStat
+				)}
+				{done ? (
+					<StatCard
+						label={t.builds.totalCost}
+						value={<Money cents={outputCost === null ? null : lineCostCents(build.qtyMilli, outputCost)} />}
+						hint={incomplete ? t.builds.costIncomplete : undefined}
+						icon={icons.coins}
+						tone={incomplete ? "warning" : "default"}
+					/>
+				) : null}
+			</>
+		);
 		body = (
 			<>
-				{build.status === "done" ? (
-					<p>
-						{t.builds.doneAt}: {shortDateTime(build.doneAt)} · {build.updatedBy}
-					</p>
+				{build.notes ? (
+					<Card>
+						<CardHeader>
+							<CardTitle>{t.common.notes}</CardTitle>
+						</CardHeader>
+						<CardContent>
+							<p class="text-sm whitespace-pre-wrap">{build.notes}</p>
+						</CardContent>
+					</Card>
 				) : null}
-				{build.notes ? <p class="pre">{build.notes}</p> : null}
-				{build.status === "done" ? (
-					<AsBuilt lines={lines} outputCost={output[0]?.unitCostCents ?? null} qtyMilli={build.qtyMilli} />
-				) : null}
+				{done ? <AsBuilt lines={lines} outputCost={outputCost} qtyMilli={build.qtyMilli} /> : null}
 			</>
 		);
 	}
@@ -725,8 +961,9 @@ async function renderBuild(
 		<>
 			<BuildHeader data={data} />
 			<Flash message={flash} />
-			{c.req.query("err") ? <p class="flash error">{errorText(t, c.req.query("err") ?? "")}</p> : null}
-			{body}
+			{c.req.query("err") ? <Alert variant="destructive">{errorText(t, c.req.query("err") ?? "")}</Alert> : null}
+			<div class="mb-6 grid grid-cols-2 gap-3 md:grid-cols-4">{stats}</div>
+			<div class="flex flex-col gap-6">{body}</div>
 		</>,
 		opts.status ?? 200,
 	);

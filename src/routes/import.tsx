@@ -6,19 +6,45 @@ import {
 	IMPORTERS,
 	type Importer,
 	type ImportPlan,
+	type ImportType,
 	importerFor,
 	planImport,
 	type RowIssue,
 } from "../domain/import";
 import { errorText, fmt } from "../i18n";
+import { cn } from "../lib/cn";
 import { toCsv } from "../lib/csv";
 import { runBatch } from "../lib/db";
 import { decodeText } from "../lib/encoding";
 import { requireAdmin } from "../middleware/auth";
 import type { AppEnv } from "../types";
 import { useApp } from "../views/context";
+import { Icon, type IconNode, icons } from "../views/icons";
 import { notFound, nowIso, page } from "../views/render";
-import { Flash, PageHeader } from "../views/ui";
+import {
+	Alert,
+	Badge,
+	type BadgeVariant,
+	Button,
+	Card,
+	CardContent,
+	CardDescription,
+	CardFooter,
+	CardHeader,
+	CardTitle,
+	FieldGroup,
+	FieldLabel,
+	Flash,
+	PageHeader,
+	StatCard,
+	Table,
+	TableBody,
+	TableCard,
+	TableCell,
+	TableHead,
+	TableHeader,
+	TableRow,
+} from "../views/ui";
 
 export const importRoutes = new Hono<AppEnv>();
 
@@ -47,175 +73,282 @@ async function readCsvInput(c: Context<AppEnv>): Promise<string> {
 	return text.length > MAX_CSV_BYTES ? "" : text;
 }
 
+// ---------------------------------------------------------------------------
+// Local building blocks
+
+const TYPE_ICONS: Record<ImportType, IconNode> = {
+	suppliers: icons.factory,
+	parts: icons.package,
+	boms: icons.listTree,
+	stock: icons.warehouse,
+};
+
+type PlanAction = ImportPlan["rows"][number]["action"];
+
+const ACTION_BADGES: Record<PlanAction, BadgeVariant> = {
+	create: "success",
+	update: "warning",
+	unchanged: "muted",
+};
+
+/** The square icon in front of a card title. */
+function IconTile(props: { icon: IconNode }) {
+	return (
+		<span class="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted text-foreground">
+			<Icon icon={props.icon} class="size-4" />
+		</span>
+	);
+}
+
+// ---------------------------------------------------------------------------
+// Import page
+
 function ImporterCard(props: { importer: Importer }) {
 	const { t } = useApp();
 	const i = props.importer;
 	return (
-		<section class="card" id={`import-${i.type}`}>
-			<h2>{t.import.types[i.type]}</h2>
-			<p>{t.import.help[i.type]}</p>
-			<p class="small">
-				{t.import.columns}:{" "}
-				{headerOf(i).map((col, idx) => (
-					<>
-						{idx > 0 ? ", " : ""}
-						<code>{col}</code>
-						{i.required.includes(col) ? <span class="req"> ({t.import.required})</span> : null}
-					</>
-				))}
-			</p>
-			<p class="links">
-				<a href={`/import/${i.type}/template.csv`}>{t.import.template}</a>
-				<a href={`/import/${i.type}/export.csv`}>{t.import.export}</a>
-			</p>
-			<form method="post" action={`/import/${i.type}/preview`} enctype="multipart/form-data" class="form">
-				<div class="field">
-					<label for={`file-${i.type}`}>{t.import.file}</label>
-					<input id={`file-${i.type}`} type="file" name="file" accept=".csv,text/csv,text/plain" />
+		<Card id={`import-${i.type}`} class="scroll-mt-20">
+			<CardHeader>
+				<CardTitle class="flex items-center gap-3">
+					<IconTile icon={TYPE_ICONS[i.type]} />
+					{t.import.types[i.type]}
+				</CardTitle>
+				<CardDescription class="pt-1">{t.import.help[i.type]}</CardDescription>
+			</CardHeader>
+			<CardContent class="flex flex-1 flex-col gap-6">
+				<div class="flex flex-col gap-2">
+					<span class="text-xs font-medium tracking-wide text-muted-foreground uppercase">{t.import.columns}</span>
+					<ul class="m-0 flex list-none flex-wrap gap-1.5 p-0">
+						{headerOf(i).map((col) => {
+							const required = i.required.includes(col);
+							return (
+								<li>
+									<Badge variant={required ? "secondary" : "outline"} class="font-mono font-normal">
+										{col}
+										{required ? (
+											<>
+												<span class="text-destructive" aria-hidden="true">
+													*
+												</span>
+												<span class="sr-only">({t.import.required})</span>
+											</>
+										) : null}
+									</Badge>
+								</li>
+							);
+						})}
+					</ul>
+					<p class="text-xs text-muted-foreground">
+						<span class="text-destructive">*</span> {t.import.required}
+					</p>
 				</div>
-				<details>
-					<summary>{t.import.orPaste}</summary>
-					<textarea name="csv" rows={6} aria-label={t.import.orPaste} />
-				</details>
-				<div class="form-actions">
-					<button type="submit" class="button primary">
+				<form
+					method="post"
+					action={`/import/${i.type}/preview`}
+					enctype="multipart/form-data"
+					class="mt-auto flex flex-col gap-4"
+				>
+					<FieldGroup class="gap-3">
+						<div data-slot="field" class="flex w-full min-w-0 flex-col gap-2">
+							<FieldLabel for={`file-${i.type}`}>{t.import.file}</FieldLabel>
+							<input id={`file-${i.type}`} type="file" name="file" accept=".csv,text/csv,text/plain" />
+						</div>
+						<details class="text-sm">
+							<summary class="text-muted-foreground hover:text-foreground">{t.import.orPaste}</summary>
+							<textarea name="csv" rows={6} aria-label={t.import.orPaste} class="mt-2" />
+						</details>
+					</FieldGroup>
+					<Button icon={icons.eye} class="self-start">
 						{t.import.preview}
-					</button>
-				</div>
-			</form>
-		</section>
+					</Button>
+				</form>
+			</CardContent>
+			<CardFooter class="flex-wrap border-t">
+				<Button href={`/import/${i.type}/template.csv`} variant="outline" size="sm" icon={icons.fileSpreadsheet}>
+					{t.import.template}
+				</Button>
+				<Button href={`/import/${i.type}/export.csv`} variant="outline" size="sm" icon={icons.download}>
+					{t.import.export}
+				</Button>
+			</CardFooter>
+		</Card>
 	);
 }
 
 function IssueTable(props: { issues: RowIssue[] }) {
 	const { t } = useApp();
 	return (
-		<table class="table">
-			<thead>
-				<tr>
-					<th class="num">{t.import.line}</th>
-					<th>{t.import.field}</th>
-					<th>{t.import.message}</th>
-				</tr>
-			</thead>
-			<tbody>
+		<Table>
+			<TableHeader class="bg-muted/50">
+				<TableRow>
+					<TableHead class="w-0 text-right">{t.import.line}</TableHead>
+					<TableHead>{t.import.field}</TableHead>
+					<TableHead>{t.import.message}</TableHead>
+				</TableRow>
+			</TableHeader>
+			<TableBody>
 				{props.issues.map((i) => (
-					<tr>
-						<td class="num">{i.line}</td>
-						<td>
-							<code>{i.column ?? ""}</code>
-						</td>
-						<td>{errorText(t, i.key, i.vars)}</td>
-					</tr>
+					<TableRow>
+						<TableCell class="text-right tabular-nums">{i.line}</TableCell>
+						<TableCell>{i.column ? <code>{i.column}</code> : null}</TableCell>
+						<TableCell>{errorText(t, i.key, i.vars)}</TableCell>
+					</TableRow>
 				))}
-			</tbody>
-		</table>
+			</TableBody>
+		</Table>
 	);
 }
 
 function Preview(props: { plan: ImportPlan; csv: string }) {
 	const { t, isAdmin } = useApp();
 	const { plan } = props;
-	const count = (a: string) => plan.rows.filter((r) => r.action === a).length;
+	const count = (a: PlanAction) => plan.rows.filter((r) => r.action === a).length;
+	const created = count("create");
+	const updated = count("update");
+	const unchanged = count("unchanged");
 	const hasErrors = plan.errors.length > 0;
-	const pending = count("create") + count("update");
+	const pending = created + updated;
 	return (
 		<>
-			<PageHeader title={fmt(t.import.previewTitle, { type: t.import.types[plan.type] })} />
-			<p class="lead">
-				{fmt(t.import.summary, { create: count("create"), update: count("update"), unchanged: count("unchanged") })}
-			</p>
+			<PageHeader
+				title={fmt(t.import.previewTitle, { type: t.import.types[plan.type] })}
+				subtitle={fmt(t.import.summary, { create: created, update: updated, unchanged })}
+			/>
+			<div class="mb-4 grid grid-cols-2 gap-3 md:grid-cols-4">
+				<StatCard
+					label={t.import.stats.create}
+					value={created}
+					icon={icons.circlePlus}
+					tone={created > 0 ? "success" : "default"}
+				/>
+				<StatCard label={t.import.stats.update} value={updated} icon={icons.pencil} />
+				<StatCard label={t.import.stats.unchanged} value={unchanged} icon={icons.check} />
+				<StatCard
+					label={t.import.stats.errors}
+					value={plan.errors.length}
+					icon={icons.circleAlert}
+					tone={hasErrors ? "destructive" : "default"}
+				/>
+			</div>
 			{hasErrors ? (
-				<section class="card danger">
-					<h2>{fmt(t.import.errorsTitle, { n: plan.errors.length })}</h2>
-					<IssueTable issues={plan.errors} />
-				</section>
+				<>
+					<Alert variant="destructive" title={fmt(t.import.errorsTitle, { n: plan.errors.length })} />
+					<TableCard class="mb-4 border-destructive/40">
+						<IssueTable issues={plan.errors} />
+					</TableCard>
+				</>
 			) : null}
 			{plan.warnings.length ? (
-				<section class="card warning">
-					<h2>{t.import.warningsTitle}</h2>
-					<IssueTable issues={plan.warnings} />
-				</section>
+				<>
+					<Alert variant="warning" title={t.import.warningsTitle} />
+					<TableCard class="mb-4 border-warning/40">
+						<IssueTable issues={plan.warnings} />
+					</TableCard>
+				</>
 			) : null}
-			<div class="form-actions">
+			<div class="mb-6 flex flex-wrap items-center gap-2">
 				{!hasErrors && pending > 0 && isAdmin ? (
-					<form method="post" action={`/import/${plan.type}/commit`} class="inline">
+					<form method="post" action={`/import/${plan.type}/commit`}>
 						<textarea name="csv" hidden>
 							{props.csv}
 						</textarea>
-						<button type="submit" class="button primary">
+						<Button size="lg" icon={icons.check}>
 							{t.import.commit}
-						</button>
+						</Button>
 					</form>
 				) : null}
-				<a class="button secondary" href={`/import#import-${plan.type}`}>
+				<Button href={`/import#import-${plan.type}`} variant="outline" size="lg" icon={icons.arrowLeft}>
 					{t.common.back}
-				</a>
+				</Button>
 			</div>
-			{!hasErrors && !isAdmin ? <p class="flash">{t.import.noAdmin}</p> : null}
+			{!hasErrors && !isAdmin ? <Alert>{t.import.noAdmin}</Alert> : null}
 			{plan.rows.length ? (
-				<table class="table">
-					<thead>
-						<tr>
-							<th class="num">{t.import.line}</th>
-							<th>{t.import.action}</th>
-							{plan.previewColumns.map((col) => (
-								<th>{col}</th>
-							))}
-							<th />
-						</tr>
-					</thead>
-					<tbody>
-						{plan.rows.map((r) => (
-							<tr class={`action-${r.action}`}>
-								<td class="num">{r.line}</td>
-								<td>
-									<span class={`tag action-${r.action}`}>{t.import.actions[r.action]}</span>
-								</td>
-								{r.cells.map((cell) => (
-									<td>{cell}</td>
+				<TableCard title={fmt(t.common.results, { n: plan.rows.length })}>
+					<Table>
+						<TableHeader class="bg-muted/50">
+							<TableRow>
+								<TableHead class="w-0 text-right">{t.import.line}</TableHead>
+								<TableHead>{t.import.action}</TableHead>
+								{plan.previewColumns.map((col) => (
+									<TableHead class="font-mono tracking-normal normal-case">{col}</TableHead>
 								))}
-								<td class="small">
-									{r.changes.map((ch) => (
-										<div>{ch}</div>
+								<TableHead>{t.import.changes}</TableHead>
+							</TableRow>
+						</TableHeader>
+						<TableBody>
+							{plan.rows.map((r) => (
+								<TableRow class={cn(r.action === "unchanged" && "text-muted-foreground")}>
+									<TableCell class="text-right tabular-nums">{r.line}</TableCell>
+									<TableCell>
+										<Badge variant={ACTION_BADGES[r.action]}>{t.import.actions[r.action]}</Badge>
+									</TableCell>
+									{r.cells.map((cell) => (
+										<TableCell>{cell}</TableCell>
 									))}
-								</td>
-							</tr>
-						))}
-					</tbody>
-				</table>
+									<TableCell class="text-xs text-muted-foreground">
+										{r.changes.length ? (
+											<ul class="m-0 flex list-none flex-col gap-0.5 p-0">
+												{r.changes.map((ch) => (
+													<li>{ch}</li>
+												))}
+											</ul>
+										) : null}
+									</TableCell>
+								</TableRow>
+							))}
+						</TableBody>
+					</Table>
+				</TableCard>
 			) : null}
 		</>
 	);
 }
 
+// ---------------------------------------------------------------------------
+// Backup and restore
+
 function BackupCard() {
 	const { t, isAdmin } = useApp();
 	return (
-		<section class="card" id="backup">
-			<h2>{t.import.backupTitle}</h2>
-			<p>{t.import.backupIntro}</p>
-			<p class="links">
-				<a href="/import/backup.json">{t.import.backupDownload}</a>
-			</p>
-			{isAdmin ? (
-				<>
-					<h3>{t.import.restoreTitle}</h3>
-					<p class="muted">{t.import.restoreIntro}</p>
-					<form method="post" action="/import/restore/preview" enctype="multipart/form-data" class="form">
-						<div class="field">
-							<label for="restore-file">{t.import.file}</label>
-							<input id="restore-file" type="file" name="file" accept=".json,application/json" required />
+		<Card id="backup" class="scroll-mt-20">
+			<CardHeader>
+				<CardTitle class="flex items-center gap-3">
+					<IconTile icon={icons.database} />
+					{t.import.backupTitle}
+				</CardTitle>
+				<CardDescription class="pt-1">{t.import.backupIntro}</CardDescription>
+			</CardHeader>
+			<CardContent class="flex flex-col gap-6">
+				<Button href="/import/backup.json" variant="outline" icon={icons.fileJson} class="self-start">
+					{t.import.backupDownload}
+				</Button>
+				{isAdmin ? (
+					<div class="flex flex-col gap-4 rounded-lg border border-destructive/30 bg-destructive/5 p-4">
+						<div class="flex flex-col gap-1">
+							<h3 class="flex items-center gap-2 text-sm font-semibold text-destructive">
+								<Icon icon={icons.triangleAlert} class="size-4" />
+								{t.import.restoreTitle}
+							</h3>
+							<p class="text-sm text-muted-foreground">{t.import.restoreIntro}</p>
 						</div>
-						<div class="form-actions">
-							<button type="submit" class="button secondary">
+						<form
+							method="post"
+							action="/import/restore/preview"
+							enctype="multipart/form-data"
+							class="flex flex-col gap-3 sm:flex-row sm:items-end"
+						>
+							<div data-slot="field" class="flex w-full min-w-0 flex-col gap-2 sm:max-w-md">
+								<FieldLabel for="restore-file">{t.import.backupFile}</FieldLabel>
+								<input id="restore-file" type="file" name="file" accept=".json,application/json" required />
+							</div>
+							<Button variant="destructive" icon={icons.rotateCcw}>
 								{t.import.restorePreview}
-							</button>
-						</div>
-					</form>
-				</>
-			) : null}
-		</section>
+							</Button>
+						</form>
+					</div>
+				) : null}
+			</CardContent>
+		</Card>
 	);
 }
 
@@ -243,55 +376,73 @@ function RestorePreview(props: { plan: RestorePlan; json: string }) {
 		<>
 			<PageHeader title={t.import.restoreTitle} />
 			{plan.ok ? (
-				<section class="card warning">
-					<p>{fmt(t.import.restoreSummary, { at: plan.backup.exported_at.replace("T", " ").slice(0, 16) })}</p>
-					<table class="table">
-						<thead>
-							<tr>
-								<th>{t.import.table}</th>
-								<th class="num">{t.import.rows}</th>
-							</tr>
-						</thead>
-						<tbody>
-							{plan.counts.map((r) => (
-								<tr>
-									<td>
-										<code>{r.table}</code>
-									</td>
-									<td class="num">{r.rows}</td>
-								</tr>
-							))}
-						</tbody>
-					</table>
-					<form
-						method="post"
-						action="/import/restore/commit"
-						class="form-actions"
-						data-confirm={t.import.restoreConfirmPrompt}
-					>
-						<textarea name="json" hidden>
-							{props.json}
-						</textarea>
-						<button type="submit" class="button danger">
-							{t.import.restoreConfirm}
-						</button>
-						<a class="button secondary" href="/import#backup">
-							{t.common.cancel}
-						</a>
-					</form>
-				</section>
+				<>
+					<Alert variant="warning">{t.import.restoreIntro}</Alert>
+					<Card class="max-w-2xl border-destructive/40">
+						<CardHeader>
+							<CardTitle class="flex items-center gap-3">
+								<IconTile icon={icons.fileJson} />
+								{t.import.backupTitle}
+							</CardTitle>
+							<CardDescription class="pt-1">
+								{fmt(t.import.restoreSummary, { at: plan.backup.exported_at.replace("T", " ").slice(0, 16) })}
+							</CardDescription>
+						</CardHeader>
+						<CardContent>
+							<div class="overflow-hidden rounded-lg border">
+								<Table>
+									<TableHeader class="bg-muted/50">
+										<TableRow>
+											<TableHead>{t.import.table}</TableHead>
+											<TableHead class="text-right">{t.import.rows}</TableHead>
+										</TableRow>
+									</TableHeader>
+									<TableBody>
+										{plan.counts.map((r) => (
+											<TableRow>
+												<TableCell>
+													<code>{r.table}</code>
+												</TableCell>
+												<TableCell class="text-right tabular-nums">{r.rows}</TableCell>
+											</TableRow>
+										))}
+									</TableBody>
+								</Table>
+							</div>
+						</CardContent>
+						<CardFooter class="border-t">
+							<form
+								method="post"
+								action="/import/restore/commit"
+								class="flex flex-wrap items-center gap-2"
+								data-confirm={t.import.restoreConfirmPrompt}
+							>
+								<textarea name="json" hidden>
+									{props.json}
+								</textarea>
+								<Button variant="destructive" icon={icons.rotateCcw}>
+									{t.import.restoreConfirm}
+								</Button>
+								<Button href="/import#backup" variant="outline">
+									{t.common.cancel}
+								</Button>
+							</form>
+						</CardFooter>
+					</Card>
+				</>
 			) : (
-				<section class="card danger">
-					<h2>{t.import.restoreInvalid}</h2>
-					<ul>
-						{plan.errors.map((e) => (
-							<li>{e}</li>
-						))}
-					</ul>
-					<a class="button secondary" href="/import#backup">
+				<>
+					<Alert variant="destructive" title={t.import.restoreInvalid}>
+						<ul class="m-0 list-disc pl-5">
+							{plan.errors.map((e) => (
+								<li>{e}</li>
+							))}
+						</ul>
+					</Alert>
+					<Button href="/import#backup" variant="outline" icon={icons.arrowLeft}>
 						{t.common.back}
-					</a>
-				</section>
+					</Button>
+				</>
 			)}
 		</>
 	);
@@ -318,7 +469,7 @@ importRoutes.get("/", (c) => {
 		c,
 		t.import.title,
 		<>
-			<PageHeader title={t.import.title} />
+			<PageHeader title={t.import.title} subtitle={t.import.intro} />
 			{done ? (
 				<Flash
 					message={`${t.import.types[done.type]} — ${fmt(t.import.done, {
@@ -328,9 +479,8 @@ importRoutes.get("/", (c) => {
 				/>
 			) : null}
 			{c.req.query("restored") ? <Flash message={t.import.restored} /> : null}
-			<p>{t.import.intro}</p>
-			<p class="muted">{t.import.order}</p>
-			<div class="cards">
+			<Alert>{t.import.order}</Alert>
+			<div class="mb-6 grid gap-4 md:grid-cols-2">
 				{IMPORTERS.map((i) => (
 					<ImporterCard importer={i} />
 				))}

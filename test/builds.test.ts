@@ -29,6 +29,18 @@ async function planBuild(ref: string, opts: { serial?: string; qty?: string; cod
 /** Field names of the serial inputs on a pick list page. */
 const serialInputs = (html: string) => [...html.matchAll(/name="(serial:\d+:\d+)"/g)].map((m) => m[1] as string);
 
+/** A section of the build page, from the element with this id to `end` (searched after it). */
+function section(html: string, id: string, end: string): string {
+	const start = html.indexOf(`id="${id}"`);
+	expect(start, `missing #${id}`).toBeGreaterThan(-1);
+	const stop = html.indexOf(end, start);
+	return html.slice(start, stop === -1 ? undefined : stop);
+}
+/** The sub-assemblies card ("use stock" / "build now" choices), which precedes the pick lines. */
+const subAssemblies = (html: string) => section(html, "sub-assemblies", 'id="pick-lines"');
+/** The pick lines card: what is actually taken from stock. */
+const pickLines = (html: string) => section(html, "pick-lines", "</form>");
+
 describe("planning builds", () => {
 	it("numbers builds and enforces serial rules for tracked products", async () => {
 		await loadDemo();
@@ -92,14 +104,16 @@ describe("pick list", () => {
 		const id = await planBuild("LAMP-DESK", { serial: "L-1" });
 		const html = await (await request(`/builds/${id}`)).text();
 		expect(html).toContain("Pick list");
-		expect(html).toMatch(/ARM-ASSY<\/a> Arm sub-assembly/); // consumed from stock
+		expect(pickLines(html)).toContain(">ARM-ASSY</a>"); // consumed from stock
 		expect(html).not.toContain("ARM-TUBE-300</a>");
 		expect(serialInputs(html)).toHaveLength(2); // one LED + one driver
-		const path = /ARM-ASSY<\/a> <span class="muted">Arm sub-assembly<\/span>.*?name="choice:([\d/]+)"/s.exec(html)?.[1];
+		const path = /ARM-ASSY<\/a>.*?name="choice:([\d/]+)"/s.exec(subAssemblies(html))?.[1];
 		expect(path).toBeTruthy();
 		const built = await (await request(`/builds/${id}?${new URLSearchParams({ [`choice:${path}`]: "build" })}`)).text();
 		expect(built).toContain("ARM-TUBE-300</a>");
-		expect(built).not.toMatch(/ARM-ASSY<\/a> Arm sub-assembly <span/);
+		expect(pickLines(built)).not.toContain(">ARM-ASSY</a>");
+		expect(subAssemblies(built)).toContain(">ARM-ASSY</a>"); // still offered, now built
+		expect(built).toContain(`name="choice:${path}" value="build" checked`);
 	});
 });
 
@@ -224,7 +238,10 @@ describe("completing builds", () => {
 		const res = await postForm(`/builds/${topBuild}/complete`, { [`serial:${sub}:0`]: "S-1" });
 		expect(res.status).toBe(303);
 		const html = await (await request(`/builds/${topBuild}`)).text();
-		expect(html).toContain(`S-1 <a class="small" href="/builds/${subBuild}">(built in B-0001)</a>`);
+		// The serial links to the build that produced it.
+		expect(html).toMatch(
+			new RegExp(`>S-1</span><a [^>]*href="/builds/${subBuild}"[^>]*>(?:<svg[\\s\\S]*?</svg>)?built in B-0001</a>`),
+		);
 		expect(await onHand("SUB")).toBe(0);
 		expect(await onHand("TOP")).toBe(1000);
 	});

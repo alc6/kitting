@@ -14,7 +14,9 @@ Record every new non-obvious choice in `docs/decisions.md`.
 
 ## Commands
 
-- `npm run check`: typecheck (`tsc`, TypeScript 7) + lint (Biome) + tests. Run it before committing.
+- `npm run check`: CSS build + typecheck (`tsc`, TypeScript 7) + lint (Biome) + tests. Run it before committing.
+- `npm run css`: build `public/static/app.css` from `src/styles/app.css` (Tailwind v4; output gitignored).
+  `npm run css:watch` while editing classes (`wrangler dev` with the example config also rebuilds it).
 - `npm test`: Vitest in workerd via `@cloudflare/vitest-plugin`, real local D1.
   Vitest is pinned to 4.1.x (5.x breaks the plugin).
 - `npm run db:generate`: after any change to `src/db/schema.ts`. Commit the SQL and
@@ -30,13 +32,17 @@ Record every new non-obvious choice in `docs/decisions.md`.
   `bom-graph.ts` is pure (explosion, cost roll-up, cycle detection over an in-memory graph);
   `boms.ts` loads the graph and holds the recursive CTEs (where-used, cycle check on save).
   `stock.ts` (ledger, counts, valuation), `builds.ts` (pick list, completion batch),
-  `purchasing.ts` (shortage engine, POs, receipts), `backup.ts` (JSON export/restore).
+  `purchasing.ts` (shortage engine, POs, receipts), `backup.ts` (JSON export/restore),
+  `tree-layout.ts` (pure diagram layout), `search.ts` (global search).
   `src/domain/import/`: one importer per CSV type, all implementing `Importer`.
 - `src/routes/*.tsx`: one Hono router per area, with its page components.
-- `src/views/`: layout, shared UI components (`ui.tsx`), render helpers, view context (`useApp()`).
+- `src/views/`: layout (sidebar, header), shadcn-style components (`ui.tsx`), icons (`icons.tsx`),
+  BoM diagram (`bom-diagram.tsx`), render helpers, view context (`useApp()`: locale, theme, sidebar…).
+- `src/styles/app.css`: Tailwind source: shadcn tokens (light/dark), base layer, legacy classes.
 - `src/lib/`: units (fixed-point), CSV, validation (zod field builders), SQL helpers, batch.
 - `src/i18n/`: `en.ts` defines the `Dict` type; `fr.ts` must match it (compile error otherwise).
-- `public/static/`: CSS, `app.js`, vendored `htmx.min.js` (`npm run vendor:htmx` to update).
+- `public/static/`: built CSS, `app.js` (confirm, theme/sidebar toggles, search shortcut, diagram zoom),
+  vendored `htmx.min.js` (`npm run vendor:htmx` to update).
 
 ## Data rules
 
@@ -63,12 +69,29 @@ Record every new non-obvious choice in `docs/decisions.md`.
 
 - Server-rendered Hono JSX. Pages use `page(c, title, body)`; flash messages use
   POST-redirect-GET with `?ok=saved` (see `redirectOk`).
+- Design system: shadcn/ui, ported to Hono JSX (no React). The official skill is in
+  `.claude/skills/shadcn` (`npx skills add shadcn/ui`; `npx skills update` to refresh) and its
+  rules apply: semantic tokens only (`bg-primary`, `text-muted-foreground`, never `text-red-600`),
+  `gap-*` not `space-y-*`, `size-*`, `truncate`, `cn()` for conditional classes, built-in variants
+  before custom classes. Never run `shadcn init`/`add` or add React/Radix: read a component's
+  canonical recipe with `npx shadcn@latest view @shadcn/<name>` and port it to `src/views/ui.tsx`.
+- Components live in `src/views/ui.tsx` (Button, Badge, Card*, Table*, Field*, Alert, EmptyState,
+  LinkTabs, ToggleLinks, StatCard, DetailList, PageHeader…), icons in `src/views/icons.tsx`
+  (Lucide, imported by name). Pages compose them; avoid one-off styled `div`s.
+- Styling: Tailwind CSS v4. Tokens and the base layer are in `src/styles/app.css`;
+  `npm run css` builds `public/static/app.css` (gitignored; `npm run dev` and deploy build it,
+  `npm run css:watch` while editing). Tailwind only sees class names written literally in
+  `src/` and `public/static/app.js`: never build class names from fragments. `@layer components`
+  only keeps a few value-keyed hooks (`.num`, `.kind-*`, `.status-*`); everything else is utilities.
 - Strict CSP: no inline `<script>`, no `style=` attributes, no `<style>`, never
   `dangerouslySetInnerHTML` or `raw()` (Biome errors on it). Behaviour goes in `public/static/app.js`
-  via `data-*` attributes; styling via classes in `app.css`.
+  via `data-*` attributes. Diagrams are inline SVG styled with classes (`fill-*`, `stroke-*`).
+- Theme (light/dark/system) and the collapsed sidebar are cookies set by plain links
+  (`/theme/:mode`, `/sidebar/:state`), rendered server-side on `<html>`: no flash, no inline script.
 - htmx is progressive enhancement only: every feature must work as a plain form.
   Live search uses `hx-select="#results"` on the full page response. No `hx-on`, no `hx-boost`.
-- Tablet-first: use `.button`, `.field`, `.table`; touch targets stay ≥ 48px.
+- Tablet-first: controls use `--control-h` (36px with a mouse, 48px on touch screens via
+  `@media (pointer: coarse)`); keep touch targets ≥ 48px on touch devices.
 - All user-visible text goes in both dictionaries. No hard-coded strings in components.
 - Destructive actions (import commit, delete, archive) use `requireAdmin` and are only shown to admins.
 

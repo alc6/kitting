@@ -12,7 +12,7 @@ const commit = (type: string, csv: string, overrides = {}) => postForm(`/import/
 async function importOk(type: string, csv: string) {
 	const p = await preview(type, csv);
 	const html = await p.text();
-	expect(p.status, html.match(/<section class="card danger">.*?<\/section>/s)?.[0]).toBe(200);
+	expect(p.status, html.match(/data-slot="alert".*?<\/table>/s)?.[0]).toBe(200);
 	const c = await commit(type, csv);
 	expect(c.status).toBe(303);
 	return c.headers.get("Location")!;
@@ -191,7 +191,10 @@ describe("stock import", () => {
 		expect(html).toContain("one row per serial with quantity 1");
 		expect(html).toContain("Duplicate of line 6.");
 		// Errors are listed in file order.
-		const lines = [...html.matchAll(/<td class="num">(\d+)<\/td><td><code>/g)].map((m) => Number(m[1]));
+		const lines = [
+			...html.matchAll(/<td data-slot="table-cell"[^>]*>(\d+)<\/td><td data-slot="table-cell"[^>]*><code>/g),
+		].map((m) => Number(m[1]));
+		expect(lines).toHaveLength(5);
 		expect(lines).toEqual([...lines].sort((a, b) => a - b));
 	});
 });

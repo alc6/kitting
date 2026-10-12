@@ -114,6 +114,8 @@ describe("parts", () => {
 	it("keeps parts that own BoMs as make or kit", async () => {
 		const id = await insertPart("ASSY", "make");
 		await postForm("/boms", { parent_part_id: String(id), code: "std", revision: "Rev1", notes: "", copy_from: "" });
+		const bomId = (await one<{ id: number }>("SELECT id FROM boms")).id;
+		expect(await (await request(`/parts/${id}`)).text()).toContain(`href="/boms/${bomId}/diagram"`);
 		const res = await postForm(`/parts/${id}`, partForm({ ref: "ASSY", kind: "buy" }));
 		expect(res.status).toBe(422);
 		expect(await res.text()).toContain("This part has BoMs: it must stay a make or kit part.");
@@ -145,7 +147,9 @@ describe("parts", () => {
 		await insertMove(id, -500, "adjust");
 		const html = await (await request(`/parts/${id}`)).text();
 		expect(html).toContain("Inventory count");
-		expect(html).toMatch(/class="big"><span class="num">2<\/span>/);
+		// The "On hand" stat shows 2.5 - 0.5 = 2 (the first quantity after its label).
+		expect(html).toMatch(/data-slot="stat"/);
+		expect(html.match(/On hand<\/span>[\s\S]*?<span class="num">([^<]*)<\/span>/)?.[1]).toBe("2");
 		expect((await request(`/parts/${id}/archive`, { method: "POST" }, NOT_ADMIN)).status).toBe(403);
 		expect((await request(`/parts/${id}/delete`, { method: "POST" }, NOT_ADMIN)).status).toBe(403);
 		const del = await request(`/parts/${id}/delete`, { method: "POST" });

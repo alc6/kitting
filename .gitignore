@@ -9,4 +9,7 @@ wrangler.toml
 .DS_Store
 coverage/
 dist/
-.claude/
+.claude/*
+!.claude/skills/
+# Built by `npm run css` from src/styles/app.css.
+public/static/app.css

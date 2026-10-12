@@ -30,6 +30,9 @@ Short log of choices made where the brief left room. Newest at the bottom of eac
 | dev: `wrangler`, `drizzle-kit`, `typescript`, `vitest`, `@cloudflare/vitest-plugin`, `@cloudflare/workers-types` | Build, migrations, types, tests. |
 | dev: `@biomejs/biome` | Lint + format (D2). |
 | dev: `htmx.org` | Source of the vendored `htmx.min.js` (D5). |
+| `lucide` | Icons (shadcn/ui's default set), rendered as inline SVG on the server (D85). |
+| `tailwind-merge` | `cn()`: a caller's classes override a component's defaults, as in shadcn/ui (D86). |
+| dev: `tailwindcss`, `@tailwindcss/cli` | Build `public/static/app.css` from `src/styles/app.css` (D81). |
 
 ## Data model
 
@@ -171,3 +174,48 @@ Short log of choices made where the brief left room. Newest at the bottom of eac
   `preview_urls: false`, and refuses `*.workers.dev` hostnames.
 - **D44. Money display** uses the `CURRENCY` var (default EUR) for the symbol; amounts are
   formatted from integers without floating point.
+
+## UI refresh
+
+- **D80. shadcn/ui as the design system, ported to Hono JSX.** The app stays server-rendered with htmx and
+  a strict CSP, and every feature works as a plain form. shadcn components are React + Radix: they need
+  client-side React and set inline styles, which would mean an SPA and a weaker CSP. Instead,
+  `src/views/ui.tsx` ports their anatomy (`data-slot`), variants and Tailwind recipes, read from the
+  registry with `npx shadcn@latest view @shadcn/<name>`. The official agent skill is committed in
+  `.claude/skills/shadcn` (`npx skills add shadcn/ui`, pinned by `skills-lock.json`) for its rules and
+  references; there is deliberately no `components.json` (no React project for `shadcn init`/`add`).
+- **D81. Tailwind CSS v4 as a build step.** `@tailwindcss/cli` compiles `src/styles/app.css` (shadcn neutral
+  theme in OKLCH, `@theme inline` mapping, base layer) to `public/static/app.css`, still one static file under
+  `style-src 'self'`. The output is gitignored and built by `npm run css`, chained in `dev`, `deploy` and
+  `check`, run in CI and the deploy workflow, and declared as wrangler's `build` command (rebuilt on change
+  during `wrangler dev`). Sources are listed explicitly (`source(none)` + `@source`), so class names must be
+  literal. Every page now composes the components; the stylesheet keeps only value-keyed hooks
+  (`.num`, `.kind-*`, `.status-*`).
+- **D82a. Nested `<details>` chevrons use `[details[open]>summary_&]:rotate-90`**, not `group-open:`, which
+  matches any open ancestor (a closed child under an open parent would show as open). Collapsible cards, the
+  pick-list choice (radios styled as a segmented control) and the BoM tree all work without JavaScript.
+- **D82. Theme and sidebar state are cookies set by plain links.** A client-side theme switch needs an inline
+  pre-paint script to avoid a flash of the wrong theme, which the CSP forbids. `/theme/:mode` (system, light,
+  dark) and `/sidebar/:state` set a cookie and redirect back to a local path, like `/lang`; the layout renders
+  `class="dark"`/`"light"` and `data-sidebar` on `<html>`. "system" sets no class and follows
+  `prefers-color-scheme` (the dark tokens are declared for `.dark` and for `:root:not(.light)` in a media
+  query). app.js applies the change in place and calls the same URL in the background.
+- **D83. Control sizes follow the pointer.** shadcn's dense 36px controls are kept for mouse users; on touch
+  screens (`@media (pointer: coarse)`) `--control-h` is 48px, which keeps the tablet-first touch-target rule.
+- **D84. Status colours are extra tokens** (`--success`, `--warning`, `--info`, light and dark) next to the
+  neutral theme, for part kinds, statuses, stock alerts and the diagram. No raw palette colours in markup.
+- **D85. Icons: the vanilla `lucide` package, rendered as inline SVG on the server** and imported by name
+  (only the icons in `src/views/icons.tsx` are bundled). Lucide is shadcn's default icon set (ISC licence).
+- **D86. `tailwind-merge` at runtime for `cn()`.** A few KB in the Worker, so `<Button class="w-full">` and
+  similar overrides behave as in shadcn without hand-ordered class strings.
+- **D87. The BoM diagram is server-rendered SVG.** Mermaid or D3 would need client code and inject `<style>`
+  elements (CSP). `src/domain/tree-layout.ts` is a pure, unit-tested left-to-right layout (leaves on their own
+  rows, parents centred on their children, so boxes never overlap); the SVG is styled with Tailwind
+  `fill-*`/`stroke-*` classes and app.js adds zoom, fit and drag-to-pan. Like the tree view it shows the
+  structure without stock: a part used in two places appears twice, each with its branch quantity. Depth and
+  "sub-assemblies and kits only" are URL parameters, so every view is a link.
+- **D88. Global search reuses each list's own filter** (parts, BoMs, builds with component serials, POs,
+  suppliers) and includes archived and closed records, with an exact part reference first.
+- **D89. The mobile sidebar is a native popover** (`popover="auto"` opened by `popovertarget`): off-canvas
+  with a backdrop, light dismiss and Escape, without JavaScript. From the `lg` breakpoint CSS shows the same
+  element as a sticky column, collapsible to icons.

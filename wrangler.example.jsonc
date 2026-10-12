@@ -13,6 +13,9 @@
 	"preview_urls": false,
 	"routes": [{ "pattern": "kitting.example.com", "custom_domain": true }],
 	"assets": { "directory": "./public" },
+	// Builds public/static/app.css (Tailwind) before `wrangler dev` and `wrangler deploy`,
+	// and again whenever a file under src/ changes during `wrangler dev`.
+	"build": { "command": "npm run css", "watch_dir": "src" },
 	"d1_databases": [
 		{
 			"binding": "DB",

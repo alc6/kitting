@@ -6,7 +6,9 @@ import { errorText } from "../i18n";
 import type { FieldErrors } from "../lib/validation";
 import type { AppEnv } from "../types";
 import { AppViewContext, viewFor } from "./context";
+import { icons } from "./icons";
 import { Layout } from "./layout";
+import { Button, EmptyState } from "./ui";
 
 /** Renders a full page inside the layout, with the per-request view context. */
 export function page(c: Context<AppEnv>, title: string, body: Child, status: ContentfulStatusCode = 200) {
@@ -47,12 +49,11 @@ export function notFound(c: Context<AppEnv>) {
 	return page(
 		c,
 		t.errors.not_found,
-		<div class="card">
-			<h1>{t.errors.not_found}</h1>
-			<p>
-				<a href="/">{t.nav.dashboard}</a>
-			</p>
-		</div>,
+		<EmptyState icon={icons.search} title={t.errors.not_found} class="mt-12">
+			<Button href="/" variant="outline">
+				{t.nav.dashboard}
+			</Button>
+		</EmptyState>,
 		404,
 	);
 }

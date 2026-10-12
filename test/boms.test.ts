@@ -136,14 +136,54 @@ describe("BoM views", () => {
 		expect(html).toContain("Incomplete: no cost for MANUAL.");
 	});
 
+	it("draws the structure diagram down to the nested kit, with links and totals", async () => {
+		await loadDemo({ stock: false });
+		const id = await bomId("LAMP-DESK");
+		const html = await (await request(`/boms/${id}/diagram?qty=2`)).text();
+		expect(html).toContain("<svg");
+		expect(html).toContain("Structure of LAMP-DESK");
+		// Root, a kit, the kit inside it, and its leaves; each box links to its part.
+		for (const ref of ["LAMP-DESK", "HEAD-KIT-CW", "FIX-KIT-HEAD", "WASHER-M3"]) {
+			expect(html).toContain(`<a href="/parts/${await partId(ref)}"`);
+		}
+		expect(html).toMatch(/data-kind="kit" data-mode="kit"/);
+		// Sub-assemblies and kits open their own diagram.
+		expect(html).toContain(`href="/boms/${await bomId("FIX-KIT-HEAD")}/diagram"`);
+		// Totals for 2 lamps: 2 × 1 head kit × 1 fixing kit × 3 washers = 6, and the roll-up.
+		expect(html).toMatch(/WASHER-M3.*?6 pcs/s);
+		expect(html).toContain("€75.66 *");
+		// The tab is there on every BoM page; strict CSP: no inline styles.
+		expect(await (await request(`/boms/${id}`)).text()).toContain(`href="/boms/${id}/diagram"`);
+		expect(html).not.toMatch(/\sstyle=/);
+	});
+
+	it("limits the diagram by depth or to sub-assemblies and kits", async () => {
+		await loadDemo({ stock: false });
+		const id = await bomId("LAMP-DESK");
+		const top = await (await request(`/boms/${id}/diagram?depth=1`)).text();
+		expect(top).toContain("HEAD-KIT-CW");
+		expect(top).not.toContain("FIX-KIT-HEAD");
+		// HEAD-KIT-CW hides 4 components plus the 2 inside the fixing kit; the pill opens one more level.
+		expect(top).toContain(">+6</text>");
+		expect(top).toContain(`href="/boms/${id}/diagram?depth=2"`);
+
+		const structure = await (await request(`/boms/${id}/diagram?only=assemblies`)).text();
+		expect(structure).toContain("FIX-KIT-HEAD");
+		expect(structure).not.toContain("SCREW-M4X10");
+		expect(structure).toContain(`href="/boms/${id}/diagram"`); // "+N" shows everything again
+	});
+
 	it("lists the flat explosion, optionally using sub-assembly stock, and exports CSV", async () => {
 		await loadDemo();
 		const id = await bomId("LAMP-DESK");
 		const html = await (await request(`/boms/${id}/explode?qty=3`)).text();
 		expect(html).toMatch(/SCREW-M3X8<\/a>.*?<span class="num">33<\/span>/s);
-		expect(html).not.toMatch(/ARM-ASSY<\/a><\/td><td>Arm sub-assembly<span class="tag">from stock/);
+		// A sub-assembly row (marked "from stock") only appears when taking sub-assemblies from stock.
+		const fromStock = /ARM-ASSY<\/a><\/td><td[^>]*>Arm sub-assembly<span data-slot="badge"[^>]*>from stock</;
+		expect(html).not.toMatch(fromStock);
+		expect(html).toContain(`href="/boms/${id}/explode?qty=3&amp;format=csv"`);
 		const withStock = await (await request(`/boms/${id}/explode?qty=3&stock=on`)).text();
-		expect(withStock).toMatch(/ARM-ASSY<\/a><\/td><td>Arm sub-assembly<span class="tag">from stock/);
+		expect(withStock).toMatch(fromStock);
 		const csv = await (await request(`/boms/${id}/explode?qty=3&format=csv`)).text();
 		expect(csv).toContain("SCREW-M3X8,Screw M3x8,buy,pcs,33,350,0,0.02,0.66");
 		expect(csv).toContain("FEE-WEEE,WEEE eco-fee,fee,pcs,3,,,0.25,0.75");
@@ -166,7 +206,9 @@ describe("BoM views", () => {
 		expect(html).toContain("ARM-ASSY");
 		expect(html).toContain("BASE-ASSY");
 		expect(html).not.toContain(">LAMP-DESK<");
-		expect(await (await request("/boms")).text()).not.toContain('Rev1</td><td><span class="status status-archived');
+		expect(html).toContain(`href="/boms/${await bomId("ARM-ASSY")}/diagram"`);
+		// Archived BoMs are hidden unless asked for (only StatusBadge renders "status-archived").
+		expect(await (await request("/boms")).text()).not.toContain("status-archived");
 		expect(await (await request("/boms?status=archived")).text()).toContain("status-archived");
 	});
 });

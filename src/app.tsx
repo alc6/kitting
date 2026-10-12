@@ -12,12 +12,25 @@ import { dashboardRoutes } from "./routes/dashboard";
 import { importRoutes } from "./routes/import";
 import { partRoutes } from "./routes/parts";
 import { purchasingRoutes } from "./routes/purchasing";
+import { searchRoutes } from "./routes/search";
 import { stockRoutes } from "./routes/stock";
 import { supplierRoutes } from "./routes/suppliers";
 import type { AppEnv } from "./types";
+import { isTheme } from "./views/context";
+import { icons } from "./views/icons";
 import { notFound, page } from "./views/render";
+import { Button, EmptyState } from "./views/ui";
 
 const LOCALE_COOKIE = "kitting_lang";
+const THEME_COOKIE = "kitting_theme";
+const SIDEBAR_COOKIE = "kitting_sidebar";
+const PREF_COOKIE = { path: "/", sameSite: "Lax", secure: true, httpOnly: true, maxAge: 60 * 60 * 24 * 365 } as const;
+
+/** Only same-site relative paths: never redirect to another host. */
+function safeBack(back: string | undefined): string {
+	const b = back ?? "/";
+	return b.startsWith("/") && !b.startsWith("//") && !b.startsWith("/\\") ? b : "/";
+}
 
 const requestContext = createMiddleware<AppEnv>(async (c, next) => {
 	const cookie = getCookie(c, LOCALE_COOKIE);
@@ -25,6 +38,9 @@ const requestContext = createMiddleware<AppEnv>(async (c, next) => {
 	const locale: Locale = isLocale(cookie) ? cookie : fallback;
 	c.set("locale", locale);
 	c.set("t", dict(locale));
+	const theme = getCookie(c, THEME_COOKIE);
+	c.set("theme", isTheme(theme) ? theme : "system");
+	c.set("sidebarCollapsed", getCookie(c, SIDEBAR_COOKIE) === "collapsed");
 	c.set("db", drizzle(c.env.DB, { schema }));
 	await next();
 });
@@ -37,21 +53,24 @@ export function createApp() {
 	app.use("*", originCheck);
 	app.use("*", requestContext);
 
+	// Preferences: plain links that set a cookie and come back (they work without JavaScript;
+	// app.js applies theme and sidebar changes in place and calls them in the background).
 	app.get("/lang/:locale", (c) => {
 		const locale = c.req.param("locale");
-		if (isLocale(locale)) {
-			setCookie(c, LOCALE_COOKIE, locale, {
-				path: "/",
-				sameSite: "Lax",
-				secure: true,
-				httpOnly: true,
-				maxAge: 60 * 60 * 24 * 365,
-			});
-		}
-		const back = c.req.query("back") ?? "/";
-		// Only same-site relative paths: never redirect to another host.
-		const safe = back.startsWith("/") && !back.startsWith("//") && !back.startsWith("/\\") ? back : "/";
-		return c.redirect(safe, 303);
+		if (isLocale(locale)) setCookie(c, LOCALE_COOKIE, locale, PREF_COOKIE);
+		return c.redirect(safeBack(c.req.query("back")), 303);
+	});
+
+	app.get("/theme/:mode", (c) => {
+		const mode = c.req.param("mode");
+		if (isTheme(mode)) setCookie(c, THEME_COOKIE, mode, PREF_COOKIE);
+		return c.redirect(safeBack(c.req.query("back")), 303);
+	});
+
+	app.get("/sidebar/:state", (c) => {
+		const state = c.req.param("state");
+		if (state === "collapsed" || state === "expanded") setCookie(c, SIDEBAR_COOKIE, state, PREF_COOKIE);
+		return c.redirect(safeBack(c.req.query("back")), 303);
 	});
 
 	app.route("/", dashboardRoutes);
@@ -62,6 +81,7 @@ export function createApp() {
 	app.route("/stock", stockRoutes);
 	app.route("/purchasing", purchasingRoutes);
 	app.route("/import", importRoutes);
+	app.route("/search", searchRoutes);
 
 	app.notFound((c) => (c.var.t ? notFound(c) : c.text("Not found", 404)));
 	app.onError((err, c) => {
@@ -71,9 +91,11 @@ export function createApp() {
 		return page(
 			c,
 			t.errors.server,
-			<div class="card">
-				<h1>{t.errors.server}</h1>
-			</div>,
+			<EmptyState icon={icons.triangleAlert} title={t.errors.server} class="mt-12">
+				<Button href="/" variant="outline">
+					{t.nav.dashboard}
+				</Button>
+			</EmptyState>,
 			500,
 		);
 	});

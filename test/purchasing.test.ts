@@ -40,6 +40,13 @@ describe("draft POs from shortages", () => {
 		const page = await (await request("/purchasing")).text();
 		expect(page).toContain("Ironleaf Metalworks");
 		expect(page).toContain("Lumen Parts Co");
+		// One checkbox per supplier inside the form; the header button submits the same form.
+		const start = page.indexOf('action="/purchasing/draft-pos"');
+		const form = page.slice(start, page.indexOf("</form>", start));
+		expect(form).toContain(`name="supplier_${await supplierId("Ironleaf Metalworks")}"`);
+		expect(form).toContain(`name="supplier_${await supplierId("Lumen Parts Co")}"`);
+		expect(page).toContain('<form id="draft-pos"');
+		expect(page).toContain('form="draft-pos"');
 		// Only Ironleaf is checked.
 		const res = await postForm("/purchasing/draft-pos", {
 			[`supplier_${await supplierId("Ironleaf Metalworks")}`]: "on",
@@ -115,6 +122,19 @@ describe("purchase orders", () => {
 			qty_milli: 100_000,
 			unit_price_cents: 80,
 		});
+		// The editor: htmx swaps #po-lines, which holds the figures too, so they never go stale.
+		const editor = await (await request(`/purchasing/po/${id}`)).text();
+		const swapped = editor.slice(editor.indexOf('id="po-lines"'), editor.indexOf('id="receive"'));
+		expect(swapped).toContain('data-slot="stat"');
+		expect(swapped).toContain("€80.00");
+		expect(swapped).toContain(`hx-post="/purchasing/po/${id}/lines/${line}"`);
+		expect(swapped).toContain('hx-select="#po-lines"');
+		expect(swapped).toMatch(/name="qty"[^>]*data-select-on-focus/);
+		expect(swapped).toContain(`action="/purchasing/po/${id}/lines/${line}/delete"`);
+		expect(swapped).toContain('list="po-parts"');
+		expect(editor).toContain(`name="recv_${line}"`);
+		expect(editor).toContain(`href="/purchasing/po/${id}/export.csv"`);
+		expect(editor).toContain(`action="/purchasing/po/${id}/send"`);
 		const bad = await postForm(`/purchasing/po/${id}/lines`, { part: "FEE-WEEE", qty: "1", price: "" });
 		expect(await bad.text()).toContain("fee parts are never stocked.");
 		await postForm(`/purchasing/po/${id}/send`, {});
@@ -218,7 +238,9 @@ describe("purchase orders", () => {
 		expect((await postForm(`/purchasing/po/${id}/cancel`, {})).headers.get("Location")).toBe(
 			`/purchasing/po/${id}?err=po_has_receipts`,
 		);
-		await postForm(`/purchasing/po/${id}/close`, {});
+		const closed = await postForm(`/purchasing/po/${id}/close`, {});
+		expect(closed.headers.get("Location")).toBe(`/purchasing/po/${id}?ok=closed`);
+		expect(await (await request(`/purchasing/po/${id}?ok=closed`)).text()).toContain("PO closed.");
 		expect(await one("SELECT status FROM purchase_orders WHERE id = ?", id)).toEqual({ status: "received" });
 		const plate = (await computeShortages(testDb())).groups
 			.flatMap((g) => g.lines)
@@ -228,10 +250,14 @@ describe("purchase orders", () => {
 
 	it("deletes drafts for admins only", async () => {
 		const id = await draftPo([["BOX-LAMP", "1"]]);
+		const deleteAction = `action="/purchasing/po/${id}/delete"`;
+		expect(await (await request(`/purchasing/po/${id}`, {}, NOT_ADMIN)).text()).not.toContain(deleteAction);
+		expect(await (await request(`/purchasing/po/${id}`)).text()).toContain(deleteAction);
 		expect((await postForm(`/purchasing/po/${id}/delete`, {}, NOT_ADMIN)).status).toBe(403);
 		expect((await postForm(`/purchasing/po/${id}/delete`, {})).headers.get("Location")).toBe(
 			"/purchasing/po?ok=deleted",
 		);
+		expect(await (await request("/purchasing/po?ok=deleted")).text()).toContain("Deleted.");
 		expect(await rows("SELECT id FROM po_lines")).toEqual([]);
 	});
 });

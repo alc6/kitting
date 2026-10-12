@@ -18,9 +18,12 @@ export function CostView(props: { cost: Cost; refs: Map<number, string>; long?: 
 			<Money cents={centsOf(props.cost.millicents)} />
 			{props.cost.incomplete ? (
 				props.long ? (
-					<small class="warn"> {fmt(t.boms.incomplete, { refs: missing.join(", ") })}</small>
+					<small class="font-medium text-warning"> {fmt(t.boms.incomplete, { refs: missing.join(", ") })}</small>
 				) : (
-					<abbr class="warn" title={fmt(t.boms.incomplete, { refs: missing.join(", ") })}>
+					<abbr
+						class="cursor-help font-medium text-warning no-underline"
+						title={fmt(t.boms.incomplete, { refs: missing.join(", ") })}
+					>
 						{" "}
 						*
 					</abbr>

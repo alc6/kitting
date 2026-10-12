@@ -17,33 +17,57 @@ import {
 	partToForm,
 } from "../domain/parts";
 import { fmt } from "../i18n";
+import { cn } from "../lib/cn";
 import { isConstraintError } from "../lib/sql";
+import { lineCostCents } from "../lib/units";
 import { type FieldErrors, validate } from "../lib/validation";
 import { requireAdmin } from "../middleware/auth";
 import type { AppEnv } from "../types";
 import { CostView, StatusBadge } from "../views/bom";
 import { useApp } from "../views/context";
+import { icons } from "../views/icons";
 import { idParam, notFound, nowIso, page, redirectOk, translateErrors } from "../views/render";
 import {
+	Alert,
+	Badge,
+	Button,
+	Card,
+	CardAction,
+	CardContent,
+	CardDescription,
+	CardEmpty,
+	CardHeader,
+	CardTitle,
 	CheckboxField,
 	DecimalField,
-	Empty,
+	DetailList,
+	EmptyState,
 	ErrorBanner,
+	FieldGroup,
+	FieldSet,
 	Flash,
 	type FormErrors,
 	type FormValues,
 	KindBadge,
-	LinkButton,
 	Money,
 	PageHeader,
 	PostButton,
 	Qty,
 	SearchBar,
 	SelectField,
+	Separator,
+	StatCard,
 	shortDateTime,
+	Table,
+	TableBody,
+	TableCell,
+	TableHead,
+	TableHeader,
+	TableRow,
 	TextArea,
 	TextField,
 } from "../views/ui";
+
 import { BuildsTable } from "./builds";
 import { MoveReference } from "./stock";
 
@@ -56,46 +80,68 @@ async function supplierOptions(c: Context<AppEnv>): Promise<SupplierOption[]> {
 	return c.var.db.select({ id: suppliers.id, name: suppliers.name }).from(suppliers).orderBy(asc(suppliers.name));
 }
 
-function PartsTable(props: { rows: PartRow[] }) {
+function PartsTable(props: { rows: PartRow[]; filtered: boolean }) {
 	const { t } = useApp();
-	if (props.rows.length === 0) return <Empty />;
+	if (props.rows.length === 0) {
+		return (
+			<EmptyState
+				icon={icons.package}
+				title={t.parts.empty}
+				description={props.filtered ? t.parts.emptyFiltered : t.parts.emptyHint}
+			>
+				{props.filtered ? null : (
+					<Button href="/parts/new" icon={icons.plus}>
+						{t.parts.new}
+					</Button>
+				)}
+			</EmptyState>
+		);
+	}
 	return (
-		<table class="table">
-			<thead>
-				<tr>
-					<th>{t.parts.ref}</th>
-					<th>{t.parts.name}</th>
-					<th>{t.parts.kind}</th>
-					<th>{t.parts.supplier}</th>
-					<th class="num">{t.parts.cost}</th>
-					<th class="num">{t.parts.onHand}</th>
-				</tr>
-			</thead>
-			<tbody>
-				{props.rows.map((p) => (
-					<tr class={p.archived ? "archived" : undefined}>
-						<td>
-							<a href={`/parts/${p.id}`}>{p.ref}</a>
-						</td>
-						<td>
-							{p.name}
-							{p.trackSerial ? <span class="tag">S/N</span> : null}
-							{p.archived ? <span class="tag">{t.common.archivedLabel}</span> : null}
-						</td>
-						<td>
-							<KindBadge kind={p.kind} />
-						</td>
-						<td>{p.supplierName ?? ""}</td>
-						<td class="num">
-							<Money cents={p.costCents} />
-						</td>
-						<td class="num">
-							{p.kind === "buy" || p.kind === "make" ? <Qty milli={p.onHandMilli} unit={p.unit} /> : null}
-						</td>
-					</tr>
-				))}
-			</tbody>
-		</table>
+		<Card class="py-0">
+			<Table>
+				<TableHeader>
+					<TableRow>
+						<TableHead>{t.parts.ref}</TableHead>
+						<TableHead>{t.parts.name}</TableHead>
+						<TableHead>{t.parts.kind}</TableHead>
+						<TableHead>{t.parts.supplier}</TableHead>
+						<TableHead class="text-right">{t.parts.cost}</TableHead>
+						<TableHead class="text-right">{t.parts.onHand}</TableHead>
+					</TableRow>
+				</TableHeader>
+				<TableBody>
+					{props.rows.map((p) => (
+						<TableRow class={cn(p.archived && "opacity-60")}>
+							<TableCell class="font-medium whitespace-nowrap">
+								<a href={`/parts/${p.id}`}>{p.ref}</a>
+							</TableCell>
+							<TableCell>
+								<span class="inline-flex flex-wrap items-center gap-1.5">
+									{p.name}
+									{p.trackSerial ? (
+										<Badge variant="outline" title={t.parts.trackSerial}>
+											{t.parts.serialTag}
+										</Badge>
+									) : null}
+									{p.archived ? <Badge variant="muted">{t.common.archivedLabel}</Badge> : null}
+								</span>
+							</TableCell>
+							<TableCell>
+								<KindBadge kind={p.kind} />
+							</TableCell>
+							<TableCell class="text-muted-foreground">{p.supplierName ?? ""}</TableCell>
+							<TableCell class="text-right">
+								<Money cents={p.costCents} />
+							</TableCell>
+							<TableCell class="text-right">
+								{p.kind === "buy" || p.kind === "make" ? <Qty milli={p.onHandMilli} unit={p.unit} /> : null}
+							</TableCell>
+						</TableRow>
+					))}
+				</TableBody>
+			</Table>
+		</Card>
 	);
 }
 
@@ -110,59 +156,68 @@ function PartForm(props: {
 	const { t } = useApp();
 	const p = { values: props.values, errors: props.errors };
 	return (
-		<form method="post" action={props.action} class="card form">
+		<>
 			<ErrorBanner show={Object.keys(props.errors).length > 0} />
-			<div class="grid-2">
-				<TextField name="ref" label={t.parts.ref} required autofocus {...p} />
-				<SelectField
-					name="kind"
-					label={t.parts.kind}
-					required
-					options={PART_KINDS.map((k) => ({ value: k, label: `${t.kinds[k]} (${k}): ${t.kindHelp[k]}` }))}
-					{...p}
-				/>
-			</div>
-			<TextField name="name" label={t.parts.name} required {...p} />
-			<div class="grid-3">
-				<TextField name="unit" label={t.parts.unit} placeholder="pcs" list="units" {...p} />
-				<DecimalField name="cost" label={t.parts.cost} hint={t.parts.costHint} {...p} />
-				<CheckboxField name="track_serial" label={t.parts.trackSerial} {...p} />
-			</div>
-			<datalist id="units">
-				{["pcs", "m", "kg", "g", "l", "m2", "set"].map((u) => (
-					<option value={u} />
-				))}
-			</datalist>
-			<fieldset>
-				<legend>{t.parts.purchasing}</legend>
-				<div class="grid-2">
-					<SelectField
-						name="supplier_id"
-						label={t.parts.supplier}
-						options={[
-							{ value: "", label: t.parts.noSupplier },
-							...props.suppliers.map((s) => ({ value: String(s.id), label: s.name })),
-						]}
-						{...p}
-					/>
-					<TextField name="supplier_ref" label={t.parts.supplierRef} {...p} />
-				</div>
-				<div class="grid-3">
-					<DecimalField name="moq" label={t.parts.moq} {...p} />
-					<DecimalField name="pack_size" label={t.parts.packSize} {...p} />
-					<TextField name="lead_days" label={t.parts.leadDays} inputmode="numeric" {...p} />
-				</div>
-			</fieldset>
-			<TextArea name="notes" label={t.common.notes} {...p} />
-			<div class="form-actions">
-				<button type="submit" class="button primary">
-					{props.submit}
-				</button>
-				<a class="button secondary" href={props.cancel}>
-					{t.common.cancel}
-				</a>
-			</div>
-		</form>
+			<Card>
+				<CardContent>
+					<form method="post" action={props.action} class="flex flex-col gap-6">
+						<FieldGroup>
+							<div class="grid gap-4 md:grid-cols-2">
+								<TextField name="ref" label={t.parts.ref} required autofocus {...p} />
+								<SelectField
+									name="kind"
+									label={t.parts.kind}
+									required
+									options={PART_KINDS.map((k) => ({ value: k, label: `${t.kinds[k]} (${k}): ${t.kindHelp[k]}` }))}
+									{...p}
+								/>
+							</div>
+							<TextField name="name" label={t.parts.name} required {...p} />
+							<div class="grid gap-4 md:grid-cols-2">
+								<TextField name="unit" label={t.parts.unit} placeholder="pcs" list="units" {...p} />
+								<DecimalField name="cost" label={t.parts.cost} hint={t.parts.costHint} {...p} />
+							</div>
+							<CheckboxField name="track_serial" label={t.parts.trackSerial} {...p} />
+						</FieldGroup>
+						<datalist id="units">
+							{["pcs", "m", "kg", "g", "l", "m2", "set"].map((u) => (
+								<option value={u} />
+							))}
+						</datalist>
+						<Separator />
+						<FieldSet legend={t.parts.purchasing}>
+							<FieldGroup>
+								<div class="grid gap-4 md:grid-cols-2">
+									<SelectField
+										name="supplier_id"
+										label={t.parts.supplier}
+										options={[
+											{ value: "", label: t.parts.noSupplier },
+											...props.suppliers.map((s) => ({ value: String(s.id), label: s.name })),
+										]}
+										{...p}
+									/>
+									<TextField name="supplier_ref" label={t.parts.supplierRef} {...p} />
+								</div>
+								<div class="grid gap-4 md:grid-cols-3">
+									<DecimalField name="moq" label={t.parts.moq} {...p} />
+									<DecimalField name="pack_size" label={t.parts.packSize} {...p} />
+									<TextField name="lead_days" label={t.parts.leadDays} inputmode="numeric" {...p} />
+								</div>
+							</FieldGroup>
+						</FieldSet>
+						<Separator />
+						<TextArea name="notes" label={t.common.notes} {...p} />
+						<div class="flex flex-wrap items-center gap-2">
+							<Button>{props.submit}</Button>
+							<Button variant="outline" href={props.cancel}>
+								{t.common.cancel}
+							</Button>
+						</div>
+					</form>
+				</CardContent>
+			</Card>
+		</>
 	);
 }
 
@@ -196,7 +251,14 @@ partRoutes.get("/", async (c) => {
 		c,
 		t.parts.title,
 		<>
-			<PageHeader title={t.parts.title} actions={<LinkButton href="/parts/new" label={t.parts.new} />} />
+			<PageHeader
+				title={t.parts.title}
+				actions={
+					<Button href="/parts/new" icon={icons.plus}>
+						{t.parts.new}
+					</Button>
+				}
+			/>
 			<Flash ok={c.req.query("ok")} />
 			<SearchBar action="/parts" q={q}>
 				<select name="kind" aria-label={t.parts.kind}>
@@ -219,14 +281,16 @@ partRoutes.get("/", async (c) => {
 						</option>
 					))}
 				</select>
-				<label class="check">
-					<input type="checkbox" name="archived" value="on" checked={archived} />
+				<label class="flex min-h-(--control-h) cursor-pointer items-center gap-2 text-sm font-medium whitespace-nowrap">
+					<input type="checkbox" data-slot="checkbox" name="archived" value="on" checked={archived} />
 					<span>{t.parts.showArchived}</span>
 				</label>
 			</SearchBar>
 			<div id="results">
-				<p class="muted">{fmt(t.common.results, { n: rows.length })}</p>
-				<PartsTable rows={rows} />
+				{rows.length > 0 ? (
+					<p class="mb-2 text-sm text-muted-foreground">{fmt(t.common.results, { n: rows.length })}</p>
+				) : null}
+				<PartsTable rows={rows} filtered={q !== "" || kind !== "" || supplierId !== null} />
 			</div>
 		</>,
 	);
@@ -295,27 +359,41 @@ function PartDetail(props: {
 	const { t, isAdmin } = useApp();
 	const p = props.part;
 	const stocked = p.kind === "buy" || p.kind === "make";
+	const { rollup, refs } = props.bomSummary;
 	return (
 		<>
 			<PageHeader
 				title={`${p.ref} · ${p.name}`}
 				subtitle={
-					<>
-						<KindBadge kind={p.kind} /> {t.kindHelp[p.kind]}
-						{p.archived ? <span class="tag">{t.common.archivedLabel}</span> : null}
-					</>
+					<span class="inline-flex flex-wrap items-center gap-2">
+						<KindBadge kind={p.kind} />
+						<span>{t.kindHelp[p.kind]}</span>
+						{p.archived ? <Badge variant="muted">{t.common.archivedLabel}</Badge> : null}
+					</span>
 				}
 				actions={
 					<>
-						<LinkButton href={`/parts/${p.id}/edit`} label={t.common.edit} variant="secondary" />
+						<Button href={`/parts/${p.id}/edit`} variant="outline" icon={icons.pencil}>
+							{t.common.edit}
+						</Button>
+						{stocked ? (
+							<Button href={`/stock/adjust?part=${p.id}`} variant="outline" icon={icons.arrowUpDown}>
+								{t.parts.adjustStock}
+							</Button>
+						) : null}
 						{isAdmin ? (
 							p.archived ? (
-								<PostButton action={`/parts/${p.id}/unarchive`} label={t.common.unarchive} />
+								<PostButton
+									action={`/parts/${p.id}/unarchive`}
+									label={t.common.unarchive}
+									icon={icons.archiveRestore}
+								/>
 							) : (
 								<PostButton
 									action={`/parts/${p.id}/archive`}
 									label={t.common.archive}
 									confirm={t.common.confirmArchive}
+									icon={icons.archive}
 								/>
 							)
 						) : null}
@@ -324,102 +402,132 @@ function PartDetail(props: {
 								action={`/parts/${p.id}/delete`}
 								label={t.common.delete}
 								confirm={t.common.confirmDelete}
-								variant="danger"
+								variant="destructive"
+								icon={icons.trash}
 							/>
 						) : null}
 					</>
 				}
 			/>
 			<Flash ok={props.ok} message={props.ok === "adjusted" ? t.stock.adjusted : undefined} />
-			{props.err === "in_use" ? <p class="flash error">{t.errors.in_use}</p> : null}
-			<div class="cards">
-				{stocked ? (
-					<section class="card stat">
-						<h2>{t.parts.onHand}</h2>
-						<p class="big">
-							<Qty milli={props.onHand} unit={p.unit} />
-						</p>
-						<p>
-							<a class="button small" href={`/stock/adjust?part=${p.id}`}>
-								{t.stock.adjust}
-							</a>
-						</p>
-					</section>
+			{props.err === "in_use" ? <Alert variant="destructive">{t.errors.in_use}</Alert> : null}
+			<div class="flex flex-col gap-4">
+				<div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+					{stocked ? (
+						<StatCard
+							label={t.parts.onHand}
+							value={<Qty milli={props.onHand} unit={p.unit} />}
+							icon={icons.warehouse}
+							tone={props.onHand < 0 ? "destructive" : "default"}
+							hint={
+								p.costCents !== null ? (
+									<>
+										{t.parts.stockValue}: <Money cents={lineCostCents(props.onHand, p.costCents)} />
+									</>
+								) : undefined
+							}
+						/>
+					) : null}
+					<StatCard
+						label={t.parts.cost}
+						value={<Money cents={p.costCents} />}
+						icon={icons.coins}
+						tone={p.costCents === null && !rollup ? "warning" : "default"}
+					/>
+					{rollup ? (
+						<StatCard
+							label={t.parts.rollupCost}
+							value={<CostView cost={rollup} refs={refs} />}
+							icon={icons.listTree}
+							tone={rollup.incomplete ? "warning" : "default"}
+						/>
+					) : null}
+				</div>
+				<div class="grid gap-4 lg:grid-cols-2">
+					<Card>
+						<CardHeader>
+							<CardTitle>{t.parts.info}</CardTitle>
+						</CardHeader>
+						<CardContent>
+							<DetailList
+								items={[
+									{ label: t.parts.unit, value: p.unit },
+									{ label: t.parts.trackSerial, value: p.trackSerial ? t.common.yes : t.common.no },
+									...(p.notes
+										? [{ label: t.common.notes, value: <span class="whitespace-pre-wrap">{p.notes}</span> }]
+										: []),
+								]}
+							/>
+						</CardContent>
+					</Card>
+					<Card>
+						<CardHeader>
+							<CardTitle>{t.parts.purchasing}</CardTitle>
+						</CardHeader>
+						<CardContent>
+							<DetailList
+								items={[
+									{
+										label: t.parts.supplier,
+										value: props.supplier ? (
+											<a href={`/suppliers/${props.supplier.id}`}>{props.supplier.name}</a>
+										) : (
+											t.common.none
+										),
+									},
+									...(props.supplier?.email
+										? [
+												{
+													label: t.suppliers.email,
+													value: <a href={`mailto:${props.supplier.email}`}>{props.supplier.email}</a>,
+												},
+											]
+										: []),
+									...(props.supplier?.phone ? [{ label: t.suppliers.phone, value: props.supplier.phone }] : []),
+									{ label: t.parts.supplierRef, value: p.supplierRef || t.common.none },
+									{ label: t.parts.moq, value: <Qty milli={p.moqMilli} unit={p.unit} /> },
+									{
+										label: t.parts.packSize,
+										value: p.packSizeMilli ? <Qty milli={p.packSizeMilli} unit={p.unit} /> : t.common.none,
+									},
+									{ label: t.parts.leadDays, value: <span class="tabular-nums">{p.leadDays}</span> },
+								]}
+							/>
+						</CardContent>
+					</Card>
+				</div>
+				{p.kind === "make" || p.kind === "kit" ? <PartBoms part={p} summary={props.bomSummary} /> : null}
+				{p.kind === "make" ? (
+					<Card>
+						<CardHeader>
+							<CardTitle>{t.builds.recent}</CardTitle>
+							<CardAction>
+								<Button href={`/builds/new?part=${p.id}`} variant="outline" size="sm" icon={icons.plus}>
+									{t.builds.new}
+								</Button>
+							</CardAction>
+						</CardHeader>
+						<CardContent class="px-2">
+							<BuildsTable rows={props.builds} />
+						</CardContent>
+					</Card>
 				) : null}
-				<section class="card">
-					<h2>{t.parts.info}</h2>
-					<dl class="dl">
-						<dt>{t.parts.unit}</dt>
-						<dd>{p.unit}</dd>
-						<dt>{t.parts.cost}</dt>
-						<dd>
-							<Money cents={p.costCents} />
-						</dd>
-						<dt>{t.parts.trackSerial}</dt>
-						<dd>{p.trackSerial ? t.common.yes : t.common.no}</dd>
-						{p.notes ? (
-							<>
-								<dt>{t.common.notes}</dt>
-								<dd class="pre">{p.notes}</dd>
-							</>
-						) : null}
-					</dl>
-				</section>
-				<section class="card">
-					<h2>{t.parts.purchasing}</h2>
-					<dl class="dl">
-						<dt>{t.parts.supplier}</dt>
-						<dd>
-							{props.supplier ? <a href={`/suppliers/${props.supplier.id}`}>{props.supplier.name}</a> : t.common.none}
-						</dd>
-						{props.supplier?.email ? (
-							<>
-								<dt>{t.suppliers.email}</dt>
-								<dd>
-									<a href={`mailto:${props.supplier.email}`}>{props.supplier.email}</a>
-								</dd>
-							</>
-						) : null}
-						{props.supplier?.phone ? (
-							<>
-								<dt>{t.suppliers.phone}</dt>
-								<dd>{props.supplier.phone}</dd>
-							</>
-						) : null}
-						<dt>{t.parts.supplierRef}</dt>
-						<dd>{p.supplierRef || t.common.none}</dd>
-						<dt>{t.parts.moq}</dt>
-						<dd>
-							<Qty milli={p.moqMilli} unit={p.unit} />
-						</dd>
-						<dt>{t.parts.packSize}</dt>
-						<dd>{p.packSizeMilli ? <Qty milli={p.packSizeMilli} unit={p.unit} /> : t.common.none}</dd>
-						<dt>{t.parts.leadDays}</dt>
-						<dd>{p.leadDays}</dd>
-					</dl>
-				</section>
+				<WhereUsed rows={props.usedIn} />
+				{stocked ? (
+					<Card>
+						<CardHeader>
+							<CardTitle>{t.parts.history}</CardTitle>
+						</CardHeader>
+						<CardContent class="px-2">
+							<MovesTable moves={props.moves} unit={p.unit} />
+						</CardContent>
+					</Card>
+				) : null}
+				<p class="text-xs text-muted-foreground">
+					{fmt(t.common.createdBy, { by: p.createdBy, at: shortDateTime(p.createdAt) })} ·{" "}
+					{fmt(t.common.updatedBy, { by: p.updatedBy, at: shortDateTime(p.updatedAt) })}
+				</p>
 			</div>
-			{p.kind === "make" || p.kind === "kit" ? <PartBoms part={p} summary={props.bomSummary} /> : null}
-			{p.kind === "make" ? (
-				<section class="card">
-					<div class="section-header">
-						<h2>{t.builds.recent}</h2>
-						<LinkButton href={`/builds/new?part=${p.id}`} label={t.builds.new} variant="secondary" />
-					</div>
-					<BuildsTable rows={props.builds} />
-				</section>
-			) : null}
-			<WhereUsed rows={props.usedIn} />
-			{stocked ? (
-				<section class="card">
-					<h2>{t.parts.history}</h2>
-					<MovesTable moves={props.moves} unit={p.unit} />
-				</section>
-			) : null}
-			<p class="muted small">
-				{fmt(t.common.createdBy, { by: p.createdBy, at: shortDateTime(p.createdAt) })} ·{" "}
-				{fmt(t.common.updatedBy, { by: p.updatedBy, at: shortDateTime(p.updatedAt) })}
-			</p>
 		</>
 	);
 }
@@ -427,124 +535,165 @@ function PartDetail(props: {
 function PartBoms(props: { part: Part; summary: Awaited<ReturnType<typeof partBomSummary>> }) {
 	const { t } = useApp();
 	const { summary } = props;
+	const only = summary.boms.length === 1 ? summary.boms[0] : undefined;
 	return (
-		<section class="card">
-			<div class="section-header">
-				<h2>{t.parts.boms}</h2>
-				<LinkButton href={`/boms/new?part=${props.part.id}`} label={t.boms.new} variant="secondary" />
-			</div>
-			{summary.rollup ? (
-				<p>
-					{t.boms.totalCost}: <CostView cost={summary.rollup} refs={summary.refs} long />
-				</p>
-			) : null}
-			{summary.boms.length === 0 ? (
-				<Empty>{t.boms.noBoms}</Empty>
-			) : (
-				<table class="table">
-					<thead>
-						<tr>
-							<th>{t.boms.code}</th>
-							<th>{t.boms.revision}</th>
-							<th>{t.boms.status}</th>
-							<th class="num">{t.boms.totalCost}</th>
-						</tr>
-					</thead>
-					<tbody>
-						{summary.boms.map((b) => (
-							<tr>
-								<td>
-									<a href={`/boms/${b.id}`}>{b.code}</a>
-								</td>
-								<td>{b.revision}</td>
-								<td>
-									<StatusBadge status={b.status} />
-								</td>
-								<td class="num">
-									<CostView cost={b.cost} refs={summary.refs} />
-								</td>
-							</tr>
-						))}
-					</tbody>
-				</table>
-			)}
-		</section>
+		<Card>
+			<CardHeader>
+				<CardTitle>{t.parts.boms}</CardTitle>
+				{summary.rollup ? (
+					<CardDescription>
+						{t.boms.totalCost}: <CostView cost={summary.rollup} refs={summary.refs} long />
+					</CardDescription>
+				) : null}
+				<CardAction>
+					{only ? (
+						<Button href={`/boms/${only.id}/diagram`} variant="outline" size="sm" icon={icons.diagram}>
+							{t.parts.openDiagram}
+						</Button>
+					) : null}
+					<Button href={`/boms/new?part=${props.part.id}`} variant="outline" size="sm" icon={icons.plus}>
+						{t.boms.new}
+					</Button>
+				</CardAction>
+			</CardHeader>
+			<CardContent class="px-2">
+				{summary.boms.length === 0 ? (
+					<CardEmpty icon={icons.listTree}>{t.boms.noBoms}</CardEmpty>
+				) : (
+					<Table>
+						<TableHeader>
+							<TableRow>
+								<TableHead>{t.boms.code}</TableHead>
+								<TableHead>{t.boms.revision}</TableHead>
+								<TableHead>{t.boms.status}</TableHead>
+								<TableHead class="text-right">{t.boms.totalCost}</TableHead>
+								<TableHead class="w-px">
+									<span class="sr-only">{t.common.actions}</span>
+								</TableHead>
+							</TableRow>
+						</TableHeader>
+						<TableBody>
+							{summary.boms.map((b) => (
+								<TableRow>
+									<TableCell class="font-medium">
+										<a href={`/boms/${b.id}`}>{b.code}</a>
+									</TableCell>
+									<TableCell>{b.revision}</TableCell>
+									<TableCell>
+										<StatusBadge status={b.status} />
+									</TableCell>
+									<TableCell class="text-right">
+										<CostView cost={b.cost} refs={summary.refs} />
+									</TableCell>
+									<TableCell class="py-1 text-right">
+										<Button
+											href={`/boms/${b.id}/diagram`}
+											variant="ghost"
+											size="icon-sm"
+											icon={icons.diagram}
+											aria-label={`${t.parts.openDiagram}: ${b.code} ${b.revision}`}
+											title={t.parts.openDiagram}
+										/>
+									</TableCell>
+								</TableRow>
+							))}
+						</TableBody>
+					</Table>
+				)}
+			</CardContent>
+		</Card>
 	);
 }
 
 function WhereUsed(props: { rows: WhereUsedRow[] }) {
 	const { t } = useApp();
 	return (
-		<section class="card">
-			<h2>{t.parts.whereUsed}</h2>
-			{props.rows.length === 0 ? (
-				<Empty />
-			) : (
-				<table class="table">
-					<thead>
-						<tr>
-							<th>{t.boms.parent}</th>
-							<th>{t.boms.code}</th>
-							<th>{t.boms.revision}</th>
-							<th>{t.boms.status}</th>
-							<th>{t.boms.level}</th>
-							<th class="num">{t.boms.qty}</th>
-						</tr>
-					</thead>
-					<tbody>
-						{props.rows.map((r) => (
-							<tr>
-								<td>
-									<a href={`/boms/${r.bomId}`}>{r.parentRef}</a> {r.parentName}
-								</td>
-								<td>{r.code}</td>
-								<td>{r.revision}</td>
-								<td>
-									<StatusBadge status={r.status} />
-								</td>
-								<td>{r.depth === 1 ? t.boms.direct : fmt(t.boms.via, { ref: r.viaRef })}</td>
-								<td class="num">{r.depth === 1 ? <Qty milli={r.qtyMilli} /> : null}</td>
-							</tr>
-						))}
-					</tbody>
-				</table>
-			)}
-		</section>
+		<Card>
+			<CardHeader>
+				<CardTitle class="flex items-center gap-2">
+					{t.parts.whereUsed}
+					{props.rows.length > 0 ? <Badge variant="secondary">{props.rows.length}</Badge> : null}
+				</CardTitle>
+			</CardHeader>
+			<CardContent class="px-2">
+				{props.rows.length === 0 ? (
+					<CardEmpty icon={icons.layers}>{t.common.noResults}</CardEmpty>
+				) : (
+					<Table>
+						<TableHeader>
+							<TableRow>
+								<TableHead>{t.boms.parent}</TableHead>
+								<TableHead>{t.boms.code}</TableHead>
+								<TableHead>{t.boms.revision}</TableHead>
+								<TableHead>{t.boms.status}</TableHead>
+								<TableHead>{t.boms.level}</TableHead>
+								<TableHead class="text-right">{t.boms.qty}</TableHead>
+							</TableRow>
+						</TableHeader>
+						<TableBody>
+							{props.rows.map((r) => (
+								<TableRow>
+									<TableCell>
+										<span class="font-medium">
+											<a href={`/boms/${r.bomId}`}>{r.parentRef}</a>
+										</span>{" "}
+										<span class="text-muted-foreground">{r.parentName}</span>
+									</TableCell>
+									<TableCell>{r.code}</TableCell>
+									<TableCell>{r.revision}</TableCell>
+									<TableCell>
+										<StatusBadge status={r.status} />
+									</TableCell>
+									<TableCell>
+										{r.depth === 1 ? (
+											<Badge variant="secondary">{t.boms.direct}</Badge>
+										) : (
+											<Badge variant="outline">{fmt(t.boms.via, { ref: r.viaRef })}</Badge>
+										)}
+									</TableCell>
+									<TableCell class="text-right">{r.depth === 1 ? <Qty milli={r.qtyMilli} /> : null}</TableCell>
+								</TableRow>
+							))}
+						</TableBody>
+					</Table>
+				)}
+			</CardContent>
+		</Card>
 	);
 }
 
 export function MovesTable(props: { moves: (typeof stockMoves.$inferSelect)[]; unit: string }) {
 	const { t } = useApp();
-	if (props.moves.length === 0) return <Empty />;
+	if (props.moves.length === 0) return <CardEmpty icon={icons.history}>{t.common.noResults}</CardEmpty>;
 	return (
-		<table class="table">
-			<thead>
-				<tr>
-					<th>{t.stock.at}</th>
-					<th>{t.stock.reason}</th>
-					<th class="num">{t.stock.qty}</th>
-					<th>{t.stock.serial}</th>
-					<th>{t.stock.by}</th>
-					<th>{t.common.notes}</th>
-				</tr>
-			</thead>
-			<tbody>
+		<Table>
+			<TableHeader>
+				<TableRow>
+					<TableHead>{t.stock.at}</TableHead>
+					<TableHead>{t.stock.reason}</TableHead>
+					<TableHead class="text-right">{t.stock.qty}</TableHead>
+					<TableHead>{t.stock.serial}</TableHead>
+					<TableHead>{t.stock.by}</TableHead>
+					<TableHead>{t.common.notes}</TableHead>
+				</TableRow>
+			</TableHeader>
+			<TableBody>
 				{props.moves.map((m) => (
-					<tr>
-						<td>{shortDateTime(m.at)}</td>
-						<td>
+					<TableRow>
+						<TableCell class="whitespace-nowrap text-muted-foreground tabular-nums">{shortDateTime(m.at)}</TableCell>
+						<TableCell>
 							<MoveReference reason={m.reason} refType={m.refType} refId={m.refId} />
-						</td>
-						<td class="num">
+						</TableCell>
+						<TableCell class="text-right">
 							<Qty milli={m.qtyMilli} unit={props.unit} />
-						</td>
-						<td>{m.serial ?? ""}</td>
-						<td>{m.by}</td>
-						<td>{m.note}</td>
-					</tr>
+						</TableCell>
+						<TableCell>{m.serial ?? ""}</TableCell>
+						<TableCell class="text-muted-foreground">{m.by}</TableCell>
+						<TableCell>{m.note}</TableCell>
+					</TableRow>
 				))}
-			</tbody>
-		</table>
+			</TableBody>
+		</Table>
 	);
 }
 

@@ -7,7 +7,15 @@
 	},
 	"files": {
 		"ignoreUnknown": true,
-		"includes": ["**", "!public/static/htmx.min.js", "!migrations/meta", "!worker-configuration.d.ts"]
+		"includes": [
+			"**",
+			"!public/static/htmx.min.js",
+			"!public/static/app.css",
+			"!migrations/meta",
+			"!worker-configuration.d.ts",
+			"!.claude",
+			"!skills-lock.json"
+		]
 	},
 	"formatter": {
 		"enabled": true,
@@ -38,6 +46,11 @@
 			"source": {
 				"organizeImports": "on"
 			}
+		}
+	},
+	"css": {
+		"parser": {
+			"tailwindDirectives": true
 		}
 	}
 }

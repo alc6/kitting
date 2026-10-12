@@ -18,6 +18,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Build CSS (Tailwind)
+        run: npm run css
       - name: Typecheck
         run: npm run typecheck
       - name: Lint

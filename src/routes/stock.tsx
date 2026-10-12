@@ -7,25 +7,42 @@ import { centsOf } from "../domain/bom-graph";
 import { getPart, listParts, partOptions } from "../domain/parts";
 import { type CountGroup, isStocked, listMoves, moveValues, onHandAt, planCounts, valuation } from "../domain/stock";
 import { errorText, fmt } from "../i18n";
+import { cn } from "../lib/cn";
 import { runBatch } from "../lib/db";
 import { formatCentsInput, formatQtyInput, MILLI, parseMilli } from "../lib/units";
 import { type FieldErrors, field, validate } from "../lib/validation";
 import type { AppEnv } from "../types";
 import { useApp } from "../views/context";
+import { type IconNode, icons } from "../views/icons";
 import { nowIso, page, translateErrors } from "../views/render";
 import {
-	Empty,
-	ErrorBanner,
+	Alert,
+	Badge,
+	Button,
+	Card,
+	CardContent,
+	CardEmpty,
+	FieldGroup,
 	Flash,
 	type FormErrors,
 	type FormValues,
 	KindBadge,
 	LinkButton,
+	LinkTabs,
 	Money,
 	PageHeader,
 	Qty,
 	SearchBar,
+	StatCard,
 	shortDateTime,
+	Table,
+	TableBody,
+	TableCard,
+	TableCell,
+	TableFooter,
+	TableHead,
+	TableHeader,
+	TableRow,
 	TextField,
 } from "../views/ui";
 import { csvResponse } from "./import";
@@ -36,20 +53,21 @@ type Tab = "onHand" | "moves" | "count" | "valuation";
 
 function StockTabs(props: { active: Tab }) {
 	const { t } = useApp();
-	const tabs: { key: Tab; href: string }[] = [
-		{ key: "onHand", href: "/stock" },
-		{ key: "moves", href: "/stock/moves" },
-		{ key: "count", href: "/stock/count" },
-		{ key: "valuation", href: "/stock/valuation" },
+	const tabs: { key: Tab; href: string; icon: IconNode }[] = [
+		{ key: "onHand", href: "/stock", icon: icons.boxes },
+		{ key: "moves", href: "/stock/moves", icon: icons.history },
+		{ key: "count", href: "/stock/count", icon: icons.clipboardCheck },
+		{ key: "valuation", href: "/stock/valuation", icon: icons.coins },
 	];
 	return (
-		<nav class="tabs">
-			{tabs.map((tab) => (
-				<a href={tab.href} class={tab.key === props.active ? "active" : undefined}>
-					{t.stock.tabs[tab.key]}
-				</a>
-			))}
-		</nav>
+		<LinkTabs
+			items={tabs.map((tab) => ({
+				href: tab.href,
+				label: t.stock.tabs[tab.key],
+				icon: tab.icon,
+				active: tab.key === props.active,
+			}))}
+		/>
 	);
 }
 
@@ -57,9 +75,21 @@ function StockHeader(props: { tab: Tab }) {
 	const { t } = useApp();
 	return (
 		<>
-			<PageHeader title={t.stock.title} actions={<LinkButton href="/stock/adjust" label={t.stock.adjustTitle} />} />
+			<PageHeader
+				title={t.stock.title}
+				actions={<LinkButton href="/stock/adjust" label={t.stock.adjustTitle} icon={icons.arrowUpDown} />}
+			/>
 			<StockTabs active={props.tab} />
 		</>
+	);
+}
+
+function CsvButton(props: { href: string }) {
+	const { t } = useApp();
+	return (
+		<Button href={props.href} variant="outline" size="sm" icon={icons.download}>
+			{t.stock.downloadCsv}
+		</Button>
 	);
 }
 
@@ -91,7 +121,7 @@ stockRoutes.get("/", async (c) => {
 			<StockHeader tab="onHand" />
 			<Flash ok={c.req.query("ok")} message={c.req.query("ok") === "adjusted" ? t.stock.adjusted : undefined} />
 			<SearchBar action="/stock" q={q}>
-				<select name="filter" aria-label={t.common.filter}>
+				<select name="filter" aria-label={t.common.filter} class="w-auto flex-[0_1_220px]">
 					{FILTERS.map((f) => (
 						<option value={f} selected={f === filter}>
 							{t.stock.filters[f]}
@@ -100,44 +130,63 @@ stockRoutes.get("/", async (c) => {
 				</select>
 			</SearchBar>
 			<div id="results">
-				{rows.length === 0 ? (
-					<Empty />
-				) : (
-					<table class="table">
-						<thead>
-							<tr>
-								<th>{t.parts.ref}</th>
-								<th>{t.parts.name}</th>
-								<th>{t.parts.kind}</th>
-								<th class="num">{t.parts.moq}</th>
-								<th class="num">{t.stock.onHand}</th>
-								<th class="narrow" />
-							</tr>
-						</thead>
-						<tbody>
-							{rows.map((p) => (
-								<tr>
-									<td>
-										<a href={`/parts/${p.id}`}>{p.ref}</a>
-									</td>
-									<td>{p.name}</td>
-									<td>
-										<KindBadge kind={p.kind} />
-									</td>
-									<td class="num">{p.moqMilli ? <Qty milli={p.moqMilli} unit={p.unit} /> : ""}</td>
-									<td class={p.moqMilli > 0 && p.onHandMilli < p.moqMilli ? "num warn" : "num"}>
-										<Qty milli={p.onHandMilli} unit={p.unit} />
-									</td>
-									<td class="narrow">
-										<a class="button small" href={`/stock/adjust?part=${p.id}`}>
-											{t.stock.adjust}
-										</a>
-									</td>
-								</tr>
-							))}
-						</tbody>
-					</table>
-				)}
+				<TableCard title={fmt(t.common.results, { n: rows.length })}>
+					{rows.length === 0 ? (
+						<CardEmpty />
+					) : (
+						<Table>
+							<TableHeader class="bg-muted/50">
+								<TableRow>
+									<TableHead>{t.parts.ref}</TableHead>
+									<TableHead>{t.parts.name}</TableHead>
+									<TableHead>{t.parts.kind}</TableHead>
+									<TableHead class="text-right">{t.parts.moq}</TableHead>
+									<TableHead class="text-right">{t.stock.onHand}</TableHead>
+									<TableHead class="w-0">
+										<span class="sr-only">{t.common.actions}</span>
+									</TableHead>
+								</TableRow>
+							</TableHeader>
+							<TableBody>
+								{rows.map((p) => {
+									const low = p.moqMilli > 0 && p.onHandMilli < p.moqMilli;
+									return (
+										<TableRow>
+											<TableCell class="font-medium">
+												<a href={`/parts/${p.id}`}>{p.ref}</a>
+											</TableCell>
+											<TableCell>{p.name}</TableCell>
+											<TableCell>
+												<KindBadge kind={p.kind} />
+											</TableCell>
+											<TableCell class="text-right text-muted-foreground">
+												{p.moqMilli ? <Qty milli={p.moqMilli} unit={p.unit} /> : ""}
+											</TableCell>
+											<TableCell class={cn("text-right whitespace-nowrap", low && "font-medium text-warning")}>
+												{low ? (
+													<Badge variant="warning" class="mr-2">
+														{t.stock.filters.below_moq}
+													</Badge>
+												) : null}
+												<Qty milli={p.onHandMilli} unit={p.unit} />
+											</TableCell>
+											<TableCell class="w-0 text-right">
+												<Button
+													href={`/stock/adjust?part=${p.id}`}
+													variant="outline"
+													size="sm"
+													icon={icons.arrowUpDown}
+												>
+													{t.stock.adjust}
+												</Button>
+											</TableCell>
+										</TableRow>
+									);
+								})}
+							</TableBody>
+						</Table>
+					)}
+				</TableCard>
 			</div>
 		</>,
 	);
@@ -157,28 +206,36 @@ function AdjustForm(props: { values: FormValues; errors: FormErrors; options: { 
 	const { t } = useApp();
 	const p = { values: props.values, errors: props.errors };
 	return (
-		<form method="post" action="/stock/adjust" class="card form">
-			<ErrorBanner show={Object.keys(props.errors).length > 0} />
-			<TextField name="part" label={t.stock.part} list="stock-parts" required autofocus {...p} />
-			<datalist id="stock-parts">
-				{props.options.map((o) => (
-					<option value={o.ref}>{o.name}</option>
-				))}
-			</datalist>
-			<div class="grid-2">
-				<TextField name="qty" label={t.stock.qty} hint={t.stock.adjustHint} inputmode="decimal" required {...p} />
-				<TextField name="serial" label={t.stock.serial} hint={t.stock.serialHint} {...p} />
-			</div>
-			<TextField name="note" label={t.stock.note} placeholder={t.stock.noteHint} required {...p} />
-			<div class="form-actions">
-				<button type="submit" class="button primary">
-					{t.common.save}
-				</button>
-				<a class="button secondary" href="/stock">
-					{t.common.cancel}
-				</a>
-			</div>
-		</form>
+		<Card class="max-w-2xl">
+			<CardContent>
+				<form method="post" action="/stock/adjust" class="flex flex-col gap-6">
+					{Object.keys(props.errors).length > 0 ? (
+						<Alert variant="destructive" class="mb-0">
+							{t.common.fixErrors}
+						</Alert>
+					) : null}
+					<FieldGroup>
+						<TextField name="part" label={t.stock.part} list="stock-parts" required autofocus {...p} />
+						<datalist id="stock-parts">
+							{props.options.map((o) => (
+								<option value={o.ref}>{o.name}</option>
+							))}
+						</datalist>
+						<div class="grid gap-4 md:grid-cols-2">
+							<TextField name="qty" label={t.stock.qty} hint={t.stock.adjustHint} inputmode="decimal" required {...p} />
+							<TextField name="serial" label={t.stock.serial} hint={t.stock.serialHint} {...p} />
+						</div>
+						<TextField name="note" label={t.stock.note} placeholder={t.stock.noteHint} required {...p} />
+					</FieldGroup>
+					<div class="flex flex-wrap items-center gap-2">
+						<Button icon={icons.save}>{t.common.save}</Button>
+						<Button href="/stock" variant="outline">
+							{t.common.cancel}
+						</Button>
+					</div>
+				</form>
+			</CardContent>
+		</Card>
 	);
 }
 
@@ -194,7 +251,7 @@ stockRoutes.get("/adjust", async (c) => {
 		c,
 		t.stock.adjustTitle,
 		<>
-			<PageHeader title={t.stock.adjustTitle} />
+			<PageHeader title={t.stock.adjustTitle} subtitle={t.stock.adjustIntro} />
 			<AdjustForm values={{ part: part?.ref ?? "" }} errors={{}} options={await stockedOptions(c)} />
 		</>,
 	);
@@ -225,7 +282,7 @@ stockRoutes.post("/adjust", async (c) => {
 			c,
 			t.stock.adjustTitle,
 			<>
-				<PageHeader title={t.stock.adjustTitle} />
+				<PageHeader title={t.stock.adjustTitle} subtitle={t.stock.adjustIntro} />
 				<AdjustForm
 					values={body as FormValues}
 					errors={translateErrors(c, errors, vars)}
@@ -265,56 +322,69 @@ async function renderCount(c: Context<AppEnv>, values: FormValues, errors: Field
 		<>
 			<StockHeader tab="count" />
 			{done ? <Flash message={fmt(t.stock.countDone, { n: done, m: c.req.query("adjusted") ?? "0" })} /> : null}
-			<p>{t.stock.countIntro}</p>
+			<p class="mb-4 max-w-3xl text-sm text-muted-foreground">{t.stock.countIntro}</p>
 			<SearchBar action="/stock/count" q={q} />
-			<form method="post" action={`/stock/count${q ? `?q=${encodeURIComponent(q)}` : ""}`} class="form">
-				<ErrorBanner show={Object.keys(errors).length > 0} />
+			<form method="post" action={`/stock/count${q ? `?q=${encodeURIComponent(q)}` : ""}`} class="flex flex-col gap-6">
+				{Object.keys(errors).length > 0 ? (
+					<Alert variant="destructive" class="mb-0">
+						{t.common.fixErrors}
+					</Alert>
+				) : null}
 				<div id="results">
-					<table class="table">
-						<thead>
-							<tr>
-								<th>{t.parts.ref}</th>
-								<th>{t.parts.name}</th>
-								<th class="num">{t.stock.onHand}</th>
-								<th class="num">{t.stock.counted}</th>
-							</tr>
-						</thead>
-						<tbody>
-							{rows.map((p) => {
-								const name = `count_${p.id}`;
-								return (
-									<tr class={errors[name] ? "has-error" : undefined}>
-										<td>
-											<a href={`/parts/${p.id}`}>{p.ref}</a>
-										</td>
-										<td>
-											{p.name}
-											{errors[name] ? <div class="error small">{errorText(t, errors[name] ?? "")}</div> : null}
-										</td>
-										<td class="num">
-											<Qty milli={p.onHandMilli} unit={p.unit} />
-										</td>
-										<td class="num">
-											<input
-												type="text"
-												name={name}
-												inputmode="decimal"
-												class="qty"
-												value={values[name] ?? ""}
-												aria-label={`${t.stock.counted} ${p.ref}`}
-											/>
-										</td>
-									</tr>
-								);
-							})}
-						</tbody>
-					</table>
+					<TableCard>
+						{rows.length === 0 ? (
+							<CardEmpty />
+						) : (
+							<Table>
+								<TableHeader class="bg-muted/50">
+									<TableRow>
+										<TableHead>{t.parts.ref}</TableHead>
+										<TableHead>{t.parts.name}</TableHead>
+										<TableHead class="text-right">{t.stock.onHand}</TableHead>
+										<TableHead class="text-right">{t.stock.counted}</TableHead>
+									</TableRow>
+								</TableHeader>
+								<TableBody>
+									{rows.map((p) => {
+										const name = `count_${p.id}`;
+										const error = errors[name];
+										return (
+											<TableRow class={cn(error && "bg-destructive/5 hover:bg-destructive/10")}>
+												<TableCell class="font-medium">
+													<a href={`/parts/${p.id}`}>{p.ref}</a>
+												</TableCell>
+												<TableCell>
+													{p.name}
+													{error ? <p class="mt-1 text-sm text-destructive">{errorText(t, error)}</p> : null}
+												</TableCell>
+												<TableCell class="text-right text-muted-foreground">
+													<Qty milli={p.onHandMilli} unit={p.unit} />
+												</TableCell>
+												<TableCell class="w-0 text-right">
+													<input
+														type="text"
+														name={name}
+														inputmode="decimal"
+														value={values[name] ?? ""}
+														aria-label={`${t.stock.counted} ${p.ref}`}
+														aria-invalid={error ? "true" : undefined}
+														data-select-on-focus
+														class="w-28 text-right tabular-nums"
+													/>
+												</TableCell>
+											</TableRow>
+										);
+									})}
+								</TableBody>
+							</Table>
+						)}
+					</TableCard>
 				</div>
-				<TextField name="note" label={t.stock.note} values={values} errors={translateErrors(c, errors)} />
-				<div class="form-actions">
-					<button type="submit" class="button primary">
-						{t.stock.postCount}
-					</button>
+				<div class="flex flex-col gap-4 md:flex-row md:items-end print:hidden">
+					<div class="md:max-w-md md:flex-1">
+						<TextField name="note" label={t.stock.note} values={values} errors={translateErrors(c, errors)} />
+					</div>
+					<Button icon={icons.clipboardCheck}>{t.stock.postCount}</Button>
 				</div>
 			</form>
 		</>,
@@ -405,7 +475,7 @@ stockRoutes.get("/moves", async (c) => {
 		<>
 			<StockHeader tab="moves" />
 			<SearchBar action="/stock/moves" q={q}>
-				<select name="reason" aria-label={t.stock.reason}>
+				<select name="reason" aria-label={t.stock.reason} class="w-auto flex-[0_1_220px]">
 					<option value="">{t.stock.reasonAll}</option>
 					{MOVE_REASONS.map((r) => (
 						<option value={r} selected={r === reason}>
@@ -413,59 +483,63 @@ stockRoutes.get("/moves", async (c) => {
 						</option>
 					))}
 				</select>
-				<label class="inline-field">
-					<span>{t.stock.from}</span>
-					<input type="date" name="from" value={from ?? ""} />
+				<label class="inline-flex items-center gap-2 text-sm font-medium">
+					<span class="text-muted-foreground">{t.stock.from}</span>
+					<input type="date" name="from" value={from ?? ""} class="w-auto" />
 				</label>
-				<label class="inline-field">
-					<span>{t.stock.to}</span>
-					<input type="date" name="to" value={to ?? ""} />
+				<label class="inline-flex items-center gap-2 text-sm font-medium">
+					<span class="text-muted-foreground">{t.stock.to}</span>
+					<input type="date" name="to" value={to ?? ""} class="w-auto" />
 				</label>
 			</SearchBar>
 			<div id="results">
-				{rows.length === 0 ? (
-					<Empty />
-				) : (
-					<div class="scroll-x">
-						<table class="table">
-							<thead>
-								<tr>
-									<th>{t.stock.at}</th>
-									<th>{t.parts.ref}</th>
-									<th>{t.stock.reason}</th>
-									<th class="num">{t.stock.qty}</th>
-									<th>{t.stock.serial}</th>
-									<th>{t.stock.by}</th>
-									<th>{t.common.notes}</th>
-								</tr>
-							</thead>
-							<tbody>
+				<TableCard
+					title={fmt(t.common.results, { n: rows.length })}
+					action={<CsvButton href={`/stock/moves?${query}`} />}
+				>
+					{rows.length === 0 ? (
+						<CardEmpty />
+					) : (
+						<Table>
+							<TableHeader class="bg-muted/50">
+								<TableRow>
+									<TableHead>{t.stock.at}</TableHead>
+									<TableHead>{t.parts.ref}</TableHead>
+									<TableHead>{t.stock.reason}</TableHead>
+									<TableHead class="text-right">{t.stock.qty}</TableHead>
+									<TableHead>{t.stock.serial}</TableHead>
+									<TableHead>{t.stock.by}</TableHead>
+									<TableHead>{t.common.notes}</TableHead>
+								</TableRow>
+							</TableHeader>
+							<TableBody>
 								{rows.map(({ move: m, ref, unit }) => (
-									<tr>
-										<td class="nowrap">{shortDateTime(m.at)}</td>
-										<td>
+									<TableRow>
+										<TableCell class="whitespace-nowrap text-muted-foreground tabular-nums">
+											{shortDateTime(m.at)}
+										</TableCell>
+										<TableCell class="font-medium">
 											<a href={`/parts/${m.partId}`}>{ref}</a>
-										</td>
-										<td>
+										</TableCell>
+										<TableCell>
 											<MoveReference reason={m.reason} refType={m.refType} refId={m.refId} />
-										</td>
-										<td class="num">
+										</TableCell>
+										<TableCell class="text-right">
 											<Qty milli={m.qtyMilli} unit={unit} />
-										</td>
-										<td>{m.serial ?? ""}</td>
-										<td>{m.by}</td>
-										<td>{m.note}</td>
-									</tr>
+										</TableCell>
+										<TableCell class="font-mono text-xs">{m.serial ?? ""}</TableCell>
+										<TableCell class="text-muted-foreground">{m.by}</TableCell>
+										<TableCell class="min-w-40 text-muted-foreground">{m.note}</TableCell>
+									</TableRow>
 								))}
-							</tbody>
-						</table>
-					</div>
-				)}
-				{rows.length === limit ? <p class="muted small">{fmt(t.stock.limitNote, { n: limit })}</p> : null}
+							</TableBody>
+						</Table>
+					)}
+				</TableCard>
+				{rows.length === limit ? (
+					<p class="mt-3 text-sm text-muted-foreground">{fmt(t.stock.limitNote, { n: limit })}</p>
+				) : null}
 			</div>
-			<p class="links">
-				<a href={`/stock/moves?${query}`}>{t.stock.downloadCsv}</a>
-			</p>
 		</>,
 	);
 });
@@ -508,68 +582,96 @@ stockRoutes.get("/valuation", async (c) => {
 			["", "", "", "", "", "", "total", formatCentsInput(v.totalCents, locale), v.incomplete ? "yes" : ""],
 		]);
 	}
+	const incompleteRows = v.rows.filter((r) => r.incomplete).length;
 	return page(
 		c,
 		t.stock.tabs.valuation,
 		<>
 			<StockHeader tab="valuation" />
-			<form method="get" action="/stock/valuation" class="toolbar">
-				<label class="inline-field">
+			<form method="get" action="/stock/valuation" class="mb-4 flex flex-wrap items-center gap-2">
+				<label class="inline-flex items-center gap-2 text-sm font-medium">
 					<span>{t.stock.asOf}</span>
-					<input type="date" name="at" value={at ?? ""} />
+					<input type="date" name="at" value={at ?? ""} class="w-auto" />
 				</label>
-				<button type="submit" class="button secondary">
+				<Button variant="outline" icon={icons.calendar}>
 					{t.boms.update}
-				</button>
-				<small class="hint">{t.stock.asOfHint}</small>
+				</Button>
+				<span class="text-sm text-muted-foreground">{t.stock.asOfHint}</span>
 			</form>
-			{v.incomplete ? <p class="flash warning">{t.stock.valuationIncomplete}</p> : null}
-			<div class="scroll-x">
-				<table class="table">
-					<thead>
-						<tr>
-							<th>{t.parts.ref}</th>
-							<th>{t.parts.name}</th>
-							<th class="num">{t.stock.onHand}</th>
-							<th class="num">{t.stock.unitCost}</th>
-							<th class="num">{t.stock.value}</th>
-						</tr>
-					</thead>
-					<tbody>
-						{v.rows.map((r) => (
-							<tr>
-								<td>
-									<a href={`/parts/${r.part.id}`}>{r.part.ref}</a>
-								</td>
-								<td>
-									{r.part.name} <span class="muted small">({t.stock.source[r.source]})</span>
-								</td>
-								<td class="num">
-									<Qty milli={r.onHandMilli} unit={r.part.unit} />
-								</td>
-								<td class="num">
-									<Money cents={centsOf(r.unitMillicents)} />
-									{r.incomplete ? <span class="warn"> *</span> : null}
-								</td>
-								<td class="num">
-									<Money cents={r.valueCents} />
-								</td>
-							</tr>
-						))}
-					</tbody>
-					<tfoot>
-						<tr>
-							<td colspan={4}>{t.stock.totalValue}</td>
-							<td class="num">
-								<Money cents={v.totalCents} />
-							</td>
-						</tr>
-					</tfoot>
-				</table>
+			<div class="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
+				<div class="col-span-2 grid sm:col-span-1">
+					<StatCard
+						label={t.stock.totalValue}
+						value={<Money cents={v.totalCents} />}
+						icon={icons.coins}
+						hint={at ? fmt(t.stock.valueAsOf, { date: at }) : t.stock.valueNow}
+						tone={v.incomplete ? "warning" : "default"}
+					/>
+				</div>
+				<StatCard label={t.stock.partsValued} value={v.rows.length} icon={icons.package} />
+				<StatCard
+					label={t.stock.costIncomplete}
+					value={incompleteRows}
+					icon={icons.triangleAlert}
+					tone={incompleteRows > 0 ? "warning" : "default"}
+				/>
 			</div>
-			<p class="links">
-				<a href={`/stock/valuation?${new URLSearchParams({ at: at ?? "", format: "csv" })}`}>{t.stock.downloadCsv}</a>
-			</p>
+			{v.incomplete ? <Alert variant="warning">{t.stock.valuationIncomplete}</Alert> : null}
+			<TableCard
+				title={fmt(t.common.results, { n: v.rows.length })}
+				action={<CsvButton href={`/stock/valuation?${new URLSearchParams({ at: at ?? "", format: "csv" })}`} />}
+			>
+				{v.rows.length === 0 ? (
+					<CardEmpty />
+				) : (
+					<Table>
+						<TableHeader class="bg-muted/50">
+							<TableRow>
+								<TableHead>{t.parts.ref}</TableHead>
+								<TableHead>{t.parts.name}</TableHead>
+								<TableHead class="text-right">{t.stock.onHand}</TableHead>
+								<TableHead class="text-right">{t.stock.unitCost}</TableHead>
+								<TableHead class="text-right">{t.stock.value}</TableHead>
+							</TableRow>
+						</TableHeader>
+						<TableBody>
+							{v.rows.map((r) => (
+								<TableRow>
+									<TableCell class="font-medium">
+										<a href={`/parts/${r.part.id}`}>{r.part.ref}</a>
+									</TableCell>
+									<TableCell>
+										<span class="mr-2">{r.part.name}</span>
+										<Badge variant={r.source === "rollup" ? "info" : "muted"}>{t.stock.source[r.source]}</Badge>
+									</TableCell>
+									<TableCell class="text-right">
+										<Qty milli={r.onHandMilli} unit={r.part.unit} />
+									</TableCell>
+									<TableCell class="text-right whitespace-nowrap">
+										<Money cents={centsOf(r.unitMillicents)} />
+										{r.incomplete ? (
+											<span class="ml-0.5 font-medium text-warning" title={t.stock.rowIncomplete}>
+												*
+											</span>
+										) : null}
+									</TableCell>
+									<TableCell class="text-right">
+										<Money cents={r.valueCents} />
+									</TableCell>
+								</TableRow>
+							))}
+						</TableBody>
+						<TableFooter>
+							<TableRow class="hover:bg-transparent">
+								<TableCell colspan={4}>{t.stock.totalValue}</TableCell>
+								<TableCell class={cn("text-right", v.incomplete && "text-warning")}>
+									<Money cents={v.totalCents} />
+								</TableCell>
+							</TableRow>
+						</TableFooter>
+					</Table>
+				)}
+			</TableCard>
 		</>,
 	);
 });

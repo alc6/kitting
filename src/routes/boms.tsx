@@ -1,8 +1,17 @@
 import { and, asc, eq, sql } from "drizzle-orm";
 import type { Context } from "hono";
 import { Hono } from "hono";
+import type { Child } from "hono/jsx";
 import { BOM_STATUSES, type Bom, bomLines, boms, type Part, parts } from "../db/schema";
-import { type Cost, CostCalculator, centsOf, type ExplodedNode, type Explosion, explode } from "../domain/bom-graph";
+import {
+	type Cost,
+	CostCalculator,
+	centsOf,
+	type ExplodedNode,
+	type Explosion,
+	explode,
+	walkTree,
+} from "../domain/bom-graph";
 import {
 	activateStatements,
 	bomInput,
@@ -20,6 +29,7 @@ import {
 } from "../domain/boms";
 import { onHandMap, partOptions } from "../domain/parts";
 import { errorText, fmt } from "../i18n";
+import { cn } from "../lib/cn";
 import { runBatch } from "../lib/db";
 import { isConstraintError } from "../lib/sql";
 import { formatCentsInput, formatQtyInput, MILLI, parseMilli, roundDiv } from "../lib/units";
@@ -27,24 +37,47 @@ import { type FieldErrors, validate } from "../lib/validation";
 import { requireAdmin } from "../middleware/auth";
 import type { AppEnv } from "../types";
 import { CostView, StatusBadge } from "../views/bom";
+import { BomDiagram, type DiagramView, diagramTree, treeDepth } from "../views/bom-diagram";
 import { useApp } from "../views/context";
+import { Icon, type IconNode, icons } from "../views/icons";
 import { idParam, notFound, nowIso, page, redirectOk, translateErrors } from "../views/render";
 import {
+	Alert,
+	Badge,
+	Button,
+	Card,
+	CardContent,
+	CardDescription,
+	CardFooter,
+	CardHeader,
+	CardTitle,
 	Empty,
+	EmptyState,
 	ErrorBanner,
+	FieldGroup,
 	Flash,
 	type FormErrors,
 	type FormValues,
 	KindBadge,
 	LinkButton,
+	LinkTabs,
 	Money,
 	PageHeader,
 	PostButton,
 	Qty,
 	SearchBar,
 	SelectField,
+	StatCard,
+	Table,
+	TableBody,
+	TableCell,
+	TableFooter,
+	TableHead,
+	TableHeader,
+	TableRow,
 	TextArea,
 	TextField,
+	ToggleLinks,
 } from "../views/ui";
 import { csvResponse } from "./import";
 
@@ -58,25 +91,21 @@ function qtyParam(c: Context<AppEnv>): number {
 	return n !== null && n > 0 ? n : MILLI;
 }
 
-function BomTabs(props: { bom: Bom; active: "editor" | "tree" | "explode" }) {
+type BomTab = "editor" | "tree" | "diagram" | "explode";
+
+function BomTabs(props: { bom: Bom; active: BomTab }) {
 	const { t } = useApp();
-	const tabs = [
-		{ key: "editor", href: `/boms/${props.bom.id}`, label: t.boms.editor },
-		{ key: "tree", href: `/boms/${props.bom.id}/tree`, label: t.boms.tree },
-		{ key: "explode", href: `/boms/${props.bom.id}/explode`, label: t.boms.explode },
+	const id = props.bom.id;
+	const tabs: { key: BomTab; href: string; label: string; icon: IconNode }[] = [
+		{ key: "editor", href: `/boms/${id}`, label: t.boms.editor, icon: icons.pencil },
+		{ key: "tree", href: `/boms/${id}/tree`, label: t.boms.tree, icon: icons.listTree },
+		{ key: "diagram", href: `/boms/${id}/diagram`, label: t.boms.diagram, icon: icons.diagram },
+		{ key: "explode", href: `/boms/${id}/explode`, label: t.boms.explode, icon: icons.list },
 	];
-	return (
-		<nav class="tabs">
-			{tabs.map((tab) => (
-				<a href={tab.href} class={tab.key === props.active ? "active" : undefined}>
-					{tab.label}
-				</a>
-			))}
-		</nav>
-	);
+	return <LinkTabs items={tabs.map((tab) => ({ ...tab, active: tab.key === props.active }))} />;
 }
 
-function BomHeader(props: { bom: Bom; part: Part; tab: "editor" | "tree" | "explode" }) {
+function BomHeader(props: { bom: Bom; part: Part; tab: BomTab }) {
 	const { t, isAdmin } = useApp();
 	const { bom, part } = props;
 	return (
@@ -84,32 +113,52 @@ function BomHeader(props: { bom: Bom; part: Part; tab: "editor" | "tree" | "expl
 			<PageHeader
 				title={`${part.ref} · ${part.name}`}
 				subtitle={
-					<>
-						<KindBadge kind={part.kind} /> {t.boms.code}: <strong>{bom.code}</strong> · {t.boms.revision}:{" "}
-						<strong>{bom.revision}</strong> · <StatusBadge status={bom.status} />
-					</>
+					<span class="flex flex-wrap items-center gap-x-3 gap-y-1">
+						<KindBadge kind={part.kind} />
+						<span>
+							{t.boms.code}: <strong class="font-medium text-foreground">{bom.code}</strong>
+						</span>
+						<span>
+							{t.boms.revision}: <strong class="font-medium text-foreground">{bom.revision}</strong>
+						</span>
+						<StatusBadge status={bom.status} />
+					</span>
 				}
 				actions={
 					<>
 						{bom.status !== "active" ? (
-							<PostButton action={`/boms/${bom.id}/activate`} label={t.boms.activate} />
+							<PostButton
+								action={`/boms/${bom.id}/activate`}
+								label={t.boms.activate}
+								variant="default"
+								icon={icons.check}
+							/>
 						) : null}
-						{bom.status === "archived" ? <PostButton action={`/boms/${bom.id}/draft`} label={t.boms.toDraft} /> : null}
-						<PostButton action={`/boms/${bom.id}/revision`} label={t.boms.newRevision} />
+						{bom.status === "archived" ? (
+							<PostButton action={`/boms/${bom.id}/draft`} label={t.boms.toDraft} icon={icons.archiveRestore} />
+						) : null}
+						<PostButton action={`/boms/${bom.id}/revision`} label={t.boms.newRevision} icon={icons.copy} />
 						<LinkButton
 							href={`/boms/new?part=${part.id}&copy_from=${bom.id}`}
 							label={t.boms.newVariant}
-							variant="secondary"
+							variant="outline"
+							icon={icons.layers}
 						/>
 						{isAdmin && bom.status !== "archived" ? (
-							<PostButton action={`/boms/${bom.id}/archive`} label={t.boms.archive} confirm={t.common.confirmArchive} />
+							<PostButton
+								action={`/boms/${bom.id}/archive`}
+								label={t.boms.archive}
+								confirm={t.common.confirmArchive}
+								icon={icons.archive}
+							/>
 						) : null}
 						{isAdmin ? (
 							<PostButton
 								action={`/boms/${bom.id}/delete`}
 								label={t.common.delete}
 								confirm={t.common.confirmDelete}
-								variant="danger"
+								variant="destructive"
+								icon={icons.trash}
 							/>
 						) : null}
 					</>
@@ -127,9 +176,9 @@ function BomList(props: { rows: BomRow[]; q: string; status: string }) {
 	const { t } = useApp();
 	return (
 		<>
-			<PageHeader title={t.boms.title} actions={<LinkButton href="/boms/new" label={t.boms.new} />} />
+			<PageHeader title={t.boms.title} actions={<LinkButton href="/boms/new" label={t.boms.new} icon={icons.plus} />} />
 			<SearchBar action="/boms" q={props.q}>
-				<select name="status" aria-label={t.boms.status}>
+				<select name="status" aria-label={t.boms.status} data-slot="native-select" class="w-auto min-w-44">
 					<option value="">{t.boms.statusFilter.open}</option>
 					{BOM_STATUSES.map((s) => (
 						<option value={s} selected={s === props.status}>
@@ -143,34 +192,53 @@ function BomList(props: { rows: BomRow[]; q: string; status: string }) {
 			</SearchBar>
 			<div id="results">
 				{props.rows.length === 0 ? (
-					<Empty>{t.boms.noBoms}</Empty>
+					<EmptyState icon={icons.listTree} description={t.boms.noBoms} />
 				) : (
-					<table class="table">
-						<thead>
-							<tr>
-								<th>{t.boms.parent}</th>
-								<th>{t.boms.code}</th>
-								<th>{t.boms.revision}</th>
-								<th>{t.boms.status}</th>
-								<th class="num">{t.boms.lines}</th>
-							</tr>
-						</thead>
-						<tbody>
-							{props.rows.map((b) => (
-								<tr>
-									<td>
-										<a href={`/boms/${b.id}`}>{b.partRef}</a> {b.partName}
-									</td>
-									<td>{b.code}</td>
-									<td>{b.revision}</td>
-									<td>
-										<StatusBadge status={b.status} />
-									</td>
-									<td class="num">{b.lineCount}</td>
-								</tr>
-							))}
-						</tbody>
-					</table>
+					<Card class="gap-0 overflow-hidden py-0">
+						<Table>
+							<TableHeader class="bg-muted/50">
+								<TableRow>
+									<TableHead>{t.boms.parent}</TableHead>
+									<TableHead>{t.parts.kind}</TableHead>
+									<TableHead>{t.boms.code}</TableHead>
+									<TableHead>{t.boms.revision}</TableHead>
+									<TableHead>{t.boms.status}</TableHead>
+									<TableHead class="text-right">{t.boms.lines}</TableHead>
+									<TableHead class="w-px">
+										<span class="sr-only">{t.boms.diagram}</span>
+									</TableHead>
+								</TableRow>
+							</TableHeader>
+							<TableBody>
+								{props.rows.map((b) => (
+									<TableRow>
+										<TableCell>
+											<a href={`/boms/${b.id}`}>{b.partRef}</a> <span class="text-muted-foreground">{b.partName}</span>
+										</TableCell>
+										<TableCell>
+											<KindBadge kind={b.partKind} />
+										</TableCell>
+										<TableCell>{b.code}</TableCell>
+										<TableCell>{b.revision}</TableCell>
+										<TableCell>
+											<StatusBadge status={b.status} />
+										</TableCell>
+										<TableCell class="text-right tabular-nums">{b.lineCount}</TableCell>
+										<TableCell class="w-px py-1">
+											<Button
+												href={`/boms/${b.id}/diagram`}
+												variant="ghost"
+												size="icon-sm"
+												icon={icons.diagram}
+												aria-label={fmt(t.boms.openDiagram, { ref: b.partRef })}
+												title={fmt(t.boms.openDiagram, { ref: b.partRef })}
+											/>
+										</TableCell>
+									</TableRow>
+								))}
+							</TableBody>
+						</Table>
+					</Card>
 				)}
 			</div>
 		</>
@@ -199,42 +267,46 @@ function NewBomForm(props: {
 	const { t } = useApp();
 	const p = { values: props.values, errors: props.errors };
 	return (
-		<form method="post" action="/boms" class="card form">
-			<ErrorBanner show={Object.keys(props.errors).length > 0} />
-			<SelectField
-				name="parent_part_id"
-				label={t.boms.parent}
-				hint={t.boms.parentHint}
-				required
-				options={[
-					{ value: "", label: "—" },
-					...props.parents.map((o) => ({ value: String(o.id), label: `${o.ref} · ${o.name}` })),
-				]}
-				{...p}
-			/>
-			<div class="grid-2">
-				<TextField name="code" label={t.boms.code} hint={t.boms.codeHint} required {...p} />
-				<TextField name="revision" label={t.boms.revision} required {...p} />
-			</div>
-			<SelectField
-				name="copy_from"
-				label={t.boms.copyFrom}
-				options={[
-					{ value: "", label: t.boms.copyNone },
-					...props.sources.map((s) => ({ value: String(s.id), label: s.label })),
-				]}
-				{...p}
-			/>
-			<TextArea name="notes" label={t.common.notes} {...p} />
-			<div class="form-actions">
-				<button type="submit" class="button primary">
-					{t.common.create}
-				</button>
-				<a class="button secondary" href="/boms">
-					{t.common.cancel}
-				</a>
-			</div>
-		</form>
+		<Card class="max-w-3xl">
+			<form method="post" action="/boms" class="flex flex-col gap-6">
+				<CardContent>
+					<ErrorBanner show={Object.keys(props.errors).length > 0} />
+					<FieldGroup>
+						<SelectField
+							name="parent_part_id"
+							label={t.boms.parent}
+							hint={t.boms.parentHint}
+							required
+							options={[
+								{ value: "", label: "—" },
+								...props.parents.map((o) => ({ value: String(o.id), label: `${o.ref} · ${o.name}` })),
+							]}
+							{...p}
+						/>
+						<div class="grid gap-4 md:grid-cols-2">
+							<TextField name="code" label={t.boms.code} hint={t.boms.codeHint} required {...p} />
+							<TextField name="revision" label={t.boms.revision} required {...p} />
+						</div>
+						<SelectField
+							name="copy_from"
+							label={t.boms.copyFrom}
+							options={[
+								{ value: "", label: t.boms.copyNone },
+								...props.sources.map((s) => ({ value: String(s.id), label: s.label })),
+							]}
+							{...p}
+						/>
+						<TextArea name="notes" label={t.common.notes} {...p} />
+					</FieldGroup>
+				</CardContent>
+				<CardFooter class="border-t">
+					<Button icon={icons.plus}>{t.common.create}</Button>
+					<Button href="/boms" variant="outline">
+						{t.common.cancel}
+					</Button>
+				</CardFooter>
+			</form>
+		</Card>
 	);
 }
 
@@ -352,85 +424,77 @@ function LinesEditor(props: {
 		"hx-swap": "outerHTML",
 	};
 	return (
-		<section id="bom-lines" class="card">
-			{bom.status === "active" ? <p class="flash warning">{t.boms.activeWarning}</p> : null}
-			{bom.status === "archived" ? <p class="flash">{t.boms.archivedNote}</p> : null}
-			{props.lines.length === 0 ? (
-				<Empty />
-			) : (
-				<div class="scroll-x">
-					<table class="table lines">
-						<thead>
-							<tr>
-								{editable ? <th class="narrow" /> : null}
-								<th>{t.boms.component}</th>
-								<th>{t.parts.kind}</th>
-								<th class="num">{t.boms.qty}</th>
-								<th class="num">{t.boms.unitCost}</th>
-								<th class="num">{t.boms.lineCost}</th>
-								{editable ? <th class="narrow" /> : null}
-							</tr>
-						</thead>
-						<tbody>
+		<>
+			{bom.status === "active" ? <Alert variant="warning">{t.boms.activeWarning}</Alert> : null}
+			{bom.status === "archived" ? <Alert>{t.boms.archivedNote}</Alert> : null}
+			<Card id="bom-lines" class="gap-4">
+				<CardHeader>
+					<CardTitle>{t.boms.editor}</CardTitle>
+					<CardDescription>{fmt(t.boms.linesCount, { n: props.lines.length })}</CardDescription>
+				</CardHeader>
+				{props.lines.length === 0 ? (
+					<CardContent>
+						<Empty />
+					</CardContent>
+				) : (
+					<Table class={cn("border-t", FLUSH_TABLE)}>
+						<TableHeader class="bg-muted/50">
+							<TableRow>
+								{editable ? <TableHead class="w-px" /> : null}
+								<TableHead>{t.boms.component}</TableHead>
+								<TableHead>{t.parts.kind}</TableHead>
+								<TableHead class="text-right">{t.boms.qty}</TableHead>
+								<TableHead class="text-right">{t.boms.unitCost}</TableHead>
+								<TableHead class="text-right">{t.boms.lineCost}</TableHead>
+								{editable ? <TableHead class="w-px" /> : null}
+							</TableRow>
+						</TableHeader>
+						<TableBody>
 							{props.lines.map((l, i) => {
 								const cost = props.costs.get(l.partId);
+								const lineUrl = `/boms/${bom.id}/lines/${l.id}`;
 								return (
-									<tr>
+									<TableRow>
 										{editable ? (
-											<td class="narrow nowrap">
-												<form
-													method="post"
-													action={`/boms/${bom.id}/lines/${l.id}/move`}
-													class="inline"
-													hx-post={`/boms/${bom.id}/lines/${l.id}/move`}
-													{...hx}
-												>
-													<input type="hidden" name="dir" value="up" />
-													<button
-														type="submit"
-														class="button small icon"
+											<TableCell class="w-px py-1">
+												<div class="flex items-center gap-0.5">
+													<LineActionForm
+														action={`${lineUrl}/move`}
+														hx={hx}
+														hidden={{ dir: "up" }}
+														icon={icons.arrowUp}
+														label={t.boms.moveUp}
 														disabled={i === 0}
-														aria-label={t.boms.moveUp}
-														title={t.boms.moveUp}
-													>
-														↑
-													</button>
-												</form>
-												<form
-													method="post"
-													action={`/boms/${bom.id}/lines/${l.id}/move`}
-													class="inline"
-													hx-post={`/boms/${bom.id}/lines/${l.id}/move`}
-													{...hx}
-												>
-													<input type="hidden" name="dir" value="down" />
-													<button
-														type="submit"
-														class="button small icon"
+													/>
+													<LineActionForm
+														action={`${lineUrl}/move`}
+														hx={hx}
+														hidden={{ dir: "down" }}
+														icon={icons.arrowDown}
+														label={t.boms.moveDown}
 														disabled={i === props.lines.length - 1}
-														aria-label={t.boms.moveDown}
-														title={t.boms.moveDown}
-													>
-														↓
-													</button>
-												</form>
-											</td>
+													/>
+												</div>
+											</TableCell>
 										) : null}
-										<td>
-											<a href={`/parts/${l.partId}`}>{l.ref}</a> {l.name}
-											{l.archived ? <span class="tag">{t.common.archivedLabel}</span> : null}
-											{l.notes ? <div class="muted small">{l.notes}</div> : null}
-										</td>
-										<td>
+										<TableCell class="min-w-48">
+											<div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+												<a href={`/parts/${l.partId}`}>{l.ref}</a>
+												<span class="text-muted-foreground">{l.name}</span>
+												{l.archived ? <Badge variant="muted">{t.common.archivedLabel}</Badge> : null}
+											</div>
+											{l.notes ? <div class="mt-0.5 text-xs text-muted-foreground">{l.notes}</div> : null}
+										</TableCell>
+										<TableCell>
 											<KindBadge kind={l.kind} />
-										</td>
-										<td class="num">
+										</TableCell>
+										<TableCell class="text-right">
 											{editable ? (
 												<form
 													method="post"
-													action={`/boms/${bom.id}/lines/${l.id}`}
-													class="qty-form"
-													hx-post={`/boms/${bom.id}/lines/${l.id}`}
+													action={lineUrl}
+													class="flex items-center justify-end gap-1.5"
+													hx-post={lineUrl}
 													hx-trigger="change"
 													{...hx}
 												>
@@ -441,99 +505,145 @@ function LinesEditor(props: {
 														value={formatQtyInput(l.qtyMilli, locale)}
 														aria-label={`${t.boms.qty} ${l.ref}`}
 														data-select-on-focus
-														class="qty"
+														class="w-20 text-right tabular-nums"
 													/>
-													<span class="unit">{l.unit !== "pcs" ? l.unit : ""}</span>
-													<button type="submit" class="button small">
-														{t.common.save}
-													</button>
+													<span class="w-8 text-left text-xs text-muted-foreground">
+														{l.unit !== "pcs" ? l.unit : ""}
+													</span>
+													<Button
+														variant="ghost"
+														size="icon-sm"
+														icon={icons.save}
+														aria-label={t.common.save}
+														title={t.common.save}
+													/>
 												</form>
 											) : (
 												<Qty milli={l.qtyMilli} unit={l.unit} />
 											)}
-										</td>
-										<td class="num">{cost ? <CostView cost={cost} refs={props.refs} /> : null}</td>
-										<td class="num">
+										</TableCell>
+										<TableCell class="text-right">{cost ? <CostView cost={cost} refs={props.refs} /> : null}</TableCell>
+										<TableCell class="text-right">
 											{cost ? <Money cents={centsOf(roundDiv(l.qtyMilli * cost.millicents, MILLI))} /> : null}
-										</td>
+										</TableCell>
 										{editable ? (
-											<td class="narrow">
-												<form
-													method="post"
-													action={`/boms/${bom.id}/lines/${l.id}/delete`}
-													class="inline"
-													hx-post={`/boms/${bom.id}/lines/${l.id}/delete`}
-													{...hx}
-												>
-													<button
-														type="submit"
-														class="button small icon danger"
-														aria-label={t.boms.remove}
-														title={t.boms.remove}
-													>
-														✕
-													</button>
-												</form>
-											</td>
+											<TableCell class="w-px py-1">
+												<LineActionForm action={`${lineUrl}/delete`} hx={hx} icon={icons.trash} label={t.boms.remove} />
+											</TableCell>
 										) : null}
-									</tr>
+									</TableRow>
 								);
 							})}
-						</tbody>
-						<tfoot>
-							<tr>
-								<td colspan={editable ? 5 : 4}>{t.boms.totalCost}</td>
-								<td class="num">
+						</TableBody>
+						<TableFooter>
+							<TableRow class="hover:bg-transparent">
+								<TableCell colspan={editable ? 5 : 4}>{t.boms.totalCost}</TableCell>
+								<TableCell class="text-right font-semibold">
 									<CostView cost={props.total} refs={props.refs} />
-								</td>
-								{editable ? <td /> : null}
-							</tr>
-						</tfoot>
-					</table>
-				</div>
-			)}
-			{props.total.incomplete ? (
-				<p class="warn small">
-					{fmt(t.boms.incomplete, { refs: props.total.missing.map((id) => props.refs.get(id) ?? id).join(", ") })}
-				</p>
-			) : null}
-			{editable ? (
-				<form method="post" action={`/boms/${bom.id}/lines`} class="add-line" hx-post={`/boms/${bom.id}/lines`} {...hx}>
-					<ErrorBanner show={Object.keys(props.errors).length > 0} />
-					<div class="add-line-grid">
-						<TextField
-							name="component"
-							label={t.boms.component}
-							placeholder={t.boms.componentHint}
-							list="part-refs"
-							required
-							values={props.values}
-							errors={props.errors}
-						/>
-						<TextField
-							name="qty"
-							label={t.boms.qty}
-							inputmode="decimal"
-							required
-							values={props.values}
-							errors={props.errors}
-						/>
-						<TextField name="notes" label={t.common.notes} values={props.values} errors={props.errors} />
-						<div class="field">
-							<span class="label-spacer" />
-							<button type="submit" class="button primary">
-								{t.boms.addLine}
-							</button>
-						</div>
-					</div>
-					<datalist id="part-refs">
-						{props.options.map((o) => (
-							<option value={o.ref}>{o.name}</option>
-						))}
-					</datalist>
-				</form>
-			) : null}
-		</section>
+								</TableCell>
+								{editable ? <TableCell /> : null}
+							</TableRow>
+						</TableFooter>
+					</Table>
+				)}
+				{props.total.incomplete ? (
+					<CardContent>
+						<IncompleteNote refs={props.total.missing.map((id) => props.refs.get(id) ?? id).join(", ")} />
+					</CardContent>
+				) : null}
+				{editable ? (
+					<CardFooter class="flex-col items-stretch border-t">
+						<form
+							method="post"
+							action={`/boms/${bom.id}/lines`}
+							class="flex w-full flex-col gap-3"
+							hx-post={`/boms/${bom.id}/lines`}
+							{...hx}
+						>
+							<ErrorBanner show={Object.keys(props.errors).length > 0} />
+							<div class="grid gap-3 md:grid-cols-[2fr_1fr_2fr_auto] md:items-end">
+								<TextField
+									name="component"
+									label={t.boms.component}
+									placeholder={t.boms.componentHint}
+									list="part-refs"
+									required
+									values={props.values}
+									errors={props.errors}
+								/>
+								<TextField
+									name="qty"
+									label={t.boms.qty}
+									inputmode="decimal"
+									required
+									values={props.values}
+									errors={props.errors}
+								/>
+								<TextField name="notes" label={t.common.notes} values={props.values} errors={props.errors} />
+								<Button icon={icons.plus}>{t.boms.addLine}</Button>
+							</div>
+							<datalist id="part-refs">
+								{props.options.map((o) => (
+									<option value={o.ref}>{o.name}</option>
+								))}
+							</datalist>
+						</form>
+					</CardFooter>
+				) : null}
+			</Card>
+		</>
+	);
+}
+
+/** Table flush with its card: first and last columns line up with the card header padding. */
+const FLUSH_TABLE = "[&_td:first-child]:pl-6 [&_td:last-child]:pr-6 [&_th:first-child]:pl-6 [&_th:last-child]:pr-6";
+
+/** An icon-only POST button in its own form, swapped in place by htmx (reorder, remove). */
+function LineActionForm(props: {
+	action: string;
+	hx: Record<string, string>;
+	hidden?: Record<string, string>;
+	icon: IconNode;
+	label: string;
+	disabled?: boolean;
+}) {
+	return (
+		<form method="post" action={props.action} class="inline-flex" hx-post={props.action} {...props.hx}>
+			{Object.entries(props.hidden ?? {}).map(([k, v]) => (
+				<input type="hidden" name={k} value={v} />
+			))}
+			<Button
+				variant="ghost"
+				size="icon-sm"
+				icon={props.icon}
+				disabled={props.disabled}
+				aria-label={props.label}
+				title={props.label}
+			/>
+		</form>
+	);
+}
+
+/** "Incomplete: no cost for …" under a cost roll-up. */
+function IncompleteNote(props: { refs: string; class?: string }) {
+	const { t } = useApp();
+	return (
+		<p class={cn("flex items-start gap-2 text-sm font-medium text-warning", props.class)}>
+			<Icon icon={icons.triangleAlert} class="mt-0.5 size-4" />
+			{fmt(t.boms.incomplete, { refs: props.refs })}
+		</p>
+	);
+}
+
+/** Small card under the editor (revisions, variants, notes): icon + title, then content. */
+function SideCard(props: { title: string; icon: IconNode; children: Child }) {
+	return (
+		<Card class="gap-4">
+			<CardHeader>
+				<CardTitle icon={props.icon}>{props.title}</CardTitle>
+			</CardHeader>
+			<CardContent>{props.children}</CardContent>
+		</Card>
 	);
 }
 
@@ -569,7 +679,7 @@ async function renderEditor(
 		<>
 			<BomHeader bom={bom} part={part} tab="editor" />
 			<Flash ok={c.req.query("ok")} message={c.req.query("ok") === "activated" ? t.boms.activated : undefined} />
-			{c.req.query("err") ? <p class="flash error">{errorText(t, c.req.query("err") ?? "")}</p> : null}
+			{c.req.query("err") ? <Alert variant="destructive">{errorText(t, c.req.query("err") ?? "")}</Alert> : null}
 			<LinesEditor
 				bom={bom}
 				part={part}
@@ -581,37 +691,47 @@ async function renderEditor(
 				values={form.values}
 				errors={translateErrors(c, form.errors, form.vars)}
 			/>
-			<div class="cards">
-				<section class="card">
-					<h2>{t.boms.revisions}</h2>
-					<ul class="plain">
+			<div class="mt-6 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+				<SideCard title={t.boms.revisions} icon={icons.history}>
+					<ul class="m-0 flex list-none flex-col gap-2 p-0 text-sm">
 						{siblings
 							.filter((s) => s.code === bom.code)
 							.map((s) => (
-								<li>
-									{s.id === bom.id ? <strong>{s.revision}</strong> : <a href={`/boms/${s.id}`}>{s.revision}</a>}{" "}
+								<li class="flex items-center justify-between gap-3">
+									{s.id === bom.id ? (
+										<span class="font-semibold" aria-current="page">
+											{s.revision}
+										</span>
+									) : (
+										<a href={`/boms/${s.id}`}>{s.revision}</a>
+									)}
 									<StatusBadge status={s.status} />
 								</li>
 							))}
 					</ul>
-				</section>
-				<section class="card">
-					<h2>{t.boms.variants}</h2>
-					<ul class="plain">
+				</SideCard>
+				<SideCard title={t.boms.variants} icon={icons.layers}>
+					<ul class="m-0 flex list-none flex-col gap-2 p-0 text-sm">
 						{siblings
 							.filter((s) => s.status === "active")
 							.map((s) => (
-								<li>
-									{s.id === bom.id ? <strong>{s.code}</strong> : <a href={`/boms/${s.id}`}>{s.code}</a>} ({s.revision})
+								<li class="flex items-center justify-between gap-3">
+									{s.id === bom.id ? (
+										<span class="font-semibold" aria-current="page">
+											{s.code}
+										</span>
+									) : (
+										<a href={`/boms/${s.id}`}>{s.code}</a>
+									)}
+									<span class="text-muted-foreground">{s.revision}</span>
 								</li>
 							))}
 					</ul>
-				</section>
+				</SideCard>
 				{bom.notes ? (
-					<section class="card">
-						<h2>{t.common.notes}</h2>
-						<p class="pre">{bom.notes}</p>
-					</section>
+					<SideCard title={t.common.notes} icon={icons.clipboardList}>
+						<p class="text-sm whitespace-pre-wrap">{bom.notes}</p>
+					</SideCard>
 				) : null}
 			</div>
 		</>,
@@ -825,60 +945,107 @@ bomRoutes.post("/:id/delete", requireAdmin, async (c) => {
 // ---------------------------------------------------------------------------
 // Tree view and exploded list
 
-function QtyForm(props: { action: string; qty: number; stock?: boolean | undefined; showStock?: boolean }) {
+function QtyForm(props: {
+	action: string;
+	qty: number;
+	stock?: boolean | undefined;
+	showStock?: boolean;
+	/** Other view options to keep (empty values are left out). */
+	hidden?: Record<string, string>;
+	class?: string;
+}) {
 	const { t, locale } = useApp();
 	return (
-		<form method="get" action={props.action} class="toolbar">
-			<label class="inline-field">
+		<form method="get" action={props.action} class={cn("flex flex-wrap items-center gap-3", props.class ?? "mb-4")}>
+			{Object.entries(props.hidden ?? {})
+				.filter(([, v]) => v)
+				.map(([k, v]) => (
+					<input type="hidden" name={k} value={v} />
+				))}
+			<label class="inline-flex items-center gap-2 text-sm font-medium">
 				<span>{t.boms.forQty}</span>
-				<input type="text" name="qty" inputmode="decimal" value={formatQtyInput(props.qty, locale)} class="qty" />
+				<input
+					type="text"
+					name="qty"
+					inputmode="decimal"
+					value={formatQtyInput(props.qty, locale)}
+					class="w-24 text-right tabular-nums"
+				/>
 			</label>
 			{props.showStock ? (
-				<label class="check">
+				<label class="inline-flex min-h-(--control-h) cursor-pointer items-center gap-2 text-sm font-medium">
 					<input type="checkbox" name="stock" value="on" checked={props.stock} />
 					<span>{t.boms.useStock}</span>
 				</label>
 			) : null}
-			<button type="submit" class="button secondary">
-				{t.boms.update}
-			</button>
+			<Button variant="outline">{t.boms.update}</Button>
 		</form>
 	);
 }
+
+/**
+ * One row of the tree: name, per-parent and cumulative quantities, then the two cost columns
+ * (hidden on phones). Nested levels are indented by their <ul>; the fixed-width numeric columns
+ * keep the same right edge, so they line up at every depth.
+ */
+const TREE_ROW =
+	"grid min-h-(--control-h) grid-cols-[minmax(0,1fr)_4.5rem_5.5rem] items-center gap-3 border-b px-4 py-1.5 text-sm md:grid-cols-[minmax(12rem,1fr)_6rem_7rem_7rem_7rem]";
 
 function TreeNode(props: { node: ExplodedNode; calc: CostCalculator; refs: Map<number, string> }) {
 	const { t } = useApp();
 	const n = props.node;
 	const cost = props.calc.part(n.part.id);
-	const row = (
-		<span class="tree-row">
-			<span class="tree-name">
-				<a href={`/parts/${n.part.id}`}>{n.part.ref}</a> <span class="muted">{n.part.name}</span>{" "}
-				<KindBadge kind={n.part.kind} />
-				{n.mode === "missing_bom" ? <span class="tag warn">{t.boms.modes.missing_bom}</span> : null}
+	const branch = n.children.length > 0;
+	const cells = (
+		<>
+			<span class="flex min-w-0 items-center gap-2">
+				{branch ? (
+					// Rotates when its own <details> is open (a group-open: variant would also match open ancestors).
+					<Icon
+						icon={icons.chevronRight}
+						class="size-4 text-muted-foreground transition-transform [details[open]>summary_&]:rotate-90"
+					/>
+				) : (
+					<span class="size-4 shrink-0" />
+				)}
+				{/* Wraps between items on narrow screens; a reference never breaks at its hyphens. */}
+				<span class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 whitespace-nowrap">
+					<a href={`/parts/${n.part.id}`}>{n.part.ref}</a>
+					<span class="min-w-0 truncate text-muted-foreground">{n.part.name}</span>
+					<KindBadge kind={n.part.kind} />
+					{n.mode === "missing_bom" ? <Badge variant="warning">{t.boms.modes.missing_bom}</Badge> : null}
+				</span>
 			</span>
-			<span class="num muted">
+			<span class="text-right text-muted-foreground tabular-nums">
 				×<Qty milli={n.perParentMilli} unit={n.part.unit} />
 			</span>
-			<span class="num">
-				<strong>
-					<Qty milli={n.qtyMilli} unit={n.part.unit} />
-				</strong>
+			<span class="text-right font-semibold tabular-nums">
+				<Qty milli={n.qtyMilli} unit={n.part.unit} />
 			</span>
-			<span class="num">
+			<span class="hidden text-right md:block">
 				<CostView cost={cost} refs={props.refs} />
 			</span>
-			<span class="num">
+			<span class="hidden text-right md:block">
 				<Money cents={centsOf(props.calc.extended(n.part.id, n.qtyMilli))} />
 			</span>
-		</span>
+		</>
 	);
-	if (n.children.length === 0) return <li class="leaf">{row}</li>;
+	if (!branch) {
+		return (
+			<li>
+				<div class={cn(TREE_ROW, "transition-colors hover:bg-muted/50")}>{cells}</div>
+			</li>
+		);
+	}
 	return (
 		<li>
-			<details open>
-				<summary>{row}</summary>
-				<ul>
+			<details open class="group">
+				<summary
+					class={cn(TREE_ROW, "list-none transition-colors hover:bg-muted/50 [&::-webkit-details-marker]:hidden")}
+				>
+					{cells}
+				</summary>
+				<ul class="m-0 ml-6 list-none border-l p-0">
 					{n.children.map((child) => (
 						<TreeNode node={child} calc={props.calc} refs={props.refs} />
 					))}
@@ -910,39 +1077,143 @@ bomRoutes.get("/:id/tree", async (c) => {
 		<>
 			<BomHeader bom={data.bom} part={data.part} tab="tree" />
 			<QtyForm action={`/boms/${data.bom.id}/tree`} qty={qty} />
-			{error ? <p class="flash error">{error}</p> : null}
-			<section class="card">
-				<div class="tree-row tree-head">
-					<span>{t.boms.component}</span>
-					<span class="num">{t.boms.perParent}</span>
-					<span class="num">{t.boms.cumulative}</span>
-					<span class="num">{t.boms.unitCost}</span>
-					<span class="num">{t.boms.lineCost}</span>
+			{error ? <Alert variant="destructive">{error}</Alert> : null}
+			<Card class="gap-0 overflow-hidden py-0">
+				<div
+					class={cn(
+						TREE_ROW,
+						"min-h-10 bg-muted/50 py-0 text-xs font-medium tracking-wide text-muted-foreground uppercase",
+					)}
+				>
+					<span class="pl-6">{t.boms.component}</span>
+					<span class="text-right">{t.boms.perParent}</span>
+					<span class="text-right">{t.boms.cumulative}</span>
+					<span class="hidden text-right md:block">{t.boms.unitCost}</span>
+					<span class="hidden text-right md:block">{t.boms.lineCost}</span>
 				</div>
-				<ul class="tree">
+				<ul class="m-0 list-none p-0">
 					{explosion?.tree.map((n) => (
 						<TreeNode node={n} calc={calc} refs={refs} />
 					))}
 				</ul>
-				<div class="tree-row tree-total">
-					<span>
+				<div class={cn(TREE_ROW, "border-b-0 bg-muted/50 font-semibold")}>
+					<span class="pl-6">
 						{t.common.total} ({formatQtyInput(qty, c.var.locale)} × {data.part.ref})
 					</span>
-					<span />
-					<span />
-					<span class="num">
+					<span class="hidden md:block" />
+					<span class="hidden md:block" />
+					<span class="hidden text-right md:block">
 						<CostView cost={unit} refs={refs} />
 					</span>
-					<span class="num">
+					<span class="col-span-2 text-right md:col-span-1">
 						<Money cents={centsOf(roundDiv(unit.millicents * qty, MILLI))} />
 					</span>
 				</div>
 				{unit.incomplete ? (
-					<p class="warn small">
-						{fmt(t.boms.incomplete, { refs: unit.missing.map((id) => refs.get(id) ?? id).join(", ") })}
-					</p>
+					<IncompleteNote refs={unit.missing.map((id) => refs.get(id) ?? id).join(", ")} class="border-t px-4 py-3" />
 				) : null}
-			</section>
+			</Card>
+		</>,
+	);
+});
+
+bomRoutes.get("/:id/diagram", async (c) => {
+	const data = await loadBom(c);
+	if (!data) return notFound(c);
+	const t = c.var.t;
+	const qty = qtyParam(c);
+	const depthParam = Number(c.req.query("depth"));
+	const depth = Number.isInteger(depthParam) && depthParam > 0 ? depthParam : undefined;
+	const assembliesOnly = c.req.query("only") === "assemblies";
+	const graph = await loadGraph(c.var.db);
+	const calc = new CostCalculator(graph);
+	const refs = new Map([...graph.parts.values()].map((p) => [p.id, p.ref]));
+	let explosion: Explosion | null = null;
+	let error = "";
+	try {
+		explosion = explode(graph, data.bom.id, qty);
+	} catch (err) {
+		error = err instanceof Error ? err.message : String(err);
+	}
+	const base = `/boms/${data.bom.id}/diagram`;
+	const href = (o: { depth?: number | undefined; assembliesOnly?: boolean }) => {
+		const params = new URLSearchParams();
+		if (qty !== MILLI) params.set("qty", formatQtyInput(qty, c.var.locale));
+		const d = "depth" in o ? o.depth : depth;
+		if (d) params.set("depth", String(d));
+		if (o.assembliesOnly ?? assembliesOnly) params.set("only", "assemblies");
+		const qs = params.toString();
+		return qs ? `${base}?${qs}` : base;
+	};
+	const view: DiagramView = { depth, assembliesOnly, href };
+	const rootPart = graph.parts.get(data.part.id);
+	const tree = explosion && rootPart ? diagramTree(rootPart, data.bom.id, qty, explosion.tree, calc) : null;
+	const fullDepth = tree ? treeDepth(tree) : 0;
+	const nodes = explosion ? [...walkTree(explosion.tree)] : [];
+	const unit = calc.bom(data.bom.id);
+	const title = fmt(t.boms.diagramTitle, { ref: data.part.ref });
+	return page(
+		c,
+		`${data.part.ref} · ${t.boms.diagram}`,
+		<>
+			<BomHeader bom={data.bom} part={data.part} tab="diagram" />
+			{error ? <Alert variant="destructive">{error}</Alert> : null}
+			{tree ? (
+				<>
+					<div class="mb-4 grid grid-cols-2 gap-3 md:grid-cols-4">
+						<StatCard label={t.boms.stats.levels} value={fullDepth} icon={icons.listTree} />
+						<StatCard
+							label={t.boms.stats.components}
+							value={new Set(nodes.map((n) => n.part.id)).size}
+							icon={icons.package}
+						/>
+						<StatCard
+							label={`${t.boms.stats.assemblies} · ${t.boms.stats.kits}`}
+							value={`${new Set(nodes.filter((n) => n.part.kind === "make").map((n) => n.part.id)).size} · ${new Set(nodes.filter((n) => n.part.kind === "kit").map((n) => n.part.id)).size}`}
+							icon={icons.boxes}
+						/>
+						<StatCard
+							label={t.boms.totalCost}
+							value={<CostView cost={unit} refs={refs} />}
+							icon={icons.clipboardList}
+							tone={unit.incomplete ? "warning" : "default"}
+						/>
+					</div>
+					<div class="mb-4 flex flex-wrap items-center gap-3">
+						<QtyForm
+							action={base}
+							qty={qty}
+							class=""
+							hidden={{ depth: depth ? String(depth) : "", only: assembliesOnly ? "assemblies" : "" }}
+						/>
+						<ToggleLinks
+							label={t.boms.levels}
+							items={[
+								...Array.from({ length: Math.min(fullDepth, 4) }, (_, i) => ({
+									href: href({ depth: i + 1 }),
+									label: String(i + 1),
+									active: depth === i + 1,
+									title: `${t.boms.levels}: ${i + 1}`,
+								})),
+								{
+									href: href({ depth: undefined }),
+									label: t.boms.allLevels,
+									active: depth === undefined,
+									title: undefined,
+								},
+							]}
+						/>
+						<ToggleLinks
+							label={t.boms.show}
+							items={[
+								{ href: href({ assembliesOnly: false }), label: t.boms.showAll, active: !assembliesOnly },
+								{ href: href({ assembliesOnly: true }), label: t.boms.showAssemblies, active: assembliesOnly },
+							]}
+						/>
+					</div>
+					<BomDiagram tree={tree} view={view} title={title} />
+				</>
+			) : null}
 		</>,
 	);
 });
@@ -989,105 +1260,117 @@ bomRoutes.get("/:id/explode", async (c) => {
 		`${data.part.ref} · ${t.boms.explode}`,
 		<>
 			<BomHeader bom={data.bom} part={data.part} tab="explode" />
-			<QtyForm action={`/boms/${data.bom.id}/explode`} qty={qty} stock={useStock} showStock />
+			<div class="mb-4 flex flex-wrap items-center justify-between gap-3">
+				<QtyForm action={`/boms/${data.bom.id}/explode`} qty={qty} stock={useStock} showStock class="" />
+				<Button href={`/boms/${data.bom.id}/explode?${query}&format=csv`} variant="outline" icon={icons.download}>
+					{t.boms.downloadCsv}
+				</Button>
+			</div>
 			{rows
 				.filter((r) => r.missingBom)
 				.map((r) => (
-					<p class="flash warning">{fmt(t.boms.missingBom, { ref: r.part.ref })}</p>
+					<Alert variant="warning">{fmt(t.boms.missingBom, { ref: r.part.ref })}</Alert>
 				))}
-			<div class="scroll-x">
-				<table class="table">
-					<thead>
-						<tr>
-							<th>{t.parts.ref}</th>
-							<th>{t.parts.name}</th>
-							<th>{t.parts.kind}</th>
-							<th class="num">{t.boms.qty}</th>
-							<th class="num">{t.boms.onHand}</th>
-							<th class="num">{t.boms.short}</th>
-							<th class="num">{t.boms.unitCost}</th>
-							<th class="num">{t.boms.lineCost}</th>
-						</tr>
-					</thead>
-					<tbody>
+			<Card class="gap-0 overflow-hidden py-0">
+				<Table>
+					<TableHeader class="bg-muted/50">
+						<TableRow>
+							<TableHead>{t.parts.ref}</TableHead>
+							<TableHead>{t.parts.name}</TableHead>
+							<TableHead>{t.parts.kind}</TableHead>
+							<TableHead class="text-right">{t.boms.qty}</TableHead>
+							<TableHead class="text-right">{t.boms.onHand}</TableHead>
+							<TableHead class="text-right">{t.boms.short}</TableHead>
+							<TableHead class="text-right">{t.boms.unitCost}</TableHead>
+							<TableHead class="text-right">{t.boms.lineCost}</TableHead>
+						</TableRow>
+					</TableHeader>
+					<TableBody>
 						{rows.map((r) => (
-							<tr>
-								<td>
+							<TableRow>
+								<TableCell>
 									<a href={`/parts/${r.part.id}`}>{r.part.ref}</a>
-								</td>
-								<td>
+								</TableCell>
+								<TableCell>
 									{r.part.name}
-									{r.part.kind === "make" ? <span class="tag">{t.boms.fromStock}</span> : null}
-								</td>
-								<td>
+									{r.part.kind === "make" ? (
+										<Badge variant="info" class="ml-1.5">
+											{t.boms.fromStock}
+										</Badge>
+									) : null}
+								</TableCell>
+								<TableCell>
 									<KindBadge kind={r.part.kind} />
-								</td>
-								<td class="num">
+								</TableCell>
+								<TableCell class="text-right">
 									<Qty milli={r.qtyMilli} unit={r.part.unit} />
-								</td>
-								<td class="num">
+								</TableCell>
+								<TableCell class="text-right">
 									<Qty milli={r.onHand} unit={r.part.unit} />
-								</td>
-								<td class="num">
-									{r.short > 0 ? <strong class="negative">{formatQtyInput(r.short, c.var.locale)}</strong> : ""}
-								</td>
-								<td class="num">
+								</TableCell>
+								<TableCell class="text-right">
+									{r.short > 0 ? (
+										<span class="font-semibold text-destructive tabular-nums">
+											{formatQtyInput(r.short, c.var.locale)}
+										</span>
+									) : (
+										""
+									)}
+								</TableCell>
+								<TableCell class="text-right">
 									<CostView cost={r.cost} refs={refs} />
-								</td>
-								<td class="num">
+								</TableCell>
+								<TableCell class="text-right">
 									<Money cents={centsOf(calc.extended(r.part.id, r.qtyMilli))} />
-								</td>
-							</tr>
+								</TableCell>
+							</TableRow>
 						))}
-					</tbody>
+					</TableBody>
 					{ex.fees.length ? (
-						<tbody>
-							<tr>
-								<th colspan={8}>{t.boms.fees}</th>
-							</tr>
+						<TableBody class="border-t">
+							<TableRow class="bg-muted/30 hover:bg-muted/30">
+								<TableHead colspan={8} scope="rowgroup">
+									{t.boms.fees}
+								</TableHead>
+							</TableRow>
 							{ex.fees.map((f) => (
-								<tr>
-									<td>
+								<TableRow>
+									<TableCell>
 										<a href={`/parts/${f.part.id}`}>{f.part.ref}</a>
-									</td>
-									<td>{f.part.name}</td>
-									<td>
+									</TableCell>
+									<TableCell>{f.part.name}</TableCell>
+									<TableCell>
 										<KindBadge kind={f.part.kind} />
-									</td>
-									<td class="num">
+									</TableCell>
+									<TableCell class="text-right">
 										<Qty milli={f.qtyMilli} unit={f.part.unit} />
-									</td>
-									<td />
-									<td />
-									<td class="num">
+									</TableCell>
+									<TableCell />
+									<TableCell />
+									<TableCell class="text-right">
 										<CostView cost={calc.part(f.part.id)} refs={refs} />
-									</td>
-									<td class="num">
+									</TableCell>
+									<TableCell class="text-right">
 										<Money cents={centsOf(calc.extended(f.part.id, f.qtyMilli))} />
-									</td>
-								</tr>
+									</TableCell>
+								</TableRow>
 							))}
-						</tbody>
+						</TableBody>
 					) : null}
-					<tfoot>
-						<tr>
-							<td colspan={7}>{t.common.total}</td>
-							<td class="num">
+					<TableFooter>
+						<TableRow class="hover:bg-transparent">
+							<TableCell colspan={7}>{t.common.total}</TableCell>
+							<TableCell class="text-right font-semibold">
 								<Money cents={centsOf(totalMillicents)} />
-								{total.incomplete ? <span class="warn"> *</span> : null}
-							</td>
-						</tr>
-					</tfoot>
-				</table>
-			</div>
-			{total.incomplete ? (
-				<p class="warn small">
-					{fmt(t.boms.incomplete, { refs: total.missing.map((id) => refs.get(id) ?? id).join(", ") })}
-				</p>
-			) : null}
-			<p class="links">
-				<a href={`/boms/${data.bom.id}/explode?${query}&format=csv`}>{t.boms.downloadCsv}</a>
-			</p>
+								{total.incomplete ? <span class="font-medium text-warning"> *</span> : null}
+							</TableCell>
+						</TableRow>
+					</TableFooter>
+				</Table>
+				{total.incomplete ? (
+					<IncompleteNote refs={total.missing.map((id) => refs.get(id) ?? id).join(", ")} class="border-t px-4 py-3" />
+				) : null}
+			</Card>
 		</>,
 	);
 });

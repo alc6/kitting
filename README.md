@@ -17,8 +17,10 @@ tiers cover a small workshop. Deployment is one command.
 - **Suppliers** with contact details.
 - **Bills of materials** with variants (e.g. `std`, `warm`) and revisions: line editor,
   "new revision" copies, one active BoM per variant, cycle protection, expandable tree with
-  cumulative quantities and cost roll-up (flagged incomplete when a cost is missing), flat
-  exploded list for N units (CSV), and where-used on every part.
+  cumulative quantities and cost roll-up (flagged incomplete when a cost is missing), a
+  **structure diagram** (nested sub-assemblies and kits drawn as boxes and links, with
+  quantities and costs, by depth or assemblies only, zoom and pan), flat exploded list for
+  N units (CSV), and where-used on every part.
 - **Stock** as an append-only ledger of moves: on-hand is always the sum of moves.
   Adjustments with a reason, inventory count sheet (enter counted quantities, the
   differences are posted), moves ledger with filters, valuation (on-hand × cost, with an
@@ -37,7 +39,10 @@ tiers cover a small workshop. Deployment is one command.
   row-level errors. Nothing is written until you confirm, and the commit is atomic.
   Works with Excel files from French or English locales (`;` or `,`, decimal comma or point).
 - **CSV export** in the same formats, for round-trips and backups.
-- Tablet-first UI, French and English.
+- **Search** across parts, BoMs, builds (including component serials), POs and suppliers
+  from the header (`/` or Ctrl/Cmd+K).
+- Modern, tablet-first UI built on the [shadcn/ui](https://ui.shadcn.com) design system: left
+  sidebar, light / dark / system theme, French and English.
 
 ## Non-goals (v1)
 
@@ -52,7 +57,9 @@ All signed-in users are equal; a list of admin emails gates destructive actions
 - The Worker verifies the Access JWT on **every** request and refuses anything else (403).
   The signed-in email is stored on every write.
 - Server-rendered HTML (Hono JSX) with a pinch of [htmx](https://htmx.org); no SPA,
-  no CDN, strict Content-Security-Policy.
+  no CDN, strict Content-Security-Policy. Styling is Tailwind CSS v4 with shadcn/ui's tokens
+  and component recipes, ported to server-side JSX (no React in the browser); the stylesheet
+  is built at deploy time.
 - Data lives in a D1 (SQLite) database. Money is stored in integer cents, quantities in
   integer thousandths: no floating-point rounding errors.
 
@@ -157,7 +164,7 @@ npm ci
 cp wrangler.example.jsonc wrangler.jsonc   # placeholders are fine locally
 cp .dev.vars.example .dev.vars              # ENVIRONMENT=development + DEV_AUTH_EMAIL
 npm run db:migrate:local
-npm run dev                                 # http://localhost:8787
+npm run dev                                 # builds the CSS, then http://localhost:8787
 ```
 
 In development the Access check is replaced by `DEV_AUTH_EMAIL`. This bypass is honoured
@@ -169,6 +176,7 @@ only when `ENVIRONMENT` is exactly `development`.
 | `npm test` | Tests in the Workers runtime against a real (local) D1. |
 | `npm run db:generate` | Create a migration after editing `src/db/schema.ts`. |
 | `npm run format` | Format and fix lint issues (Biome). |
+| `npm run css` | Build `public/static/app.css` (Tailwind); `npm run css:watch` while editing. |
 
 ## CSV formats
 

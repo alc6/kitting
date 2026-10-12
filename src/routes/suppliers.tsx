@@ -8,18 +8,32 @@ import { type FieldErrors, validate } from "../lib/validation";
 import { requireAdmin } from "../middleware/auth";
 import type { AppEnv } from "../types";
 import { useApp } from "../views/context";
+import { icons } from "../views/icons";
 import { idParam, notFound, nowIso, page, redirectOk, translateErrors } from "../views/render";
 import {
-	Empty,
+	Alert,
+	Badge,
+	Button,
+	Card,
+	CardContent,
+	CardHeader,
+	CardTitle,
+	EmptyState,
 	ErrorBanner,
+	FieldGroup,
 	Flash,
 	type FormErrors,
 	type FormValues,
 	KindBadge,
-	LinkButton,
 	PageHeader,
 	PostButton,
 	SearchBar,
+	Table,
+	TableBody,
+	TableCell,
+	TableHead,
+	TableHeader,
+	TableRow,
 	TextArea,
 	TextField,
 } from "../views/ui";
@@ -32,62 +46,98 @@ function SupplierList(props: { rows: SupplierRow[]; q: string; ok?: string | und
 	const { t } = useApp();
 	return (
 		<>
-			<PageHeader title={t.suppliers.title} actions={<LinkButton href="/suppliers/new" label={t.suppliers.new} />} />
+			<PageHeader
+				title={t.suppliers.title}
+				actions={
+					<Button href="/suppliers/new" icon={icons.plus}>
+						{t.suppliers.new}
+					</Button>
+				}
+			/>
 			<Flash ok={props.ok} />
 			<SearchBar action="/suppliers" q={props.q} />
 			<div id="results">
 				{props.rows.length === 0 ? (
-					<Empty />
+					<EmptyState
+						icon={icons.factory}
+						title={t.suppliers.empty}
+						description={props.q ? t.suppliers.emptyFiltered : t.suppliers.emptyHint}
+					>
+						{props.q ? null : (
+							<Button href="/suppliers/new" icon={icons.plus}>
+								{t.suppliers.new}
+							</Button>
+						)}
+					</EmptyState>
 				) : (
-					<table class="table">
-						<thead>
-							<tr>
-								<th>{t.suppliers.name}</th>
-								<th>{t.suppliers.email}</th>
-								<th>{t.suppliers.phone}</th>
-								<th class="num">{t.parts.title}</th>
-							</tr>
-						</thead>
-						<tbody>
-							{props.rows.map((s) => (
-								<tr>
-									<td>
-										<a href={`/suppliers/${s.id}`}>{s.name}</a>
-									</td>
-									<td>{s.email}</td>
-									<td>{s.phone}</td>
-									<td class="num">{s.partCount}</td>
-								</tr>
-							))}
-						</tbody>
-					</table>
+					<Card class="py-0">
+						<Table>
+							<TableHeader>
+								<TableRow>
+									<TableHead>{t.suppliers.name}</TableHead>
+									<TableHead>{t.suppliers.email}</TableHead>
+									<TableHead>{t.suppliers.phone}</TableHead>
+									<TableHead class="text-right">{t.parts.title}</TableHead>
+								</TableRow>
+							</TableHeader>
+							<TableBody>
+								{props.rows.map((s) => (
+									<TableRow>
+										<TableCell class="font-medium">
+											<a href={`/suppliers/${s.id}`}>{s.name}</a>
+										</TableCell>
+										<TableCell class="text-muted-foreground">{s.email}</TableCell>
+										<TableCell class="whitespace-nowrap text-muted-foreground">{s.phone}</TableCell>
+										<TableCell class="text-right tabular-nums">{s.partCount}</TableCell>
+									</TableRow>
+								))}
+							</TableBody>
+						</Table>
+					</Card>
 				)}
 			</div>
 		</>
 	);
 }
 
-function SupplierForm(props: { action: string; values: FormValues; errors: FormErrors; submit: string }) {
+function SupplierForm(props: {
+	action: string;
+	values: FormValues;
+	errors: FormErrors;
+	submit: string;
+	title?: string;
+}) {
 	const { t } = useApp();
 	const p = { values: props.values, errors: props.errors };
 	return (
-		<form method="post" action={props.action} class="card form">
+		<>
 			<ErrorBanner show={Object.keys(props.errors).length > 0} />
-			<TextField name="name" label={t.suppliers.name} required autofocus {...p} />
-			<div class="grid-2">
-				<TextField name="email" label={t.suppliers.email} type="email" {...p} />
-				<TextField name="phone" label={t.suppliers.phone} type="tel" {...p} />
-			</div>
-			<TextArea name="notes" label={t.common.notes} {...p} />
-			<div class="form-actions">
-				<button type="submit" class="button primary">
-					{props.submit}
-				</button>
-				<a class="button secondary" href="/suppliers">
-					{t.common.cancel}
-				</a>
-			</div>
-		</form>
+			<Card>
+				{props.title ? (
+					<CardHeader>
+						<CardTitle>{props.title}</CardTitle>
+					</CardHeader>
+				) : null}
+				<CardContent>
+					<form method="post" action={props.action} class="flex flex-col gap-6">
+						<FieldGroup>
+							<TextField name="name" label={t.suppliers.name} required autofocus {...p} />
+							<div class="grid gap-4 md:grid-cols-2">
+								<TextField name="email" label={t.suppliers.email} type="email" {...p} />
+								<TextField name="phone" label={t.suppliers.phone} type="tel" {...p} />
+							</div>
+							<TextArea name="notes" label={t.common.notes} {...p} />
+						</FieldGroup>
+						<div class="flex flex-wrap items-center gap-2">
+							<Button>{props.submit}</Button>
+							<Button variant="outline" href="/suppliers">
+								{t.common.cancel}
+							</Button>
+						</div>
+					</form>
+				</CardContent>
+			</Card>
+		</>
 	);
 }
 
@@ -162,42 +212,61 @@ supplierRoutes.get("/:id", async (c) => {
 							action={`/suppliers/${supplier.id}/delete`}
 							label={t.common.delete}
 							confirm={t.common.confirmDelete}
-							variant="danger"
+							variant="destructive"
+							icon={icons.trash}
 						/>
 					) : null
 				}
 			/>
 			<Flash ok={c.req.query("ok")} />
-			{c.req.query("err") === "in_use" ? <p class="flash error">{t.errors.in_use}</p> : null}
-			<SupplierForm
-				action={`/suppliers/${supplier.id}`}
-				values={supplierToForm(supplier)}
-				errors={{}}
-				submit={t.common.save}
-			/>
-			<section class="card">
-				<h2>{t.suppliers.parts}</h2>
-				{supplied.length === 0 ? (
-					<Empty />
-				) : (
-					<table class="table">
-						<tbody>
-							{supplied.map((p) => (
-								<tr>
-									<td>
-										<a href={`/parts/${p.id}`}>{p.ref}</a>
-									</td>
-									<td>{p.name}</td>
-									<td>
-										<KindBadge kind={p.kind} />
-									</td>
-									<td>{p.supplierRef}</td>
-								</tr>
-							))}
-						</tbody>
-					</table>
-				)}
-			</section>
+			{c.req.query("err") === "in_use" ? <Alert variant="destructive">{t.errors.in_use}</Alert> : null}
+			<div class="flex flex-col gap-4">
+				<SupplierForm
+					action={`/suppliers/${supplier.id}`}
+					values={supplierToForm(supplier)}
+					errors={{}}
+					submit={t.common.save}
+					title={t.suppliers.edit}
+				/>
+				<Card>
+					<CardHeader>
+						<CardTitle class="flex items-center gap-2">
+							{t.suppliers.parts}
+							<Badge variant="secondary">{supplied.length}</Badge>
+						</CardTitle>
+					</CardHeader>
+					<CardContent class="px-2">
+						{supplied.length === 0 ? (
+							<EmptyState icon={icons.package} description={t.suppliers.noParts} class="border-0 p-4 md:p-6" />
+						) : (
+							<Table>
+								<TableHeader>
+									<TableRow>
+										<TableHead>{t.parts.ref}</TableHead>
+										<TableHead>{t.parts.name}</TableHead>
+										<TableHead>{t.parts.kind}</TableHead>
+										<TableHead>{t.parts.supplierRef}</TableHead>
+									</TableRow>
+								</TableHeader>
+								<TableBody>
+									{supplied.map((p) => (
+										<TableRow>
+											<TableCell class="font-medium whitespace-nowrap">
+												<a href={`/parts/${p.id}`}>{p.ref}</a>
+											</TableCell>
+											<TableCell>{p.name}</TableCell>
+											<TableCell>
+												<KindBadge kind={p.kind} />
+											</TableCell>
+											<TableCell class="text-muted-foreground">{p.supplierRef}</TableCell>
+										</TableRow>
+									))}
+								</TableBody>
+							</Table>
+						)}
+					</CardContent>
+				</Card>
+			</div>
 		</>,
 	);
 });
@@ -229,6 +298,7 @@ supplierRoutes.post("/:id", async (c) => {
 					values={body as FormValues}
 					errors={translateErrors(c, errors)}
 					submit={t.common.save}
+					title={t.suppliers.edit}
 				/>
 			</>,
 			422,
