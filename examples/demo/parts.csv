@@ -1,26 +1,26 @@
-ref,name,kind,unit,cost,supplier,supplier_ref,moq,pack_size,lead_days,track_serial,notes
-LAMP-DESK,Modular desk lamp,make,pcs,,,,,,,yes,Finished product: one serial number per lamp
-HEAD-KIT-CW,Lamp head kit (cool white),kit,pcs,,,,,,,no,Phantom: always exploded into the lamp
-HEAD-KIT-WW,Lamp head kit (warm white),kit,pcs,,,,,,,no,Phantom: always exploded into the lamp
-FIX-KIT-HEAD,Head fixing kit,kit,pcs,,,,,,,no,"Kit inside the head kits: screws and washers, exploded two levels down"
-ARM-ASSY,Arm sub-assembly,make,pcs,,,,,,,no,Can be pre-built and stocked
-BASE-ASSY,Base sub-assembly,make,pcs,,,,,,,no,Can be pre-built and stocked
-LED-5W-CW,LED module 5W cool white,buy,pcs,4.20,Lumen Parts Co,LM-5W-6500,10,10,21,yes,
-LED-5W-WW,LED module 5W warm white,buy,pcs,4.35,Lumen Parts Co,LM-5W-2700,10,10,21,yes,
-DRV-12V,LED driver 12V 700mA,buy,pcs,6.80,Lumen Parts Co,DRV-700-12,5,,21,yes,
-HS-ALU-40,Aluminium heatsink 40mm,buy,pcs,1.90,Ironleaf Metalworks,HS40,20,,14,no,
-DIFF-OPAL,Opal diffuser 60mm,buy,pcs,0.85,Lumen Parts Co,DF60-OP,50,50,21,no,
-ARM-TUBE-300,Arm tube 300mm,buy,pcs,2.40,Ironleaf Metalworks,T300-BLK,20,,14,no,
-JOINT-KNOB,Joint knob M6,buy,pcs,0.65,Bolt & Nut Depot,KN-M6,100,100,7,no,
-SPRING-TENS,Tension spring,buy,pcs,0.30,Bolt & Nut Depot,SP-T12,100,100,7,no,
-BASE-PLATE,Steel base plate 150mm,buy,pcs,5.50,Ironleaf Metalworks,BP150,10,,14,no,
-PAD-FELT,Felt pad 20mm,buy,pcs,0.05,Bolt & Nut Depot,FP20,500,500,7,no,
-CABLE-2C,2-core cable 0.75mm²,buy,m,0.45,Wire Street Cables,2C075-WH,50,,10,no,Sold by the metre
-SWITCH-INL,Inline switch,buy,pcs,1.10,Wire Street Cables,SW-INL,20,,10,no,
-SCREW-M3X8,Screw M3x8,buy,pcs,0.02,Bolt & Nut Depot,ISO7380-M3x8,200,100,7,no,
-SCREW-M4X10,Screw M4x10,buy,pcs,0.03,Bolt & Nut Depot,ISO7380-M4x10,200,100,7,no,
-WASHER-M3,Washer M3,buy,pcs,0.01,Bolt & Nut Depot,DIN125-M3,200,100,7,no,
-PSU-EU-12V,Wall adapter 12V EU,buy,pcs,5.90,Lumen Parts Co,WA12-EU,10,,28,no,
-BOX-LAMP,Shipping box,buy,pcs,1.20,Kraft Box Packaging,BX-420,50,25,10,no,
-MANUAL,User manual (printed),buy,pcs,,,,,,,no,Cost not known yet: roll-ups show as incomplete
-FEE-WEEE,WEEE eco-fee,fee,pcs,0.25,,,,,,no,Counted in cost only
+ref,name,kind,unit,cost,sale_price,supplier,supplier_ref,moq,pack_size,lead_days,track_serial,notes
+LAMP-DESK,Modular desk lamp,make,pcs,,89.00,,,,,,yes,Finished product: one serial number per lamp
+HEAD-KIT-CW,Lamp head kit (cool white),kit,pcs,,,,,,,,no,Phantom: always exploded into the lamp
+HEAD-KIT-WW,Lamp head kit (warm white),kit,pcs,,,,,,,,no,Phantom: always exploded into the lamp
+FIX-KIT-HEAD,Head fixing kit,kit,pcs,,,,,,,,no,"Kit inside the head kits: screws and washers, exploded two levels down"
+ARM-ASSY,Arm sub-assembly,make,pcs,,,,,,,,no,Can be pre-built and stocked
+BASE-ASSY,Base sub-assembly,make,pcs,,,,,,,,no,Can be pre-built and stocked
+LED-5W-CW,LED module 5W cool white,buy,pcs,4.20,,Lumen Parts Co,LM-5W-6500,10,10,21,yes,
+LED-5W-WW,LED module 5W warm white,buy,pcs,4.35,,Lumen Parts Co,LM-5W-2700,10,10,21,yes,
+DRV-12V,LED driver 12V 700mA,buy,pcs,6.80,,Lumen Parts Co,DRV-700-12,5,,21,yes,
+HS-ALU-40,Aluminium heatsink 40mm,buy,pcs,1.90,,Ironleaf Metalworks,HS40,20,,14,no,
+DIFF-OPAL,Opal diffuser 60mm,buy,pcs,0.85,,Lumen Parts Co,DF60-OP,50,50,21,no,
+ARM-TUBE-300,Arm tube 300mm,buy,pcs,2.40,,Ironleaf Metalworks,T300-BLK,20,,14,no,
+JOINT-KNOB,Joint knob M6,buy,pcs,0.65,,Bolt & Nut Depot,KN-M6,100,100,7,no,
+SPRING-TENS,Tension spring,buy,pcs,0.30,,Bolt & Nut Depot,SP-T12,100,100,7,no,
+BASE-PLATE,Steel base plate 150mm,buy,pcs,5.50,,Ironleaf Metalworks,BP150,10,,14,no,
+PAD-FELT,Felt pad 20mm,buy,pcs,0.05,,Bolt & Nut Depot,FP20,500,500,7,no,
+CABLE-2C,2-core cable 0.75mm²,buy,m,0.45,,Wire Street Cables,2C075-WH,50,,10,no,Sold by the metre
+SWITCH-INL,Inline switch,buy,pcs,1.10,,Wire Street Cables,SW-INL,20,,10,no,
+SCREW-M3X8,Screw M3x8,buy,pcs,0.02,,Bolt & Nut Depot,ISO7380-M3x8,200,100,7,no,
+SCREW-M4X10,Screw M4x10,buy,pcs,0.03,,Bolt & Nut Depot,ISO7380-M4x10,200,100,7,no,
+WASHER-M3,Washer M3,buy,pcs,0.01,,Bolt & Nut Depot,DIN125-M3,200,100,7,no,
+PSU-EU-12V,Wall adapter 12V EU,buy,pcs,5.90,,Lumen Parts Co,WA12-EU,10,,28,no,
+BOX-LAMP,Shipping box,buy,pcs,1.20,,Kraft Box Packaging,BX-420,50,25,10,no,
+MANUAL,User manual (printed),buy,pcs,,,,,,,,no,Cost not known yet: roll-ups show as incomplete
+FEE-WEEE,WEEE eco-fee,fee,pcs,0.25,,,,,,,no,Counted in cost only

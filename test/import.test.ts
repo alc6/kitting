@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import demoBoms from "../examples/demo/boms.csv?raw";
+import demoOffers from "../examples/demo/part_suppliers.csv?raw";
 import demoParts from "../examples/demo/parts.csv?raw";
 import demoStock from "../examples/demo/stock.csv?raw";
 import demoSuppliers from "../examples/demo/suppliers.csv?raw";
@@ -74,7 +76,11 @@ describe("parts import", () => {
 			"parts",
 			"ref,name,kind,unit,cost,supplier,moq,pack_size,track_serial\nP1,Panel,buy,m,1.50,Acme,10,2.5,no\n",
 		);
-		expect(await one("SELECT name, unit, cost_cents, moq_milli, pack_size_milli FROM parts")).toEqual({
+		expect(
+			await one(
+				`SELECT p.name, p.unit, p.cost_cents, o.moq_milli, o.pack_size_milli FROM parts p LEFT JOIN part_suppliers o ON o.part_id = p.id AND o.supplier_id = p.supplier_id`,
+			),
+		).toEqual({
 			name: "Panel",
 			unit: "m",
 			cost_cents: 150,
@@ -84,12 +90,21 @@ describe("parts import", () => {
 		const html = await (await preview("parts", "ref,cost\nP1,1.75\n")).text();
 		expect(html).toContain("cost: 1.50 → 1.75");
 		await importOk("parts", "ref,cost\nP1,1.75\n");
-		expect(await one("SELECT name, unit, cost_cents, moq_milli FROM parts")).toEqual({
+		expect(
+			await one(
+				`SELECT p.name, p.unit, p.cost_cents, o.moq_milli FROM parts p LEFT JOIN part_suppliers o ON o.part_id = p.id AND o.supplier_id = p.supplier_id`,
+			),
+		).toEqual({
 			name: "Panel",
 			unit: "m",
 			cost_cents: 175,
 			moq_milli: 10000,
 		});
+		// Each cost change is in the price history, tagged as an import.
+		expect(await rows("SELECT price_cents, source FROM price_history WHERE kind = 'standard' ORDER BY id")).toEqual([
+			{ price_cents: 150, source: "import" },
+			{ price_cents: 175, source: "import" },
+		]);
 	});
 
 	it("accepts French spreadsheets: semicolons, decimal commas, oui/non, Windows-1252", async () => {
@@ -132,12 +147,12 @@ describe("parts import", () => {
 		const bytes = new Uint8Array(await res.clone().arrayBuffer());
 		expect([...bytes.slice(0, 3)]).toEqual([0xef, 0xbb, 0xbf]); // BOM so Excel detects UTF-8
 		const exported = await res.text();
-		expect(exported.startsWith("ref,name,kind,unit,cost,supplier")).toBe(true);
+		expect(exported.startsWith("ref,name,kind,unit,cost,sale_price,supplier")).toBe(true);
 		const html = await (await preview("parts", exported)).text();
 		expect(html).toContain("0 to create, 0 to update, 25 unchanged.");
 		// French export uses semicolons and decimal commas, and re-imports cleanly too.
 		const fr = await (await request("/import/parts/export.csv", { headers: { Cookie: "kitting_lang=fr" } })).text();
-		expect(fr).toContain("LED-5W-CW;LED module 5W cool white;buy;pcs;4,20;Lumen Parts Co");
+		expect(fr).toContain("LED-5W-CW;LED module 5W cool white;buy;pcs;4,20;;Lumen Parts Co");
 		expect(await (await preview("parts", fr)).text()).toContain("0 to create, 0 to update, 25 unchanged.");
 	});
 
@@ -146,7 +161,9 @@ describe("parts import", () => {
 		expect(res.headers.get("Content-Type")).toContain("text/csv");
 		expect(res.headers.get("Content-Disposition")).toContain("parts-template.csv");
 		const csv = await res.text();
-		expect(csv).toContain("ref,name,kind,unit,cost,supplier,supplier_ref,moq,pack_size,lead_days,track_serial,notes");
+		expect(csv).toContain(
+			"ref,name,kind,unit,cost,sale_price,supplier,supplier_ref,moq,pack_size,lead_days,track_serial,notes",
+		);
 		expect((await request("/import/nope/template.csv")).status).toBe(404);
 	});
 });
@@ -203,9 +220,20 @@ describe("demo dataset", () => {
 	it("imports cleanly in order", async () => {
 		await importOk("suppliers", demoSuppliers);
 		await importOk("parts", demoParts);
+		await importOk("part_suppliers", demoOffers);
+		await importOk("boms", demoBoms);
 		await importOk("stock", demoStock);
-		expect(await one("SELECT count(*) AS n FROM suppliers")).toEqual({ n: 5 });
+		expect(await one("SELECT count(*) AS n FROM suppliers")).toEqual({ n: 6 });
 		expect(await one("SELECT count(*) AS n FROM parts")).toEqual({ n: 25 });
+		// 17 preferred offers from parts.csv plus 4 alternatives from part_suppliers.csv.
+		expect(await one("SELECT count(*) AS n FROM part_suppliers")).toEqual({ n: 21 });
+		expect(
+			await one(
+				"SELECT o.price_cents, o.lead_days FROM part_suppliers o JOIN parts p ON p.id = o.part_id JOIN suppliers s ON s.id = o.supplier_id WHERE p.ref = 'DRV-12V' AND s.name = 'Quickparts Express'",
+			),
+		).toEqual({ price_cents: 790, lead_days: 3 });
+		expect(await one("SELECT sale_price_cents FROM parts WHERE ref = 'LAMP-DESK'")).toEqual({ sale_price_cents: 8900 });
+		expect(await one("SELECT sale_price_cents FROM boms WHERE code = 'warm'")).toEqual({ sale_price_cents: 9400 });
 		expect(
 			await one(
 				"SELECT SUM(qty_milli) AS n FROM stock_moves m JOIN parts p ON p.id = m.part_id WHERE p.ref = 'LED-5W-CW'",

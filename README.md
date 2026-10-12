@@ -13,8 +13,14 @@ tiers cover a small workshop. Deployment is one command.
 
 - **Parts**: `buy` (purchased, stocked), `make` (assembled in-house, stockable),
   `kit` (phantom: always exploded into its parent) and `fee` (cost only, e.g. eco-fees).
-  Units (pcs, m, kg…), standard cost, supplier, MOQ, pack size, lead time, serial tracking.
-- **Suppliers** with contact details.
+  Units (pcs, m, kg…), standard cost, selling price, serial tracking.
+- **Suppliers** with contact details, and **several suppliers per part**: each offer has its
+  reference, price, MOQ, pack size and lead time; one is preferred and drives purchasing.
+- **Prices**: an append-only history of standard costs, supplier prices and selling prices
+  (who, when, from where), plus the prices actually paid on receipts, charted on each part.
+- **Margins**: selling price per product, optionally per BoM variant; planned margin against
+  the cost roll-up and actual margin of completed builds, as an amount, a rate on the selling
+  price and a markup on cost.
 - **Bills of materials** with variants (e.g. `std`, `warm`) and revisions: line editor,
   "new revision" copies, one active BoM per variant, cycle protection, expandable tree with
   cumulative quantities and cost roll-up (flagged incomplete when a cost is missing), a
@@ -23,19 +29,21 @@ tiers cover a small workshop. Deployment is one command.
   N units (CSV), and where-used on every part.
 - **Stock** as an append-only ledger of moves: on-hand is always the sum of moves.
   Adjustments with a reason, inventory count sheet (enter counted quantities, the
-  differences are posted), moves ledger with filters, valuation (on-hand × cost, with an
-  "as of" date) and CSV exports for year-end.
+  differences are posted), moves ledger with filters, valuation by two methods side by side
+  (standard cost valid on the "as of" date, and weighted average of the prices paid) and CSV
+  exports for year-end.
 - **Builds** of finished products or sub-assemblies: pick the variant, plan a date, enter the
   serial; the pick list explodes the BoM, takes sub-assemblies from stock when available (or
   "build now"), asks one serial per serial-tracked unit, and completion posts everything in one
   transaction. The as-built record answers "what exactly is inside serial #0042", and search
   answers "which build used LED serial X".
 - **Purchasing**: shortages for all planned builds (need − on hand − on order, rounded to MOQ
-  and pack size, grouped by supplier), one-click draft POs per supplier, PO editing, "mark as
-  sent", partial receipts (with serials), closing short-shipped POs, CSV for the supplier.
+  and pack size, grouped by preferred supplier, any line can be ordered from another supplier),
+  one-click draft POs per supplier at the supplier's price, PO editing, "mark as sent", partial
+  receipts (with serials), closing short-shipped POs, CSV for the supplier.
 - **Dashboard**: shortages, parts below zero or below MOQ, open POs (overdue flagged), planned
   and last builds, stock value.
-- **CSV import** for suppliers, parts, BoMs and initial stock, with a dry-run preview and
+- **CSV import** for suppliers, parts, supplier offers, BoMs and initial stock, with a dry-run preview and
   row-level errors. Nothing is written until you confirm, and the commit is atomic.
   Works with Excel files from French or English locales (`;` or `,`, decimal comma or point).
 - **CSV export** in the same formats, for round-trips and backups.
@@ -112,7 +120,7 @@ You need a Cloudflare account with a domain on it, Node.js 20+, and this reposit
    Run the same command for every update.
 
 Then open your hostname, sign in through Access, and load your data from
-**Import / Export** (suppliers → parts → BoMs → stock). To try the app first, import the
+**Import / Export** (suppliers → parts → supplier offers → BoMs → stock). To try the app first, import the
 fictional dataset in [`examples/demo/`](examples/demo/).
 
 ### Deploy from GitHub Actions instead
@@ -185,17 +193,22 @@ UTF-8 or Windows-1252. Each import screen offers a template and an export of the
 current data.
 
 - `suppliers.csv`: `name,email,phone,notes`. Upsert by name.
-- `parts.csv`: `ref,name,kind,unit,cost,supplier,supplier_ref,moq,pack_size,lead_days,track_serial,notes`.
+- `parts.csv`: `ref,name,kind,unit,cost,sale_price,supplier,supplier_ref,moq,pack_size,lead_days,track_serial,notes`.
   Upsert by `ref`; only `ref` is required in the header, and columns left out keep their
-  current values (so `ref,cost` updates prices only). `supplier` is the supplier's name.
-  An empty `cost` means "unknown".
+  current values (so `ref,cost` updates prices only). `supplier` is the preferred supplier's
+  name and `supplier_ref`…`lead_days` its terms. An empty `cost` means "unknown"; `sale_price`
+  is the selling price excluding VAT.
+- `part_suppliers.csv`: `ref,supplier,supplier_ref,price,moq,pack_size,lead_days,preferred,notes`.
+  One row per part and supplier (upsert by both); `preferred` = `yes` makes that supplier the
+  one used for shortages and draft POs. Every price change is kept in the price history.
 - `stock.csv`: `ref,qty,serial,unit_cost`. Sets on-hand to the counted `qty` with a
   `count` move for the difference. For serial-tracked parts that have no stock yet, use one
   row per serial with `qty` 1.
-- `boms.csv`: `parent_ref,code,revision,status,component_ref,qty` (+ optional `notes`).
+- `boms.csv`: `parent_ref,code,revision,status,component_ref,qty` (+ optional `sale_price`, `notes`).
   One row per line, grouped by `parent_ref` + `code` + `revision`; each BoM mentioned gets
   exactly the lines in the file. `code` defaults to `std`, `revision` to `Rev1`, `status` to
   `draft`. Importing a BoM as `active` archives the previously active one of the same variant.
+  `sale_price` (one value per BoM) is that variant's selling price, overriding the part's.
 
 ## Backups
 

@@ -6,6 +6,7 @@ import { computeShortages, listPos } from "../domain/purchasing";
 import { isStocked, valuation } from "../domain/stock";
 import { fmt } from "../i18n";
 import { cn } from "../lib/cn";
+import { formatMoney } from "../lib/units";
 import type { AppEnv } from "../types";
 import { useApp } from "../views/context";
 import { icons } from "../views/icons";
@@ -75,6 +76,24 @@ function Section(props: {
 				) : null}
 			</CardContent>
 		</Card>
+	);
+}
+
+/**
+ * The stock value card shows the standard method (D91: no method is "the" value), so its hint gives the
+ * weighted average next to it, and warns when either total misses costs.
+ */
+function StockValueHint(props: { value: Awaited<ReturnType<typeof valuation>> }) {
+	const { t, locale, currency } = useApp();
+	const { value } = props;
+	return (
+		<span class="flex flex-col gap-0.5">
+			<span>
+				{fmt(t.dashboard.avgValueHint, { value: formatMoney(value.avgTotalCents, locale, currency) })}
+				{value.avgIncomplete ? <span class="text-warning"> *</span> : null}
+			</span>
+			{value.incomplete || value.avgIncomplete ? <span class="text-warning">{t.dashboard.valueIncomplete}</span> : null}
+		</span>
 	);
 }
 
@@ -151,7 +170,7 @@ dashboardRoutes.get("/", async (c) => {
 					hint={overdue ? fmt(t.dashboard.overdue, { n: overdue }) : t.dashboard.allOnTime}
 				/>
 				<StatCard
-					label={t.dashboard.stockValue}
+					label={t.dashboard.stockValueStandard}
 					value={
 						<>
 							<Money cents={value.totalCents} />
@@ -160,7 +179,8 @@ dashboardRoutes.get("/", async (c) => {
 					}
 					icon={icons.wallet}
 					href="/stock/valuation"
-					hint={value.incomplete ? t.dashboard.valueIncomplete : t.dashboard.valueAt}
+					tone={value.incomplete || value.avgIncomplete ? "warning" : "default"}
+					hint={<StockValueHint value={value} />}
 				/>
 			</div>
 

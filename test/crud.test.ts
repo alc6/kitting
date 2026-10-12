@@ -63,8 +63,9 @@ describe("parts", () => {
 		const s = await insertSupplier("Acme");
 		const res = await postForm("/parts", partForm({ supplier_id: String(s), pack_size: "2,5" }));
 		expect(res.status).toBe(303);
+		// Ordering terms are stored on the preferred supplier's offer; the cost opens the price history.
 		const p = await one(
-			"SELECT ref, kind, cost_cents, moq_milli, pack_size_milli, lead_days, supplier_id, track_serial FROM parts",
+			"SELECT p.ref, p.kind, p.cost_cents, o.moq_milli, o.pack_size_milli, o.lead_days, p.supplier_id, p.track_serial FROM parts p JOIN part_suppliers o ON o.part_id = p.id AND o.supplier_id = p.supplier_id",
 		);
 		expect(p).toEqual({
 			ref: "LED-5W",
@@ -76,9 +77,26 @@ describe("parts", () => {
 			supplier_id: s,
 			track_serial: 0,
 		});
+		expect(await rows("SELECT kind, price_cents, source FROM price_history")).toEqual([
+			{ kind: "standard", price_cents: 325, source: "form" },
+		]);
 		const detail = await (await request(res.headers.get("Location")!)).text();
 		expect(detail).toContain("LED-5W");
 		expect(detail).toContain("€3.25");
+	});
+
+	it("edits the selling price from the part form, logged in the price history", async () => {
+		await postForm("/parts", partForm({ sale_price: "12,50" }));
+		const id = (await one<{ id: number }>("SELECT id FROM parts")).id;
+		expect(await one("SELECT sale_price_cents FROM parts")).toEqual({ sale_price_cents: 1250 });
+		const form = await (await request(`/parts/${id}/edit`)).text();
+		expect(form).toMatch(/name="sale_price"[^>]*value="12.50"/);
+		await postForm(`/parts/${id}`, partForm({ sale_price: "" }));
+		expect(await one("SELECT sale_price_cents FROM parts")).toEqual({ sale_price_cents: null });
+		expect(await rows("SELECT kind, price_cents FROM price_history WHERE kind = 'sale' ORDER BY id")).toEqual([
+			{ kind: "sale", price_cents: 1250 },
+			{ kind: "sale", price_cents: null },
+		]);
 	});
 
 	it("treats an empty cost as unknown (NULL)", async () => {

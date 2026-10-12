@@ -6,6 +6,7 @@ import { likePattern } from "../lib/sql";
 import { field, REF_PATTERN } from "../lib/validation";
 import type { Db } from "../types";
 import { type BomGraph, buildGraph, CostCalculator, defaultBom } from "./bom-graph";
+import { priceRecordStatement } from "./prices";
 
 export const bomInput = z.object({
 	parent_part_id: field.id(),
@@ -307,4 +308,24 @@ export async function partBomSummary(db: Db, partId: number) {
 		rollup: defaultBom(graph, partId) ? calc.part(partId) : null,
 		refs: new Map([...graph.parts.values()].map((p) => [p.id, p.ref])),
 	};
+}
+
+/** Statements setting a BoM variant's selling price (NULL = use the part's), logged in the price history. */
+export function bomSalePriceStatements(
+	db: Db,
+	bom: { id: number; parentPartId: number; salePriceCents: number | null },
+	priceCents: number | null,
+	user: string,
+	now: string,
+): Statement[] {
+	if (bom.salePriceCents === priceCents) return [];
+	return [
+		db.update(boms).set({ salePriceCents: priceCents, updatedAt: now, updatedBy: user }).where(eq(boms.id, bom.id)),
+		priceRecordStatement(
+			db,
+			{ partId: bom.parentPartId, kind: "sale", bomId: bom.id, priceCents, source: "form" },
+			user,
+			now,
+		),
+	];
 }

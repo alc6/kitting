@@ -66,6 +66,15 @@ After M2 the catalogue and BoMs can be loaded; after M4 real builds can run.
 - [x] BoM structure diagram (nested sub-assemblies and kits) with depth and "assemblies only" views, zoom and pan
 - [x] Global search across parts, BoMs, builds (incl. serials), POs and suppliers
 
+## M7: Pricing ✅
+
+- [x] Several suppliers per part (`part_suppliers`), one preferred; `part_suppliers.csv` import/export
+- [x] Shortages and draft POs from the preferred offer; a line can be ordered from another supplier
+- [x] Append-only price history (standard costs, offer prices, selling prices) and paid prices from receipts
+- [x] Selling prices per product, overridable per BoM variant; planned and actual margins, margins page
+- [x] Valuation by standard cost (dated from the history) and weighted average cost, side by side
+- [x] Additive migration 0002 (no table rebuild), tested on data; demo dataset with a second supplier and prices
+
 ## After v1 (ideas, not planned)
 
 - Serial inventory (which serials are in stock) enforced at build time, if the shop starts scanning receipts.
@@ -73,3 +82,6 @@ After M2 the catalogue and BoMs can be loaded; after M4 real builds can run.
 - PDF purchase orders; supplier price history.
 - Multi-level "build all missing sub-assemblies" helper from the shortage list.
 - Where-used diagram (the BoM diagram reversed) on the part page; SVG/PDF export of diagrams.
+- Choose one valuation method once the accountant decides (D91), and drop the deprecated `parts` supplier columns
+  in a planned table rebuild.
+- Customer-specific prices, quotes (out of scope for v1).

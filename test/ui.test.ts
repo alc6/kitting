@@ -8,7 +8,17 @@ function cookieOf(res: Response): string {
 describe("layout and preferences", () => {
 	it("renders the sidebar with every section and marks the current one", async () => {
 		const html = await (await request("/parts")).text();
-		for (const href of ["/", "/parts", "/boms", "/suppliers", "/builds", "/stock", "/purchasing", "/import"]) {
+		for (const href of [
+			"/",
+			"/parts",
+			"/boms",
+			"/suppliers",
+			"/margins",
+			"/builds",
+			"/stock",
+			"/purchasing",
+			"/import",
+		]) {
 			expect(html).toContain(`href="${href}"`);
 		}
 		expect(html).toMatch(/href="\/parts" data-slot="sidebar-menu-button" data-active="true"/);

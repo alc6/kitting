@@ -1,12 +1,14 @@
 // Stock: the append-only ledger of moves. On-hand is always SUM(qty_milli) per part.
-import { and, desc, eq, gte, lte, type SQL, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, lte, type SQL, sql } from "drizzle-orm";
 import { MOVE_REASONS, type MoveReason, type Part, type PartKind, parts, stockMoves } from "../db/schema";
 import { likePattern } from "../lib/sql";
 import { MILLI } from "../lib/units";
 import type { Db } from "../types";
 import { CostCalculator, centsOf } from "./bom-graph";
 import { loadGraph } from "./boms";
+import { averageUnitCents, centsOfMillicents, replayAverageCosts } from "./costing";
 import type { RowIssue } from "./import/types";
+import { historyStart, standardCostsAt } from "./prices";
 
 export const isStocked = (kind: PartKind): boolean => kind === "buy" || kind === "make";
 
@@ -166,20 +168,64 @@ export async function listMoves(db: Db, f: MoveFilters = {}) {
 export type ValuationRow = {
 	part: Pick<Part, "id" | "ref" | "name" | "kind" | "unit">;
 	onHandMilli: number;
-	/** Unit cost in millicents (standard cost for buy parts, roll-up for make parts). */
+	/** Standard method: unit cost in millicents (standard cost for buy parts, roll-up for make parts). */
 	unitMillicents: number;
 	source: "standard" | "rollup";
 	incomplete: boolean;
 	valueCents: number;
+	/** The standard cost on the "as of" date predates the price history (its first known value was used). */
+	fallback: boolean;
+	/** Weighted average method (PMP): unit cost in cents and value from the replayed ledger. */
+	avgUnitCents: number | null;
+	avgValueCents: number;
+	avgIncomplete: boolean;
 };
 
+/** Loads the ledger (up to the end of `date`, UTC) in order and replays it at weighted average cost. */
+export async function averageCosts(db: Db, date?: string | null) {
+	const graph = await loadGraph(db);
+	const calc = new CostCalculator(graph);
+	const standard = new Map<number, number>();
+	for (const id of graph.parts.keys()) {
+		const cost = calc.part(id);
+		if (!cost.incomplete) standard.set(id, cost.millicents);
+	}
+	const moves = await db
+		.select({
+			partId: stockMoves.partId,
+			qtyMilli: stockMoves.qtyMilli,
+			reason: stockMoves.reason,
+			refType: stockMoves.refType,
+			refId: stockMoves.refId,
+			unitCostCents: stockMoves.unitCostCents,
+		})
+		.from(stockMoves)
+		.where(date ? lte(stockMoves.at, `${date}T23:59:59.999Z`) : undefined)
+		.orderBy(asc(stockMoves.at), asc(stockMoves.id));
+	return replayAverageCosts(moves, standard);
+}
+
 /**
- * Stock valuation: on-hand × unit cost for every stocked part with non-zero on-hand.
- * Buy parts use their standard cost; make parts their rolled-up cost (or their own
- * standard cost when they have no active BoM). Missing costs are flagged.
+ * Stock valuation by two methods side by side (the company has not chosen one yet, D91):
+ * - standard: on-hand × standard cost (make parts at their roll-up), using the costs valid on the
+ *   "as of" date from the price history;
+ * - weighted average: the value of the replayed ledger (actual purchase prices).
+ * Missing costs are flagged per method and make that total understated.
  */
 export async function valuation(db: Db, date?: string | null) {
-	const [graph, onHand] = await Promise.all([loadGraph(db), onHandAt(db, date)]);
+	const [graph, onHand, dated, average, start] = await Promise.all([
+		loadGraph(db),
+		onHandAt(db, date),
+		date ? standardCostsAt(db, date) : Promise.resolve(null),
+		averageCosts(db, date),
+		historyStart(db),
+	]);
+	if (dated) {
+		// Value with the standard costs of that day (the BoM structure is today's).
+		for (const [id, part] of graph.parts) {
+			if (dated.costs.has(id)) graph.parts.set(id, { ...part, costCents: dated.costs.get(id) ?? null });
+		}
+	}
 	const calc = new CostCalculator(graph);
 	const rows: ValuationRow[] = [];
 	for (const [partId, qty] of onHand) {
@@ -188,6 +234,7 @@ export async function valuation(db: Db, date?: string | null) {
 		const cost = calc.part(partId);
 		const hasBom =
 			part.kind === "make" && [...graph.boms.values()].some((b) => b.parentPartId === partId && b.status === "active");
+		const avg = average.costs.get(partId);
 		rows.push({
 			part,
 			onHandMilli: qty,
@@ -195,11 +242,23 @@ export async function valuation(db: Db, date?: string | null) {
 			source: hasBom ? "rollup" : "standard",
 			incomplete: cost.incomplete,
 			valueCents: centsOf(calc.extended(partId, qty)),
+			fallback: dated?.fallback.has(partId) ?? false,
+			avgUnitCents: avg ? averageUnitCents(avg) : null,
+			avgValueCents: avg ? centsOfMillicents(avg.valueMillicents) : 0,
+			avgIncomplete: avg?.incomplete ?? true,
 		});
 	}
 	rows.sort((a, b) => a.part.ref.localeCompare(b.part.ref));
-	const totalCents = rows.reduce((s, r) => s + r.valueCents, 0);
-	return { rows, totalCents, incomplete: rows.some((r) => r.incomplete) };
+	return {
+		rows,
+		totalCents: rows.reduce((s, r) => s + r.valueCents, 0),
+		incomplete: rows.some((r) => r.incomplete),
+		avgTotalCents: rows.reduce((s, r) => s + r.avgValueCents, 0),
+		avgIncomplete: rows.some((r) => r.avgIncomplete),
+		/** Some standard costs come from before the price history started (on `historyStart`). */
+		fallback: rows.some((r) => r.fallback),
+		historyStart: start,
+	};
 }
 
 /** Serials seen in stock for a part (net quantity > 0), newest first. Used as input hints. */

@@ -2,6 +2,7 @@ import { and, asc, eq, sql } from "drizzle-orm";
 import type { Context } from "hono";
 import { Hono } from "hono";
 import type { Child } from "hono/jsx";
+import { z } from "zod";
 import { BOM_STATUSES, type Bom, bomLines, boms, type Part, parts } from "../db/schema";
 import {
 	type Cost,
@@ -16,6 +17,7 @@ import {
 	activateStatements,
 	bomInput,
 	bomLineInput,
+	bomSalePriceStatements,
 	createBomStatements,
 	DEFAULT_CODE,
 	DEFAULT_REVISION,
@@ -27,13 +29,22 @@ import {
 	nextRevision,
 	wouldCreateCycle,
 } from "../domain/boms";
+import { type Margin, marginOf, salePriceOf } from "../domain/margins";
 import { onHandMap, partOptions } from "../domain/parts";
 import { errorText, fmt } from "../i18n";
 import { cn } from "../lib/cn";
 import { runBatch } from "../lib/db";
 import { isConstraintError } from "../lib/sql";
-import { formatCentsInput, formatQtyInput, MILLI, parseMilli, roundDiv } from "../lib/units";
-import { type FieldErrors, validate } from "../lib/validation";
+import {
+	formatCentsInput,
+	formatMoney,
+	formatPercent,
+	formatQtyInput,
+	MILLI,
+	parseMilli,
+	roundDiv,
+} from "../lib/units";
+import { type FieldErrors, field, validate } from "../lib/validation";
 import { requireAdmin } from "../middleware/auth";
 import type { AppEnv } from "../types";
 import { CostView, StatusBadge } from "../views/bom";
@@ -51,6 +62,8 @@ import {
 	CardFooter,
 	CardHeader,
 	CardTitle,
+	DecimalField,
+	DetailList,
 	Empty,
 	EmptyState,
 	ErrorBanner,
@@ -80,6 +93,7 @@ import {
 	ToggleLinks,
 } from "../views/ui";
 import { csvResponse } from "./import";
+import { marginTone } from "./margins";
 
 export const bomRoutes = new Hono<AppEnv>();
 
@@ -105,7 +119,60 @@ function BomTabs(props: { bom: Bom; active: BomTab }) {
 	return <LinkTabs items={tabs.map((tab) => ({ ...tab, active: tab.key === props.active }))} />;
 }
 
-function BomHeader(props: { bom: Bom; part: Part; tab: BomTab }) {
+/** Effective selling price of a BoM variant and its planned margin (standard cost roll-up). */
+type BomPricing = { priceCents: number; ownPrice: boolean; margin: Margin | null; incomplete: boolean };
+
+function bomPricing(part: Part, bom: Bom, calc: CostCalculator): BomPricing | null {
+	const priceCents = salePriceOf(part, bom);
+	if (priceCents === null) return null;
+	const cost = calc.bom(bom.id);
+	return {
+		priceCents,
+		ownPrice: bom.salePriceCents !== null,
+		margin: marginOf(priceCents, centsOf(cost.millicents)),
+		incomplete: cost.incomplete,
+	};
+}
+
+/** Selling price and planned margin, shown in the BoM header when the variant has a price. */
+function PricingSummary(props: { pricing: BomPricing }) {
+	const { t, locale } = useApp();
+	const { pricing } = props;
+	const m = pricing.margin;
+	return (
+		<>
+			<span class="inline-flex items-center gap-1.5">
+				{t.margins.price}:{" "}
+				<strong class="font-medium text-foreground">
+					<Money cents={pricing.priceCents} />
+				</strong>
+				{pricing.ownPrice ? (
+					<Badge variant="info" title={t.margins.ownPriceTitle}>
+						{t.margins.ownPrice}
+					</Badge>
+				) : (
+					<span class="text-xs">({t.boms.salePriceInherited})</span>
+				)}
+			</span>
+			{m ? (
+				<span>
+					{t.boms.plannedMargin}:{" "}
+					<strong class={cn("font-medium text-foreground", marginTone(m))}>
+						<Money cents={m.marginCents} />
+						{m.rateBp !== null ? ` · ${formatPercent(m.rateBp, locale)}` : null}
+					</strong>
+					{pricing.incomplete ? (
+						<abbr class="ml-0.5 cursor-help font-medium text-warning no-underline" title={t.margins.incompleteMark}>
+							*
+						</abbr>
+					) : null}
+				</span>
+			) : null}
+		</>
+	);
+}
+
+function BomHeader(props: { bom: Bom; part: Part; tab: BomTab; pricing?: BomPricing | null }) {
 	const { t, isAdmin } = useApp();
 	const { bom, part } = props;
 	return (
@@ -122,6 +189,7 @@ function BomHeader(props: { bom: Bom; part: Part; tab: BomTab }) {
 							{t.boms.revision}: <strong class="font-medium text-foreground">{bom.revision}</strong>
 						</span>
 						<StatusBadge status={bom.status} />
+						{props.pricing ? <PricingSummary pricing={props.pricing} /> : null}
 					</span>
 				}
 				actions={
@@ -647,6 +715,64 @@ function SideCard(props: { title: string; icon: IconNode; children: Child }) {
 	);
 }
 
+const salePriceInput = z.object({ sale_price: field.money() });
+
+/** The variant's own selling price (empty = the part's), editable unless the BoM is archived. */
+function SalePriceCard(props: { bom: Bom; part: Part; values: FormValues; errors: FormErrors }) {
+	const { t, locale, currency } = useApp();
+	const { bom, part } = props;
+	const partPrice = part.salePriceCents;
+	if (bom.status === "archived") {
+		const effective = salePriceOf(part, bom);
+		return (
+			<SideCard title={t.boms.salePriceTitle} icon={icons.tag}>
+				<DetailList
+					items={[
+						{
+							label: t.boms.salePrice,
+							value: (
+								<span class="inline-flex flex-wrap items-center gap-1.5">
+									{effective === null ? t.common.none : <Money cents={effective} />}
+									{bom.salePriceCents === null && effective !== null ? (
+										<span class="text-xs text-muted-foreground">({t.boms.salePriceInherited})</span>
+									) : null}
+								</span>
+							),
+						},
+					]}
+				/>
+			</SideCard>
+		);
+	}
+	return (
+		<Card id="sale-price" class="gap-4">
+			<CardHeader>
+				<CardTitle icon={icons.tag}>{t.boms.salePriceTitle}</CardTitle>
+			</CardHeader>
+			<form method="post" action={`/boms/${bom.id}/sale-price`} class="flex flex-col gap-4">
+				<CardContent>
+					<DecimalField
+						name="sale_price"
+						label={t.boms.salePrice}
+						hint={
+							partPrice === null
+								? t.boms.salePriceHintNone
+								: fmt(t.boms.salePriceHint, { price: formatMoney(partPrice, locale, currency) })
+						}
+						values={props.values}
+						errors={props.errors}
+					/>
+				</CardContent>
+				<CardFooter>
+					<Button variant="outline" icon={icons.save}>
+						{t.common.save}
+					</Button>
+				</CardFooter>
+			</form>
+		</Card>
+	);
+}
+
 async function renderEditor(
 	c: Context<AppEnv>,
 	data: { bom: Bom; part: Part },
@@ -655,6 +781,8 @@ async function renderEditor(
 		errors: {},
 	},
 	status: 200 | 422 = 200,
+	/** The selling price form, when re-rendered with errors. */
+	price?: { values: FormValues; errors: FieldErrors },
 ) {
 	const db = c.var.db;
 	const { bom, part } = data;
@@ -673,11 +801,14 @@ async function renderEditor(
 	const total = calc.bom(bom.id);
 	const refs = new Map([...graph.parts.values()].map((p) => [p.id, p.ref]));
 	const t = c.var.t;
+	const priceValues = price?.values ?? {
+		sale_price: bom.salePriceCents === null ? "" : formatCentsInput(bom.salePriceCents, c.var.locale),
+	};
 	return page(
 		c,
 		`${part.ref} ${bom.code} ${bom.revision}`,
 		<>
-			<BomHeader bom={bom} part={part} tab="editor" />
+			<BomHeader bom={bom} part={part} tab="editor" pricing={bomPricing(part, bom, calc)} />
 			<Flash ok={c.req.query("ok")} message={c.req.query("ok") === "activated" ? t.boms.activated : undefined} />
 			{c.req.query("err") ? <Alert variant="destructive">{errorText(t, c.req.query("err") ?? "")}</Alert> : null}
 			<LinesEditor
@@ -692,6 +823,7 @@ async function renderEditor(
 				errors={translateErrors(c, form.errors, form.vars)}
 			/>
 			<div class="mt-6 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+				<SalePriceCard bom={bom} part={part} values={priceValues} errors={translateErrors(c, price?.errors ?? {})} />
 				<SideCard title={t.boms.revisions} icon={icons.history}>
 					<ul class="m-0 flex list-none flex-col gap-2 p-0 text-sm">
 						{siblings
@@ -855,6 +987,19 @@ bomRoutes.post("/:id/lines/:lineId/move", async (c) => {
 		);
 	}
 	return c.redirect(`/boms/${data.bom.id}`, 303);
+});
+
+// Variant selling price: empty = use the part's. Logged in the price history (same batch).
+bomRoutes.post("/:id/sale-price", async (c) => {
+	const data = await loadBom(c);
+	if (!data) return notFound(c);
+	const { bom } = data;
+	if (bom.status === "archived") return c.redirect(`/boms/${bom.id}?err=bom_archived`, 303);
+	const body = await c.req.parseBody();
+	const v = validate(salePriceInput, body);
+	if (!v.ok) return renderEditor(c, data, undefined, 422, { values: body as FormValues, errors: v.errors });
+	await runBatch(c.var.db, bomSalePriceStatements(c.var.db, bom, v.data.sale_price, c.var.user, nowIso()));
+	return redirectOk(c, `/boms/${bom.id}`);
 });
 
 // ---------------------------------------------------------------------------
@@ -1075,7 +1220,7 @@ bomRoutes.get("/:id/tree", async (c) => {
 		c,
 		`${data.part.ref} · ${t.boms.tree}`,
 		<>
-			<BomHeader bom={data.bom} part={data.part} tab="tree" />
+			<BomHeader bom={data.bom} part={data.part} tab="tree" pricing={bomPricing(data.part, data.bom, calc)} />
 			<QtyForm action={`/boms/${data.bom.id}/tree`} qty={qty} />
 			{error ? <Alert variant="destructive">{error}</Alert> : null}
 			<Card class="gap-0 overflow-hidden py-0">
@@ -1156,7 +1301,7 @@ bomRoutes.get("/:id/diagram", async (c) => {
 		c,
 		`${data.part.ref} · ${t.boms.diagram}`,
 		<>
-			<BomHeader bom={data.bom} part={data.part} tab="diagram" />
+			<BomHeader bom={data.bom} part={data.part} tab="diagram" pricing={bomPricing(data.part, data.bom, calc)} />
 			{error ? <Alert variant="destructive">{error}</Alert> : null}
 			{tree ? (
 				<>
@@ -1259,7 +1404,7 @@ bomRoutes.get("/:id/explode", async (c) => {
 		c,
 		`${data.part.ref} · ${t.boms.explode}`,
 		<>
-			<BomHeader bom={data.bom} part={data.part} tab="explode" />
+			<BomHeader bom={data.bom} part={data.part} tab="explode" pricing={bomPricing(data.part, data.bom, calc)} />
 			<div class="mb-4 flex flex-wrap items-center justify-between gap-3">
 				<QtyForm action={`/boms/${data.bom.id}/explode`} qty={qty} stock={useStock} showStock class="" />
 				<Button href={`/boms/${data.bom.id}/explode?${query}&format=csv`} variant="outline" icon={icons.download}>

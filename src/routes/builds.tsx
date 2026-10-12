@@ -21,12 +21,13 @@ import {
 	serialCount,
 	serialField,
 } from "../domain/builds";
+import { buildActualCost, marginOf, salePriceOf } from "../domain/margins";
 import { onHandAt, serialsInStock } from "../domain/stock";
 import { errorText, fmt } from "../i18n";
 import { cn } from "../lib/cn";
 import { runBatch } from "../lib/db";
 import { isConstraintError } from "../lib/sql";
-import { formatQtyInput, lineCostCents, MILLI } from "../lib/units";
+import { formatMoney, formatPercent, formatQtyInput, lineCostCents, MILLI } from "../lib/units";
 import { type FieldErrors, validate } from "../lib/validation";
 import type { AppEnv } from "../types";
 import { useApp } from "../views/context";
@@ -71,6 +72,7 @@ import {
 	TextArea,
 	TextField,
 } from "../views/ui";
+import { LOW_MARGIN_BP, marginTone } from "./margins";
 
 export const buildRoutes = new Hono<AppEnv>();
 
@@ -900,7 +902,8 @@ async function renderBuild(
 			</>
 		);
 	} else {
-		const [lines, output] = await Promise.all([
+		const done = build.status === "done";
+		const [lines, output, actual] = await Promise.all([
 			getBuildLines(db, build.id),
 			db
 				.select({ unitCostCents: stockMoves.unitCostCents })
@@ -909,11 +912,16 @@ async function renderBuild(
 					and(eq(stockMoves.refType, "build"), eq(stockMoves.refId, build.id), eq(stockMoves.reason, "build_output")),
 				)
 				.limit(1),
+			done ? buildActualCost(db, build.id) : null,
 		]);
 		const outputCost = output[0]?.unitCostCents ?? null;
-		const done = build.status === "done";
 		const doneAt = shortDateTime(build.doneAt);
 		const incomplete = lines.some((l) => l.line.unitCostCents === null);
+		// Two different costs: the one frozen at completion (standard costs) and the actual one (weighted average).
+		const priceCents = salePriceOf(part, data.bom);
+		const margin = marginOf(priceCents, actual?.unitCents ?? null);
+		const low = !margin || actual?.incomplete || (margin.rateBp !== null && margin.rateBp < LOW_MARGIN_BP);
+		const marginStatTone = margin && margin.marginCents < 0 ? "destructive" : low ? "warning" : "default";
 		stats = (
 			<>
 				{qtyStat}
@@ -930,11 +938,40 @@ async function renderBuild(
 				)}
 				{done ? (
 					<StatCard
-						label={t.builds.totalCost}
+						label={t.builds.recordedCost}
 						value={<Money cents={outputCost === null ? null : lineCostCents(build.qtyMilli, outputCost)} />}
-						hint={incomplete ? t.builds.costIncomplete : undefined}
+						hint={incomplete ? t.builds.costIncomplete : t.builds.recordedCostHint}
 						icon={icons.coins}
 						tone={incomplete ? "warning" : "default"}
+					/>
+				) : null}
+				{done && actual ? (
+					<StatCard
+						label={t.builds.actualUnitCost}
+						value={<Money cents={actual.unitCents} />}
+						hint={actual.incomplete ? t.builds.actualIncomplete : t.builds.actualUnitCostHint}
+						icon={icons.scale}
+						tone={actual.incomplete ? "warning" : "default"}
+					/>
+				) : null}
+				{done && priceCents !== null ? (
+					<StatCard
+						label={t.builds.margin}
+						value={
+							margin ? (
+								<span class={marginTone(margin)}>
+									<Money cents={margin.marginCents} />
+								</span>
+							) : (
+								t.common.none
+							)
+						}
+						hint={fmt(t.builds.marginHint, {
+							rate: margin?.rateBp == null ? t.common.none : formatPercent(margin.rateBp, c.var.locale),
+							price: formatMoney(priceCents, c.var.locale, c.env.CURRENCY || "EUR"),
+						})}
+						icon={icons.tag}
+						tone={marginStatTone}
 					/>
 				) : null}
 			</>
@@ -962,7 +999,10 @@ async function renderBuild(
 			<BuildHeader data={data} />
 			<Flash message={flash} />
 			{c.req.query("err") ? <Alert variant="destructive">{errorText(t, c.req.query("err") ?? "")}</Alert> : null}
-			<div class="mb-6 grid grid-cols-2 gap-3 md:grid-cols-4">{stats}</div>
+			{/* A done build has up to six cards (costs and margin): three per row instead of four. */}
+			<div class={cn("mb-6 grid grid-cols-2 gap-3 md:grid-cols-4", build.status === "done" && "md:grid-cols-3")}>
+				{stats}
+			</div>
 			<div class="flex flex-col gap-6">{body}</div>
 		</>,
 		opts.status ?? 200,

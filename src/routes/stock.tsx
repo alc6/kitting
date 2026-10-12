@@ -558,7 +558,29 @@ export function MoveReference(props: {
 }
 
 // ---------------------------------------------------------------------------
-// Valuation
+// Valuation: two methods side by side, neither shown as "the" value (D91).
+
+/** Warning asterisk after a cost that is unknown or incomplete, with its explanation for screen readers. */
+function IncompleteMark(props: { show: boolean }) {
+	const { t } = useApp();
+	if (!props.show) return null;
+	return (
+		<span class="ml-0.5 font-medium text-warning" title={t.stock.rowIncomplete}>
+			*<span class="sr-only"> {t.stock.rowIncomplete}</span>
+		</span>
+	);
+}
+
+/** Hint of a method's total: the date it is valued at, and how many parts lack a cost. */
+function MethodHint(props: { asOf: string; missing: number }) {
+	const { t } = useApp();
+	return (
+		<span class="flex flex-col gap-0.5">
+			<span>{props.asOf}</span>
+			{props.missing > 0 ? <span class="text-warning">{fmt(t.stock.incompleteRows, { n: props.missing })}</span> : null}
+		</span>
+	);
+}
 
 stockRoutes.get("/valuation", async (c) => {
 	const t = c.var.t;
@@ -566,8 +588,22 @@ stockRoutes.get("/valuation", async (c) => {
 	const v = await valuation(c.var.db, at);
 	if (c.req.query("format") === "csv") {
 		const locale = c.var.locale;
+		const yes = (b: boolean) => (b ? "yes" : "");
 		return csvResponse(c, `stock-valuation-${at ?? nowIso().slice(0, 10)}.csv`, [
-			["ref", "name", "kind", "unit", "on_hand", "unit_cost", "cost_source", "value", "incomplete"],
+			[
+				"ref",
+				"name",
+				"kind",
+				"unit",
+				"on_hand",
+				"standard_unit_cost",
+				"cost_source",
+				"standard_value",
+				"standard_incomplete",
+				"average_unit_cost",
+				"average_value",
+				"average_incomplete",
+			],
 			...v.rows.map((r) => [
 				r.part.ref,
 				r.part.name,
@@ -577,12 +613,31 @@ stockRoutes.get("/valuation", async (c) => {
 				formatCentsInput(centsOf(r.unitMillicents), locale),
 				r.source,
 				formatCentsInput(r.valueCents, locale),
-				r.incomplete ? "yes" : "",
+				yes(r.incomplete),
+				r.avgUnitCents === null ? "" : formatCentsInput(r.avgUnitCents, locale),
+				formatCentsInput(r.avgValueCents, locale),
+				yes(r.avgIncomplete),
 			]),
-			["", "", "", "", "", "", "total", formatCentsInput(v.totalCents, locale), v.incomplete ? "yes" : ""],
+			[
+				"",
+				"",
+				"",
+				"",
+				"",
+				"",
+				"total",
+				formatCentsInput(v.totalCents, locale),
+				yes(v.incomplete),
+				"",
+				formatCentsInput(v.avgTotalCents, locale),
+				yes(v.avgIncomplete),
+			],
 		]);
 	}
-	const incompleteRows = v.rows.filter((r) => r.incomplete).length;
+	const asOf = at ? fmt(t.stock.valueAsOf, { date: at }) : t.stock.valueNow;
+	const missingStandard = v.rows.filter((r) => r.incomplete).length;
+	const missingAverage = v.rows.filter((r) => r.avgIncomplete).length;
+	const anyIncomplete = v.incomplete || v.avgIncomplete;
 	return page(
 		c,
 		t.stock.tabs.valuation,
@@ -598,25 +653,48 @@ stockRoutes.get("/valuation", async (c) => {
 				</Button>
 				<span class="text-sm text-muted-foreground">{t.stock.asOfHint}</span>
 			</form>
+			<p class="mb-4 max-w-3xl text-sm text-muted-foreground">{t.stock.methodsIntro}</p>
+			{at && v.fallback ? <Alert>{fmt(t.stock.fallbackNote, { date: v.historyStart ?? "" })}</Alert> : null}
 			<div class="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
+				<StatCard
+					label={t.stock.valueStandard}
+					value={
+						<>
+							<Money cents={v.totalCents} />
+							<IncompleteMark show={v.incomplete} />
+						</>
+					}
+					icon={icons.coins}
+					hint={<MethodHint asOf={asOf} missing={missingStandard} />}
+					tone={v.incomplete ? "warning" : "default"}
+				/>
+				<StatCard
+					label={t.stock.valueAverage}
+					value={
+						<>
+							<Money cents={v.avgTotalCents} />
+							<IncompleteMark show={v.avgIncomplete} />
+						</>
+					}
+					icon={icons.receipt}
+					hint={<MethodHint asOf={asOf} missing={missingAverage} />}
+					tone={v.avgIncomplete ? "warning" : "default"}
+				/>
 				<div class="col-span-2 grid sm:col-span-1">
 					<StatCard
-						label={t.stock.totalValue}
-						value={<Money cents={v.totalCents} />}
-						icon={icons.coins}
-						hint={at ? fmt(t.stock.valueAsOf, { date: at }) : t.stock.valueNow}
-						tone={v.incomplete ? "warning" : "default"}
+						label={t.stock.valueDifference}
+						value={
+							<>
+								<Money cents={v.avgTotalCents - v.totalCents} />
+								<IncompleteMark show={anyIncomplete} />
+							</>
+						}
+						icon={icons.scale}
+						hint={t.stock.differenceHint}
 					/>
 				</div>
-				<StatCard label={t.stock.partsValued} value={v.rows.length} icon={icons.package} />
-				<StatCard
-					label={t.stock.costIncomplete}
-					value={incompleteRows}
-					icon={icons.triangleAlert}
-					tone={incompleteRows > 0 ? "warning" : "default"}
-				/>
 			</div>
-			{v.incomplete ? <Alert variant="warning">{t.stock.valuationIncomplete}</Alert> : null}
+			{anyIncomplete ? <Alert variant="warning">{t.stock.valuationIncomplete}</Alert> : null}
 			<TableCard
 				title={fmt(t.common.results, { n: v.rows.length })}
 				action={<CsvButton href={`/stock/valuation?${new URLSearchParams({ at: at ?? "", format: "csv" })}`} />}
@@ -626,11 +704,22 @@ stockRoutes.get("/valuation", async (c) => {
 				) : (
 					<Table>
 						<TableHeader class="bg-muted/50">
-							<TableRow>
+							<TableRow class="hover:bg-transparent">
+								<TableHead colspan={3} />
+								<TableHead colspan={2} scope="colgroup" class="border-l text-center">
+									{t.stock.methodStandard}
+								</TableHead>
+								<TableHead colspan={2} scope="colgroup" class="border-l text-center">
+									{t.stock.methodAverage}
+								</TableHead>
+							</TableRow>
+							<TableRow class="hover:bg-transparent">
 								<TableHead>{t.parts.ref}</TableHead>
 								<TableHead>{t.parts.name}</TableHead>
 								<TableHead class="text-right">{t.stock.onHand}</TableHead>
-								<TableHead class="text-right">{t.stock.unitCost}</TableHead>
+								<TableHead class="border-l text-right">{t.stock.unitCost}</TableHead>
+								<TableHead class="text-right">{t.stock.value}</TableHead>
+								<TableHead class="border-l text-right">{t.stock.unitCost}</TableHead>
 								<TableHead class="text-right">{t.stock.value}</TableHead>
 							</TableRow>
 						</TableHeader>
@@ -647,25 +736,33 @@ stockRoutes.get("/valuation", async (c) => {
 									<TableCell class="text-right">
 										<Qty milli={r.onHandMilli} unit={r.part.unit} />
 									</TableCell>
-									<TableCell class="text-right whitespace-nowrap">
+									<TableCell class="border-l text-right whitespace-nowrap">
 										<Money cents={centsOf(r.unitMillicents)} />
-										{r.incomplete ? (
-											<span class="ml-0.5 font-medium text-warning" title={t.stock.rowIncomplete}>
-												*
-											</span>
-										) : null}
+										<IncompleteMark show={r.incomplete} />
 									</TableCell>
 									<TableCell class="text-right">
 										<Money cents={r.valueCents} />
+									</TableCell>
+									<TableCell class="border-l text-right whitespace-nowrap">
+										<Money cents={r.avgUnitCents} />
+										<IncompleteMark show={r.avgIncomplete} />
+									</TableCell>
+									<TableCell class="text-right">
+										<Money cents={r.avgValueCents} />
 									</TableCell>
 								</TableRow>
 							))}
 						</TableBody>
 						<TableFooter>
 							<TableRow class="hover:bg-transparent">
-								<TableCell colspan={4}>{t.stock.totalValue}</TableCell>
+								<TableCell colspan={3}>{t.stock.totalValue}</TableCell>
+								<TableCell class="border-l" />
 								<TableCell class={cn("text-right", v.incomplete && "text-warning")}>
 									<Money cents={v.totalCents} />
+								</TableCell>
+								<TableCell class="border-l" />
+								<TableCell class={cn("text-right", v.avgIncomplete && "text-warning")}>
+									<Money cents={v.avgTotalCents} />
 								</TableCell>
 							</TableRow>
 						</TableFooter>

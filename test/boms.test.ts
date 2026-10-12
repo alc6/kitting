@@ -223,7 +223,9 @@ describe("boms.csv import", () => {
 		const html = await (await preview(DEMO.boms)).text();
 		expect(html).toContain("0 to create, 0 to update, 8 unchanged.");
 		const exported = await (await request("/import/boms/export.csv")).text();
-		expect(exported.startsWith("parent_ref,code,revision,status,component_ref,qty,notes")).toBe(true);
+		expect(exported.startsWith("parent_ref,code,revision,status,sale_price,component_ref,qty,notes")).toBe(true);
+		// The warm variant's own selling price survives the round trip.
+		expect(exported).toContain("LAMP-DESK,warm,Rev1,active,94.00,");
 		expect(await (await preview(exported)).text()).toContain("0 to create, 0 to update, 8 unchanged.");
 	});
 

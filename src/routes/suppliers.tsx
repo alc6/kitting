@@ -1,6 +1,7 @@
-import { and, asc, eq, ne, sql } from "drizzle-orm";
+import { and, eq, ne, sql } from "drizzle-orm";
 import { Hono } from "hono";
-import { parts, suppliers } from "../db/schema";
+import { suppliers } from "../db/schema";
+import { poUnitPrice, supplierOffers } from "../domain/offers";
 import { findSupplierByName, getSupplier, listSuppliers, supplierInput, supplierToForm } from "../domain/suppliers";
 import { fmt } from "../i18n";
 import { isConstraintError } from "../lib/sql";
@@ -8,7 +9,7 @@ import { type FieldErrors, validate } from "../lib/validation";
 import { requireAdmin } from "../middleware/auth";
 import type { AppEnv } from "../types";
 import { useApp } from "../views/context";
-import { icons } from "../views/icons";
+import { Icon, icons } from "../views/icons";
 import { idParam, notFound, nowIso, page, redirectOk, translateErrors } from "../views/render";
 import {
 	Alert,
@@ -16,6 +17,8 @@ import {
 	Button,
 	Card,
 	CardContent,
+	CardEmpty,
+	CardFooter,
 	CardHeader,
 	CardTitle,
 	EmptyState,
@@ -24,12 +27,14 @@ import {
 	Flash,
 	type FormErrors,
 	type FormValues,
-	KindBadge,
+	Money,
 	PageHeader,
 	PostButton,
+	Qty,
 	SearchBar,
 	Table,
 	TableBody,
+	TableCard,
 	TableCell,
 	TableHead,
 	TableHeader,
@@ -141,6 +146,85 @@ function SupplierForm(props: {
 	);
 }
 
+type OfferRow = Awaited<ReturnType<typeof supplierOffers>>[number];
+
+/** What this supplier offers: one row per part, with the price a PO would use (D90). */
+function SupplierOffers(props: { offers: OfferRow[] }) {
+	const { t } = useApp();
+	return (
+		<TableCard
+			id="offers"
+			title={
+				<span class="flex items-center gap-2">
+					{t.suppliers.parts}
+					<Badge variant="secondary">{props.offers.length}</Badge>
+				</span>
+			}
+		>
+			{props.offers.length === 0 ? (
+				<CardEmpty icon={icons.package}>{t.suppliers.noParts}</CardEmpty>
+			) : (
+				<Table>
+					<TableHeader>
+						<TableRow>
+							<TableHead>{t.parts.ref}</TableHead>
+							<TableHead>{t.parts.supplierRef}</TableHead>
+							<TableHead class="text-right">{t.parts.offerPrice}</TableHead>
+							<TableHead class="text-right">{t.parts.moq}</TableHead>
+							<TableHead class="text-right">{t.parts.leadTime}</TableHead>
+							<TableHead>
+								<span class="sr-only">{t.parts.preferred}</span>
+							</TableHead>
+						</TableRow>
+					</TableHeader>
+					<TableBody>
+						{props.offers.map((o) => (
+							<TableRow>
+								<TableCell>
+									<span class="flex flex-col items-start gap-0.5">
+										<a href={`/parts/${o.partId}`} class="font-medium whitespace-nowrap">
+											{o.ref}
+										</a>
+										<span class="text-xs text-muted-foreground">{o.name}</span>
+									</span>
+								</TableCell>
+								<TableCell class="text-muted-foreground">{o.offer.supplierRef || t.common.none}</TableCell>
+								<TableCell class="text-right whitespace-nowrap">
+									{o.offer.priceCents === null && o.costCents !== null ? (
+										<span class="flex flex-col items-end gap-0.5">
+											<Money cents={poUnitPrice(o.offer.priceCents, o.costCents)} />
+											<span class="text-xs text-muted-foreground">{t.parts.standardCostUsed}</span>
+										</span>
+									) : (
+										<Money cents={o.offer.priceCents} />
+									)}
+								</TableCell>
+								<TableCell class="text-right">
+									{o.offer.moqMilli ? <Qty milli={o.offer.moqMilli} unit={o.unit} /> : t.common.none}
+								</TableCell>
+								<TableCell class="text-right whitespace-nowrap tabular-nums">
+									{o.offer.leadDays ? fmt(t.parts.leadDaysValue, { n: o.offer.leadDays }) : t.common.none}
+								</TableCell>
+								<TableCell>
+									{o.preferred ? (
+										<Badge variant="secondary">
+											<Icon icon={icons.check} />
+											{t.parts.preferred}
+										</Badge>
+									) : null}
+								</TableCell>
+							</TableRow>
+						))}
+					</TableBody>
+				</Table>
+			)}
+			<CardFooter class="border-t px-4 py-3 text-xs text-muted-foreground [.border-t]:pt-3">
+				{t.suppliers.offersHint}
+			</CardFooter>
+		</TableCard>
+	);
+}
+
 supplierRoutes.get("/", async (c) => {
 	const q = c.req.query("q") ?? "";
 	const rows = await listSuppliers(c.var.db, q);
@@ -194,11 +278,7 @@ supplierRoutes.get("/:id", async (c) => {
 	const id = idParam(c);
 	const supplier = id ? await getSupplier(c.var.db, id) : undefined;
 	if (!supplier) return notFound(c);
-	const supplied = await c.var.db
-		.select({ id: parts.id, ref: parts.ref, name: parts.name, kind: parts.kind, supplierRef: parts.supplierRef })
-		.from(parts)
-		.where(and(eq(parts.supplierId, supplier.id), eq(parts.archived, false)))
-		.orderBy(asc(parts.ref));
+	const offers = (await supplierOffers(c.var.db, supplier.id)).filter((o) => !o.archived);
 	return page(
 		c,
 		supplier.name,
@@ -228,44 +308,7 @@ supplierRoutes.get("/:id", async (c) => {
 					submit={t.common.save}
 					title={t.suppliers.edit}
 				/>
-				<Card>
-					<CardHeader>
-						<CardTitle class="flex items-center gap-2">
-							{t.suppliers.parts}
-							<Badge variant="secondary">{supplied.length}</Badge>
-						</CardTitle>
-					</CardHeader>
-					<CardContent class="px-2">
-						{supplied.length === 0 ? (
-							<EmptyState icon={icons.package} description={t.suppliers.noParts} class="border-0 p-4 md:p-6" />
-						) : (
-							<Table>
-								<TableHeader>
-									<TableRow>
-										<TableHead>{t.parts.ref}</TableHead>
-										<TableHead>{t.parts.name}</TableHead>
-										<TableHead>{t.parts.kind}</TableHead>
-										<TableHead>{t.parts.supplierRef}</TableHead>
-									</TableRow>
-								</TableHeader>
-								<TableBody>
-									{supplied.map((p) => (
-										<TableRow>
-											<TableCell class="font-medium whitespace-nowrap">
-												<a href={`/parts/${p.id}`}>{p.ref}</a>
-											</TableCell>
-											<TableCell>{p.name}</TableCell>
-											<TableCell>
-												<KindBadge kind={p.kind} />
-											</TableCell>
-											<TableCell class="text-muted-foreground">{p.supplierRef}</TableCell>
-										</TableRow>
-									))}
-								</TableBody>
-							</Table>
-						)}
-					</CardContent>
-				</Card>
+				<SupplierOffers offers={offers} />
 			</div>
 		</>,
 	);

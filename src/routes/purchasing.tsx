@@ -2,6 +2,7 @@ import { and, asc, eq, inArray } from "drizzle-orm";
 import type { Context } from "hono";
 import { Hono } from "hono";
 import { PO_STATUSES, type PoStatus, parts, poLines, purchaseOrders, suppliers } from "../db/schema";
+import { getOffer, poUnitPrice } from "../domain/offers";
 import {
 	computeShortages,
 	draftPoStatements,
@@ -10,23 +11,36 @@ import {
 	listPos,
 	nextPoNumbers,
 	OPEN_PO_STATUSES,
+	planDraftOrders,
 	poEditInput,
 	poInput,
 	poLineInput,
 	RECEIVABLE_PO_STATUSES,
 	type Receipt,
 	receiptStatements,
+	type ShortageLine,
+	type ShortageOffer,
 	type Shortages,
+	type SupplierGroup,
 } from "../domain/purchasing";
 import { errorText, fmt } from "../i18n";
 import { cn } from "../lib/cn";
 import { runBatch } from "../lib/db";
 import { isConstraintError } from "../lib/sql";
-import { formatCentsInput, formatQtyInput, lineCostCents, MILLI, parseCents, parseMilli } from "../lib/units";
+import {
+	formatCentsInput,
+	formatMoney,
+	formatQty,
+	formatQtyInput,
+	lineCostCents,
+	MILLI,
+	parseCents,
+	parseMilli,
+} from "../lib/units";
 import { type FieldErrors, validate } from "../lib/validation";
 import { requireAdmin } from "../middleware/auth";
 import type { AppEnv } from "../types";
-import { useApp } from "../views/context";
+import { type AppView, useApp } from "../views/context";
 import { Icon, icons } from "../views/icons";
 import { idParam, notFound, nowIso, page, redirectOk, translateErrors } from "../views/render";
 import {
@@ -116,6 +130,48 @@ function PartCell(props: { id: number; ref: string; name: string; supplierRef?: 
 // ---------------------------------------------------------------------------
 // Shortages
 
+/**
+ * Whether a shortage line can be ordered from another supplier (D94): a line of a supplier group when
+ * several suppliers offer the part, a line without preferred supplier as soon as one offers it.
+ */
+const canChoose = (g: SupplierGroup, l: ShortageLine) => l.offers.length > (g.supplierId === null ? 0 : 1);
+
+/** "Supplier (preferred) · €6.60 · MOQ 5 · 21 d lead time", for an option of the order-from select. */
+function offerLabel(o: ShortageOffer, preferred: boolean, view: Pick<AppView, "t" | "locale" | "currency">) {
+	const { t, locale, currency } = view;
+	return [
+		preferred ? `${o.supplierName} (${t.purchasing.preferred})` : o.supplierName,
+		o.priceCents === null ? t.purchasing.standardCost : formatMoney(o.priceCents, locale, currency),
+		o.moqMilli > 0 ? fmt(t.purchasing.moqShort, { n: formatQty(o.moqMilli, locale) }) : null,
+		o.leadDays > 0 ? fmt(t.purchasing.leadShort, { n: o.leadDays }) : null,
+	]
+		.filter((s) => s !== null)
+		.join(" · ");
+}
+
+/**
+ * Native select of the supplier to order a line from, read by POST /purchasing/draft-pos. The preferred
+ * supplier is selected; a line without one starts on an empty "choose" option and is skipped until chosen.
+ */
+function OrderFromSelect(props: { line: ShortageLine }) {
+	const view = useApp();
+	const l = props.line;
+	return (
+		<select
+			name={`order_from_${l.part.id}`}
+			aria-label={`${view.t.purchasing.orderFrom} ${l.part.ref}`}
+			class="w-auto max-w-72 min-w-44"
+		>
+			{l.part.supplierId === null ? <option value="">{view.t.purchasing.chooseSupplier}</option> : null}
+			{l.offers.map((o) => (
+				<option value={String(o.supplierId)} selected={o.supplierId === l.part.supplierId}>
+					{offerLabel(o, o.supplierId === l.part.supplierId, view)}
+				</option>
+			))}
+		</select>
+	);
+}
+
 export function ShortageTables(props: { shortages: Shortages; selectable?: boolean }) {
 	const { t } = useApp();
 	const { shortages } = props;
@@ -132,76 +188,97 @@ export function ShortageTables(props: { shortages: Shortages; selectable?: boole
 					</ul>
 				</Alert>
 			) : null}
-			{shortages.groups.map((g) => (
-				<Card class={cn("gap-4", g.supplierId === null && "border-warning/40")}>
-					<CardHeader>
-						{g.supplierId === null ? (
-							<CardTitle class="flex items-center gap-2 text-warning">
-								<Icon icon={icons.triangleAlert} class="size-4" />
-								{t.purchasing.unassigned}
-							</CardTitle>
-						) : (
-							<CardTitle class="flex items-center gap-2">
-								<Icon icon={icons.factory} class="size-4 text-muted-foreground" />
-								<a href={`/suppliers/${g.supplierId}`}>{g.supplierName}</a>
-							</CardTitle>
-						)}
-						<CardDescription>
-							{fmt(t.purchasing.partCount, { n: g.lines.length })} · {t.purchasing.estimated}:{" "}
-							<Money cents={g.totalCents} />
-						</CardDescription>
-						{props.selectable && g.supplierId !== null ? (
-							<CardAction>
-								<label class="flex min-h-(--control-h) cursor-pointer items-center gap-3 text-sm font-medium">
-									<input type="checkbox" data-slot="checkbox" name={`supplier_${g.supplierId}`} value="on" checked />
-									<span>
-										{t.purchasing.include}
-										<span class="sr-only"> {g.supplierName}</span>
-									</span>
-								</label>
-							</CardAction>
-						) : null}
-					</CardHeader>
-					<CardContent class="px-2">
-						<Table>
-							<TableHeader>
-								<TableRow>
-									<TableHead>{t.purchasing.part}</TableHead>
-									<TableHead class="text-right">{t.purchasing.need}</TableHead>
-									<TableHead class="text-right">{t.purchasing.onHand}</TableHead>
-									<TableHead class="text-right">{t.purchasing.onOrder}</TableHead>
-									<TableHead class="text-right">{t.purchasing.net}</TableHead>
-									<TableHead class="text-right">{t.purchasing.order}</TableHead>
-									<TableHead>{t.purchasing.builds}</TableHead>
-								</TableRow>
-							</TableHeader>
-							<TableBody>
-								{g.lines.map((l) => (
+			{shortages.groups.map((g) => {
+				const choosing = props.selectable === true && (g.supplierId === null || g.lines.some((l) => canChoose(g, l)));
+				return (
+					<Card class={cn("gap-4", g.supplierId === null && "border-warning/40")}>
+						<CardHeader>
+							{g.supplierId === null ? (
+								<CardTitle class="flex items-center gap-2 text-warning">
+									<Icon icon={icons.triangleAlert} class="size-4" />
+									{t.purchasing.unassigned}
+								</CardTitle>
+							) : (
+								<CardTitle class="flex items-center gap-2">
+									<Icon icon={icons.factory} class="size-4 text-muted-foreground" />
+									<a href={`/suppliers/${g.supplierId}`}>{g.supplierName}</a>
+								</CardTitle>
+							)}
+							<CardDescription>
+								{fmt(t.purchasing.partCount, { n: g.lines.length })} · {t.purchasing.estimated}:{" "}
+								<Money cents={g.totalCents} />
+							</CardDescription>
+							{props.selectable && g.supplierId !== null ? (
+								<CardAction>
+									<label class="flex min-h-(--control-h) cursor-pointer items-center gap-3 text-sm font-medium">
+										<input type="checkbox" data-slot="checkbox" name={`supplier_${g.supplierId}`} value="on" checked />
+										<span>
+											{t.purchasing.include}
+											<span class="sr-only"> {g.supplierName}</span>
+										</span>
+									</label>
+								</CardAction>
+							) : null}
+						</CardHeader>
+						<CardContent class="px-2">
+							<Table>
+								<TableHeader>
 									<TableRow>
-										<PartCell id={l.part.id} ref={l.part.ref} name={l.part.name} supplierRef={l.part.supplierRef} />
-										<TableCell class="text-right">
-											<Qty milli={l.needMilli} unit={l.part.unit} />
-										</TableCell>
-										<TableCell class="text-right">
-											<Qty milli={l.onHandMilli} unit={l.part.unit} />
-										</TableCell>
-										<TableCell class="text-right">
-											{l.onOrderMilli ? <Qty milli={l.onOrderMilli} unit={l.part.unit} /> : ""}
-										</TableCell>
-										<TableCell class="text-right font-medium text-warning">
-											<Qty milli={l.netMilli} unit={l.part.unit} />
-										</TableCell>
-										<TableCell class="text-right font-semibold">
-											<Qty milli={l.orderMilli} unit={l.part.unit} />
-										</TableCell>
-										<TableCell class="text-xs text-muted-foreground">{l.builds.join(", ")}</TableCell>
+										<TableHead>{t.purchasing.part}</TableHead>
+										<TableHead class="text-right">{t.purchasing.need}</TableHead>
+										<TableHead class="text-right">{t.purchasing.onHand}</TableHead>
+										<TableHead class="text-right">{t.purchasing.onOrder}</TableHead>
+										<TableHead class="text-right">{t.purchasing.net}</TableHead>
+										<TableHead class="text-right">{t.purchasing.order}</TableHead>
+										<TableHead class="text-right">{t.purchasing.price}</TableHead>
+										<TableHead class="text-right">{t.purchasing.lineTotal}</TableHead>
+										{choosing ? <TableHead>{t.purchasing.orderFrom}</TableHead> : null}
+										<TableHead>{t.purchasing.builds}</TableHead>
 									</TableRow>
-								))}
-							</TableBody>
-						</Table>
-					</CardContent>
-				</Card>
-			))}
+								</TableHeader>
+								<TableBody>
+									{g.lines.map((l) => (
+										<TableRow>
+											<PartCell id={l.part.id} ref={l.part.ref} name={l.part.name} supplierRef={l.part.supplierRef} />
+											<TableCell class="text-right">
+												<Qty milli={l.needMilli} unit={l.part.unit} />
+											</TableCell>
+											<TableCell class="text-right">
+												<Qty milli={l.onHandMilli} unit={l.part.unit} />
+											</TableCell>
+											<TableCell class="text-right">
+												{l.onOrderMilli ? <Qty milli={l.onOrderMilli} unit={l.part.unit} /> : ""}
+											</TableCell>
+											<TableCell class="text-right font-medium text-warning">
+												<Qty milli={l.netMilli} unit={l.part.unit} />
+											</TableCell>
+											<TableCell class="text-right font-semibold">
+												<Qty milli={l.orderMilli} unit={l.part.unit} />
+											</TableCell>
+											<TableCell class="text-right">
+												<Money cents={l.unitPriceCents} />
+											</TableCell>
+											<TableCell class="text-right">
+												<Money cents={lineCostCents(l.orderMilli, l.unitPriceCents)} />
+											</TableCell>
+											{choosing ? (
+												<TableCell>
+													{canChoose(g, l) ? (
+														<OrderFromSelect line={l} />
+													) : g.supplierId === null ? (
+														<span class="text-sm text-muted-foreground">{t.purchasing.noOffer}</span>
+													) : null}
+												</TableCell>
+											) : null}
+											<TableCell class="min-w-48 text-xs text-muted-foreground">{l.builds.join(", ")}</TableCell>
+										</TableRow>
+									))}
+								</TableBody>
+							</Table>
+						</CardContent>
+					</Card>
+				);
+			})}
 		</>
 	);
 }
@@ -209,7 +286,9 @@ export function ShortageTables(props: { shortages: Shortages; selectable?: boole
 purchasingRoutes.get("/", async (c) => {
 	const t = c.var.t;
 	const shortages = await computeShortages(c.var.db);
-	const orderable = shortages.groups.some((g) => g.supplierId !== null);
+	// Lines without a preferred supplier can be ordered too, once a supplier offering them is chosen.
+	const orderable = shortages.groups.some((g) => g.supplierId !== null || g.lines.some((l) => canChoose(g, l)));
+	const choosing = shortages.groups.some((g) => g.lines.some((l) => canChoose(g, l)));
 	return page(
 		c,
 		t.purchasing.title,
@@ -225,9 +304,10 @@ purchasingRoutes.get("/", async (c) => {
 				}
 			/>
 			<PurchasingTabs active="shortages" />
-			<p class="mb-4 max-w-3xl text-sm text-muted-foreground">
-				{fmt(t.purchasing.shortagesIntro, { n: shortages.buildCount })}
-			</p>
+			<div class="mb-4 flex max-w-3xl flex-col gap-1 text-sm text-muted-foreground">
+				<p>{fmt(t.purchasing.shortagesIntro, { n: shortages.buildCount })}</p>
+				{choosing ? <p>{t.purchasing.orderFromHint}</p> : null}
+			</div>
 			{shortages.groups.length === 0 && shortages.missingBoms.length === 0 ? (
 				<EmptyState icon={icons.circleCheck} description={t.purchasing.noShortages} />
 			) : (
@@ -249,18 +329,25 @@ purchasingRoutes.post("/draft-pos", async (c) => {
 	const db = c.var.db;
 	const body = await c.req.parseBody();
 	const shortages = await computeShortages(db);
-	const groups = shortages.groups.filter((g) => g.supplierId !== null && body[`supplier_${g.supplierId}`] === "on");
-	if (groups.length === 0) return c.redirect("/purchasing", 303);
+	const orders = planDraftOrders(
+		shortages.groups,
+		(supplierId) => body[`supplier_${supplierId}`] === "on",
+		(partId) => {
+			const v = body[`order_from_${partId}`];
+			return typeof v === "string" && /^\d+$/.test(v) ? Number(v) : undefined;
+		},
+	);
+	if (orders.length === 0) return c.redirect("/purchasing", 303);
 	for (let attempt = 0; ; attempt++) {
-		const numbers = await nextPoNumbers(db, groups.length);
+		const numbers = await nextPoNumbers(db, orders.length);
 		try {
-			await runBatch(db, draftPoStatements(db, groups, numbers, c.var.user, nowIso()));
+			await runBatch(db, draftPoStatements(db, orders, numbers, c.var.user, nowIso()));
 			break;
 		} catch (err) {
 			if (attempt > 0 || !isConstraintError(err, "UNIQUE")) throw err;
 		}
 	}
-	return c.redirect(`/purchasing/po?created=${groups.length}`, 303);
+	return c.redirect(`/purchasing/po?created=${orders.length}`, 303);
 });
 
 // ---------------------------------------------------------------------------
@@ -1072,7 +1159,8 @@ purchasingRoutes.post("/po/:id/lines", async (c) => {
 		poId: data.po.id,
 		partId: part.id,
 		qtyMilli: v.data.qty,
-		unitPriceCents: v.data.price ?? part.costCents ?? 0,
+		unitPriceCents:
+			v.data.price ?? poUnitPrice((await getOffer(db, part.id, data.po.supplierId))?.priceCents, part.costCents),
 		createdBy: user,
 		updatedBy: user,
 	});

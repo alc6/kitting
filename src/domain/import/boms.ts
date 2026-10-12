@@ -1,8 +1,8 @@
 import { eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
-import { BOM_STATUSES, type BomStatus, bomLines, boms } from "../../db/schema";
+import { BOM_STATUSES, type BomStatus, bomLines, boms, priceHistory } from "../../db/schema";
 import type { Statement } from "../../lib/db";
-import { formatQtyInput, MILLI } from "../../lib/units";
+import { formatCentsInput, formatQtyInput, MILLI } from "../../lib/units";
 import { field, REF_PATTERN, validate } from "../../lib/validation";
 import { type BomGraph, findCycle, type GraphBom, type GraphLine } from "../bom-graph";
 import { DEFAULT_CODE, DEFAULT_REVISION, loadGraph } from "../boms";
@@ -25,6 +25,7 @@ const bomRow = z.object({
 		.transform((v) => (v || "draft").toLowerCase())
 		.refine((v): v is BomStatus => (BOM_STATUSES as readonly string[]).includes(v), "invalid_status")
 		.transform((v) => v as BomStatus),
+	sale_price: field.money(),
 	component_ref: field.required(64),
 	qty: field.qty({ positive: true }),
 	notes: field.text(500),
@@ -37,6 +38,8 @@ type Group = {
 	code: string;
 	revision: string;
 	status: BomStatus;
+	/** Variant selling price from the file (only used when the sale_price column is present). */
+	salePrice: number | null;
 	lines: { line: number; componentId: number; qtyMilli: number; notes: string }[];
 	existing?: GraphBom;
 };
@@ -47,24 +50,31 @@ const groupKey = (parentId: number, code: string, revision: string) => `${parent
  * boms.csv: one row per BoM line. Rows are grouped by (parent_ref, code, revision);
  * each group replaces the lines of that BoM (created if new). Activating a BoM archives
  * the previously active BoM of the same parent and code. Cycles are rejected.
+ * The optional sale_price column sets the variant's selling price (one value per BoM; empty everywhere
+ * clears it); without the column, prices are kept.
  */
 export const bomsImporter: Importer = {
 	type: "boms",
 	required: ["parent_ref", "component_ref", "qty"],
-	optional: ["code", "revision", "status", "notes"],
-	columns: ["parent_ref", "code", "revision", "status", "component_ref", "qty", "notes"],
+	optional: ["code", "revision", "status", "sale_price", "notes"],
+	columns: ["parent_ref", "code", "revision", "status", "sale_price", "component_ref", "qty", "notes"],
 	example: [
-		["SA-MAIN", "std", "Rev1", "active", "RES-10K", "4", ""],
-		["SA-MAIN", "std", "Rev1", "active", "CBL-2C", "0.35", "cut to length"],
-		["SA-MAIN", "std", "Rev1", "active", "KIT-SCREWS", "1", ""],
-		["KIT-SCREWS", "std", "Rev1", "active", "SCREW-M3", "6", ""],
+		["SA-MAIN", "std", "Rev1", "active", "", "RES-10K", "4", ""],
+		["SA-MAIN", "std", "Rev1", "active", "", "CBL-2C", "0.35", "cut to length"],
+		["SA-MAIN", "std", "Rev1", "active", "", "KIT-SCREWS", "1", ""],
+		["KIT-SCREWS", "std", "Rev1", "active", "", "SCREW-M3", "6", ""],
 	],
 
 	async plan({ db }, table) {
 		const { errors, warnings } = checkHeader(this, table);
 		if (errors.length) return emptyPlan("boms", errors, warnings);
 
-		const graph = await loadGraph(db);
+		const [graph, bomPrices] = await Promise.all([
+			loadGraph(db),
+			db.select({ id: boms.id, salePriceCents: boms.salePriceCents }).from(boms),
+		]);
+		const priceOf = new Map(bomPrices.map((b) => [b.id, b.salePriceCents]));
+		const pricesInFile = table.header.includes("sale_price");
 		const byRef = new Map([...graph.parts.values()].map((p) => [p.ref, p]));
 		const existingByKey = new Map(
 			[...graph.boms.values()].map((b) => [groupKey(b.parentPartId, b.code, b.revision), b]),
@@ -110,6 +120,7 @@ export const bomsImporter: Importer = {
 					code: d.code,
 					revision: d.revision,
 					status: d.status,
+					salePrice: d.sale_price,
 					lines: [],
 					existing: existingByKey.get(key),
 				};
@@ -117,7 +128,10 @@ export const bomsImporter: Importer = {
 			} else if (g.status !== d.status) {
 				issues.push({ line: rec.line, column: "status", key: "bom_status_mixed" });
 				continue;
-			}
+			} else if (d.sale_price !== null && g.salePrice !== null && d.sale_price !== g.salePrice) {
+				issues.push({ line: rec.line, column: "sale_price", key: "bom_price_mixed" });
+				continue;
+			} else if (g.salePrice === null) g.salePrice = d.sale_price;
 			g.lines.push({ line: rec.line, componentId: comp.id, qtyMilli: d.qty, notes: d.notes });
 		}
 
@@ -166,6 +180,11 @@ export const bomsImporter: Importer = {
 		const changed: Group[] = [];
 		for (const g of groups.values()) {
 			const changes = g.existing ? diffBom(g, g.existing, ref) : [];
+			const oldPrice = g.existing ? (priceOf.get(g.existing.id) ?? null) : null;
+			if (g.existing && pricesInFile && oldPrice !== g.salePrice) {
+				const money = (v: number | null) => (v === null ? "∅" : formatCentsInput(v));
+				changes.push(`sale_price: ${money(oldPrice)} → ${money(g.salePrice)}`);
+			}
 			for (const b of toArchive) {
 				if (b.parentPartId === g.parentId && b.code === g.code && g.status === "active") {
 					changes.push(`${b.revision}: active → archived`);
@@ -206,11 +225,13 @@ export const bomsImporter: Importer = {
 				// Non-active statuses first, so an activation never meets another active BoM.
 				const ordered = [...changed].sort((a, b) => Number(a.status === "active") - Number(b.status === "active"));
 				for (const g of ordered) {
+					const price = pricesInFile ? { salePriceCents: g.salePrice } : {};
+					const oldPrice = g.existing ? (priceOf.get(g.existing.id) ?? null) : null;
 					if (g.existing) {
 						stmts.push(
 							db
 								.update(boms)
-								.set({ status: g.status, ...audit })
+								.set({ status: g.status, ...price, ...audit })
 								.where(eq(boms.id, g.existing.id)),
 						);
 						stmts.push(db.delete(bomLines).where(eq(bomLines.bomId, g.existing.id)));
@@ -221,6 +242,7 @@ export const bomsImporter: Importer = {
 								code: g.code,
 								revision: g.revision,
 								status: g.status,
+								...price,
 								createdBy: user,
 								createdAt: now,
 								...audit,
@@ -228,6 +250,21 @@ export const bomsImporter: Importer = {
 						);
 					}
 					const bomId = sql`(SELECT id FROM boms WHERE parent_part_id = ${g.parentId} AND code = ${g.code} AND revision = ${g.revision})`;
+					if (pricesInFile && g.salePrice !== oldPrice) {
+						stmts.push(
+							db.insert(priceHistory).values({
+								partId: g.parentId,
+								kind: "sale",
+								bomId,
+								priceCents: g.salePrice,
+								validFrom: now.slice(0, 10),
+								source: "import",
+								createdBy: user,
+								createdAt: now,
+								...audit,
+							}),
+						);
+					}
 					g.lines.forEach((l, i) => {
 						stmts.push(
 							db.insert(bomLines).values({
@@ -254,11 +291,12 @@ export const bomsImporter: Importer = {
 			code: string;
 			revision: string;
 			status: string;
+			sale_price_cents: number | null;
 			component_ref: string;
 			qty_milli: number;
 			notes: string;
 		}>(sql`
-			SELECT p.ref AS parent_ref, b.code, b.revision, b.status, c.ref AS component_ref, l.qty_milli, l.notes
+			SELECT p.ref AS parent_ref, b.code, b.revision, b.status, b.sale_price_cents, c.ref AS component_ref, l.qty_milli, l.notes
 			FROM bom_lines l
 			JOIN boms b ON b.id = l.bom_id
 			JOIN parts p ON p.id = b.parent_part_id
@@ -269,6 +307,7 @@ export const bomsImporter: Importer = {
 			r.code,
 			r.revision,
 			r.status,
+			r.sale_price_cents === null ? "" : formatCentsInput(r.sale_price_cents, locale),
 			r.component_ref,
 			formatQtyInput(r.qty_milli, locale),
 			r.notes,

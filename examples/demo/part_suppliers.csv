@@ -1,0 +1,10 @@
+ref,supplier,supplier_ref,price,moq,pack_size,lead_days,preferred,notes
+LED-5W-CW,Lumen Parts Co,LM-5W-6500,4.10,10,10,21,yes,Price list 2026
+LED-5W-CW,Quickparts Express,QP-LED5-CW,4.90,1,,3,no,For urgent builds
+LED-5W-WW,Lumen Parts Co,LM-5W-2700,4.25,10,10,21,yes,Price list 2026
+DRV-12V,Lumen Parts Co,DRV-700-12,6.60,5,,21,yes,Price list 2026
+DRV-12V,Quickparts Express,QP-DRV12-700,7.90,1,,3,no,
+SCREW-M3X8,Bolt & Nut Depot,ISO7380-M3x8,0.02,200,100,7,yes,
+SCREW-M3X8,Quickparts Express,QP-M3X8-50,0.04,50,50,2,no,Bags of 50
+PSU-EU-12V,Lumen Parts Co,WA12-EU,5.90,10,,28,yes,
+PSU-EU-12V,Quickparts Express,QP-WA12EU,6.95,1,,3,no,

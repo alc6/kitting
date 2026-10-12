@@ -30,6 +30,14 @@ export type PoStatus = (typeof PO_STATUSES)[number];
 export const BUILD_STATUSES = ["planned", "in_progress", "done", "cancelled"] as const;
 export type BuildStatus = (typeof BUILD_STATUSES)[number];
 
+/** What a price_history row prices: the standard cost, a supplier's offer, or the selling price. */
+export const PRICE_KINDS = ["standard", "purchase", "sale"] as const;
+export type PriceKind = (typeof PRICE_KINDS)[number];
+
+/** Where a price change came from. */
+export const PRICE_SOURCES = ["form", "import", "po", "migration"] as const;
+export type PriceSource = (typeof PRICE_SOURCES)[number];
+
 const inList = (column: string, values: readonly string[]) =>
 	sql.raw(`${column} IN (${values.map((v) => `'${v}'`).join(", ")})`);
 
@@ -56,7 +64,12 @@ export const parts = sqliteTable(
 		unit: text("unit").notNull().default("pcs"),
 		// Standard unit cost. NULL means "unknown" and makes cost roll-ups incomplete.
 		costCents: integer("cost_cents"),
+		// Selling price excluding VAT (products); a BoM variant can override it. NULL = not sold / unknown.
+		salePriceCents: integer("sale_price_cents"),
+		// Preferred supplier: its offer in part_suppliers drives shortages and draft POs.
 		supplierId: integer("supplier_id").references(() => suppliers.id),
+		// Deprecated since migration 0002 (moved to part_suppliers, per supplier). Kept because dropping
+		// them would rebuild this table (CHECK constraint) under four child tables; never read or written.
 		supplierRef: text("supplier_ref").notNull().default(""),
 		moqMilli: integer("moq_milli").notNull().default(0),
 		packSizeMilli: integer("pack_size_milli").notNull().default(0),
@@ -85,6 +98,8 @@ export const boms = sqliteTable(
 		code: text("code").notNull().default("std"),
 		revision: text("revision").notNull().default("Rev1"),
 		status: text("status", { enum: BOM_STATUSES }).notNull().default("draft"),
+		// Selling price of this variant, overriding the part's sale price. NULL = use the part's.
+		salePriceCents: integer("sale_price_cents"),
 		notes: text("notes").notNull().default(""),
 		...audit(),
 	},
@@ -242,6 +257,65 @@ export const buildLines = sqliteTable(
 	(t) => [index("build_lines_build_idx").on(t.buildId), index("build_lines_part_serial_idx").on(t.partId, t.serial)],
 );
 
+// A supplier's offer for a part: its reference, price and ordering terms. One row per (part, supplier);
+// the preferred one is the part's supplier_id.
+export const partSuppliers = sqliteTable(
+	"part_suppliers",
+	{
+		id: integer("id").primaryKey({ autoIncrement: true }),
+		partId: integer("part_id")
+			.notNull()
+			.references(() => parts.id, { onDelete: "cascade" }),
+		supplierId: integer("supplier_id")
+			.notNull()
+			.references(() => suppliers.id),
+		supplierRef: text("supplier_ref").notNull().default(""),
+		// Current unit price from this supplier. NULL = unknown.
+		priceCents: integer("price_cents"),
+		moqMilli: integer("moq_milli").notNull().default(0),
+		packSizeMilli: integer("pack_size_milli").notNull().default(0),
+		leadDays: integer("lead_days").notNull().default(0),
+		notes: text("notes").notNull().default(""),
+		...audit(),
+	},
+	(t) => [
+		uniqueIndex("part_suppliers_part_supplier_unique").on(t.partId, t.supplierId),
+		index("part_suppliers_supplier_idx").on(t.supplierId),
+		check(
+			"part_suppliers_terms_check",
+			sql`(${t.priceCents} IS NULL OR ${t.priceCents} >= 0) AND ${t.moqMilli} >= 0 AND ${t.packSizeMilli} >= 0 AND ${t.leadDays} >= 0`,
+		),
+	],
+);
+
+// Append-only log of price changes (standard cost, supplier offers, selling prices). Never UPDATE or
+// DELETE: a change is a new row. Prices actually paid are in the ledger (receipt moves at the PO price).
+export const priceHistory = sqliteTable(
+	"price_history",
+	{
+		id: integer("id").primaryKey({ autoIncrement: true }),
+		partId: integer("part_id")
+			.notNull()
+			.references(() => parts.id, { onDelete: "cascade" }),
+		kind: text("kind", { enum: PRICE_KINDS }).notNull(),
+		// Set for kind = 'purchase' (whose offer) and for a BoM variant's sale price.
+		supplierId: integer("supplier_id").references(() => suppliers.id),
+		bomId: integer("bom_id").references(() => boms.id, { onDelete: "cascade" }),
+		// The new price. NULL = cleared / unknown.
+		priceCents: integer("price_cents"),
+		validFrom: text("valid_from").notNull(),
+		source: text("source", { enum: PRICE_SOURCES }).notNull(),
+		note: text("note").notNull().default(""),
+		...audit(),
+	},
+	(t) => [
+		index("price_history_part_idx").on(t.partId, t.kind, t.validFrom),
+		check("price_history_kind_check", inList("kind", PRICE_KINDS)),
+		check("price_history_source_check", inList("source", PRICE_SOURCES)),
+		check("price_history_price_check", sql`${t.priceCents} IS NULL OR ${t.priceCents} >= 0`),
+	],
+);
+
 export type Supplier = typeof suppliers.$inferSelect;
 export type Part = typeof parts.$inferSelect;
 export type Bom = typeof boms.$inferSelect;
@@ -251,3 +325,5 @@ export type PurchaseOrder = typeof purchaseOrders.$inferSelect;
 export type PoLine = typeof poLines.$inferSelect;
 export type Build = typeof builds.$inferSelect;
 export type BuildLine = typeof buildLines.$inferSelect;
+export type PartSupplier = typeof partSuppliers.$inferSelect;
+export type PriceHistoryRow = typeof priceHistory.$inferSelect;

@@ -2,6 +2,7 @@ import { createExecutionContext } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { drizzle } from "drizzle-orm/d1";
 import demoBoms from "../examples/demo/boms.csv?raw";
+import demoOffers from "../examples/demo/part_suppliers.csv?raw";
 import demoParts from "../examples/demo/parts.csv?raw";
 import demoStock from "../examples/demo/stock.csv?raw";
 import demoSuppliers from "../examples/demo/suppliers.csv?raw";
@@ -20,6 +21,8 @@ const TABLES = [
 	"po_lines",
 	"purchase_orders",
 	"stock_moves",
+	"price_history",
+	"part_suppliers",
 	"bom_lines",
 	"boms",
 	"parts",
@@ -73,6 +76,10 @@ export async function insertSupplier(name: string): Promise<number> {
 	return r!.id;
 }
 
+/**
+ * Inserts a part. Ordering terms (MOQ, pack size, offer price) belong to a supplier's offer: with any of
+ * them and no `supplierId`, a supplier "Supplier of <ref>" is created as the preferred supplier.
+ */
 export async function insertPart(
 	ref: string,
 	kind: "buy" | "make" | "kit" | "fee" = "buy",
@@ -82,12 +89,15 @@ export async function insertPart(
 		trackSerial?: boolean;
 		moqMilli?: number;
 		packSizeMilli?: number;
+		offerPriceCents?: number | null;
 		unit?: string;
 	} = {},
 ): Promise<number> {
+	const needsOffer = opts.moqMilli !== undefined || opts.packSizeMilli !== undefined || opts.offerPriceCents != null;
+	const supplierId = opts.supplierId ?? (needsOffer ? await insertSupplier(`Supplier of ${ref}`) : null);
 	const r = await env.DB.prepare(
-		`INSERT INTO parts (ref, name, kind, unit, cost_cents, supplier_id, track_serial, moq_milli, pack_size_milli, created_by, updated_by)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'seed', 'seed') RETURNING id`,
+		`INSERT INTO parts (ref, name, kind, unit, cost_cents, supplier_id, track_serial, created_by, updated_by)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, 'seed', 'seed') RETURNING id`,
 	)
 		.bind(
 			ref,
@@ -95,12 +105,18 @@ export async function insertPart(
 			kind,
 			opts.unit ?? "pcs",
 			opts.costCents === undefined ? null : opts.costCents,
-			opts.supplierId ?? null,
+			supplierId,
 			opts.trackSerial ? 1 : 0,
-			opts.moqMilli ?? 0,
-			opts.packSizeMilli ?? 0,
 		)
 		.first<{ id: number }>();
+	if (supplierId !== null) {
+		await env.DB.prepare(
+			`INSERT INTO part_suppliers (part_id, supplier_id, price_cents, moq_milli, pack_size_milli, created_by, updated_by)
+			 VALUES (?, ?, ?, ?, ?, 'seed', 'seed')`,
+		)
+			.bind(r!.id, supplierId, opts.offerPriceCents ?? null, opts.moqMilli ?? 0, opts.packSizeMilli ?? 0)
+			.run();
+	}
 	return r!.id;
 }
 
@@ -115,14 +131,23 @@ export async function insertMove(partId: number, qtyMilli: number, reason = "adj
 // ---------------------------------------------------------------------------
 // Demo dataset fixture
 
-export const DEMO = { suppliers: demoSuppliers, parts: demoParts, boms: demoBoms, stock: demoStock };
+export const DEMO = {
+	suppliers: demoSuppliers,
+	parts: demoParts,
+	part_suppliers: demoOffers,
+	boms: demoBoms,
+	stock: demoStock,
+};
 
 export function testDb(): Db {
 	return drizzle(env.DB, { schema });
 }
 
 /** Imports CSV text through the real importer; throws on validation errors. */
-export async function importCsv(type: "suppliers" | "parts" | "boms" | "stock", csv: string): Promise<void> {
+export async function importCsv(
+	type: "suppliers" | "parts" | "part_suppliers" | "boms" | "stock",
+	csv: string,
+): Promise<void> {
 	const db = testDb();
 	const plan = await planImport({ db, locale: "en" }, type, csv);
 	if (!plan) throw new Error(`no importer ${type}`);
@@ -134,6 +159,7 @@ export async function importCsv(type: "suppliers" | "parts" | "boms" | "stock", 
 export async function loadDemo(opts: { stock?: boolean } = {}): Promise<void> {
 	await importCsv("suppliers", DEMO.suppliers);
 	await importCsv("parts", DEMO.parts);
+	await importCsv("part_suppliers", DEMO.part_suppliers);
 	await importCsv("boms", DEMO.boms);
 	if (opts.stock !== false) await importCsv("stock", DEMO.stock);
 }

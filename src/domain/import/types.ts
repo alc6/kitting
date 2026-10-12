@@ -3,7 +3,7 @@ import type { Statement } from "../../lib/db";
 import type { NumberLocale } from "../../lib/units";
 import type { Db } from "../../types";
 
-export const IMPORT_TYPES = ["suppliers", "parts", "boms", "stock"] as const;
+export const IMPORT_TYPES = ["suppliers", "parts", "part_suppliers", "boms", "stock"] as const;
 export type ImportType = (typeof IMPORT_TYPES)[number];
 
 /** A problem tied to a CSV line. `key` is an i18n error key (Dict.errors). */

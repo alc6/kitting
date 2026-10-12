@@ -33,7 +33,9 @@ Record every new non-obvious choice in `docs/decisions.md`.
   `boms.ts` loads the graph and holds the recursive CTEs (where-used, cycle check on save).
   `stock.ts` (ledger, counts, valuation), `builds.ts` (pick list, completion batch),
   `purchasing.ts` (shortage engine, POs, receipts), `backup.ts` (JSON export/restore),
-  `tree-layout.ts` (pure diagram layout), `search.ts` (global search).
+  `tree-layout.ts` (pure diagram layout), `search.ts` (global search), `offers.ts` (supplier offers),
+  `prices.ts` (price history, dated standard costs), `costing.ts` (pure weighted average replay),
+  `margins.ts` (planned and actual margins).
   `src/domain/import/`: one importer per CSV type, all implementing `Importer`.
 - `src/routes/*.tsx`: one Hono router per area, with its page components.
 - `src/views/`: layout (sidebar, header), shadcn-style components (`ui.tsx`), icons (`icons.tsx`),
@@ -55,6 +57,13 @@ Record every new non-obvious choice in `docs/decisions.md`.
   `updatedAt: nowIso()` and `updatedBy`.
 - `stock_moves` is append-only: never UPDATE or DELETE. Corrections are new moves.
   On-hand = `SUM(qty_milli)` per part.
+- `price_history` is append-only too: every change of a standard cost, an offer price or a selling price
+  adds a row in the same batch (`priceRecordStatement`, or go through `savePartStatements`,
+  `saveOfferStatements`, `setStandardCostStatements`, `bomSalePriceStatements`). Prices paid are the receipt moves.
+- Supplier terms live in `part_suppliers` (one offer per part and supplier); `parts.supplier_id` is the
+  preferred one. `parts.supplier_ref/moq_milli/pack_size_milli/lead_days` are deprecated: never use them.
+- Schema changes must stay additive on D1 (no table rebuilds under child tables): read the generated SQL,
+  and apply it to a local database with data (`wrangler d1 migrations apply DB --local`) before committing.
 - Any write touching several rows goes through `runBatch()` (one D1 batch = one transaction).
 - Raw SQL is fine where Drizzle gets in the way (recursive CTEs), always parameterized
   (Drizzle `sql` template or `prepare().bind()`), never string concatenation of values.

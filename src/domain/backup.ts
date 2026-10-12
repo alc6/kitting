@@ -8,8 +8,10 @@ import {
 	boms,
 	buildLines,
 	builds,
+	partSuppliers,
 	parts,
 	poLines,
+	priceHistory,
 	purchaseOrders,
 	stockMoves,
 	suppliers,
@@ -28,6 +30,8 @@ const TABLES: SQLiteTable[] = [
 	builds,
 	buildLines,
 	stockMoves,
+	partSuppliers,
+	priceHistory,
 ];
 
 export const TABLE_NAMES = TABLES.map((t) => getTableName(t));

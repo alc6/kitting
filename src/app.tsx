@@ -10,6 +10,7 @@ import { bomRoutes } from "./routes/boms";
 import { buildRoutes } from "./routes/builds";
 import { dashboardRoutes } from "./routes/dashboard";
 import { importRoutes } from "./routes/import";
+import { marginRoutes } from "./routes/margins";
 import { partRoutes } from "./routes/parts";
 import { purchasingRoutes } from "./routes/purchasing";
 import { searchRoutes } from "./routes/search";
@@ -81,6 +82,7 @@ export function createApp() {
 	app.route("/stock", stockRoutes);
 	app.route("/purchasing", purchasingRoutes);
 	app.route("/import", importRoutes);
+	app.route("/margins", marginRoutes);
 	app.route("/search", searchRoutes);
 
 	app.notFound((c) => (c.var.t ? notFound(c) : c.text("Not found", 404)));

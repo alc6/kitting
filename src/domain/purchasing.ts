@@ -1,7 +1,16 @@
 // Purchasing: shortage engine, purchase orders and receipts.
 import { and, asc, desc, eq, inArray, type SQL, sql } from "drizzle-orm";
 import { z } from "zod";
-import { builds, type PoStatus, parts, poLines, purchaseOrders, stockMoves, suppliers } from "../db/schema";
+import {
+	builds,
+	type PoStatus,
+	partSuppliers,
+	parts,
+	poLines,
+	purchaseOrders,
+	stockMoves,
+	suppliers,
+} from "../db/schema";
 import type { Statement } from "../lib/db";
 import { likePattern } from "../lib/sql";
 import { lineCostCents, MILLI, roundOrderQty } from "../lib/units";
@@ -10,6 +19,7 @@ import type { Db } from "../types";
 import { explode, type GraphPart } from "./bom-graph";
 import { loadGraph } from "./boms";
 import { OPEN_STATUSES } from "./builds";
+import { NO_TERMS, type OfferTerms, offersByPart, poUnitPrice } from "./offers";
 import { moveValues, onHandAt } from "./stock";
 
 /** POs whose remaining quantities count as "on order". Drafts count too, so drafting twice never doubles. */
@@ -20,7 +30,11 @@ export const RECEIVABLE_PO_STATUSES: PoStatus[] = ["draft", "sent", "partial"];
 // ---------------------------------------------------------------------------
 // Shortages
 
+/** A supplier's offer as seen from the shortage list. */
+export type ShortageOffer = OfferTerms & { supplierId: number; supplierName: string };
+
 export type ShortageLine = {
+	/** The part with its preferred supplier's terms (empty terms without a preferred offer). */
 	part: GraphPart & {
 		supplierId: number | null;
 		supplierRef: string;
@@ -28,6 +42,10 @@ export type ShortageLine = {
 		packSizeMilli: number;
 		leadDays: number;
 	};
+	/** Every supplier offering the part (preferred included), to order from another one. */
+	offers: ShortageOffer[];
+	/** PO unit price from the preferred supplier: its offer price, else the standard cost. */
+	unitPriceCents: number;
 	/** Exploded need of all open builds. */
 	needMilli: number;
 	onHandMilli: number;
@@ -76,7 +94,7 @@ export async function onOrderMap(db: Db): Promise<Map<number, number>> {
  * Parts already below zero count as a need of their deficit.
  */
 export async function computeShortages(db: Db): Promise<Shortages> {
-	const [graph, onHand, onOrder, open, partRows, supplierRows] = await Promise.all([
+	const [graph, onHand, onOrder, open, partRows, offers] = await Promise.all([
 		loadGraph(db),
 		onHandAt(db),
 		onOrderMap(db),
@@ -85,20 +103,10 @@ export async function computeShortages(db: Db): Promise<Shortages> {
 			.from(builds)
 			.where(inArray(builds.status, OPEN_STATUSES))
 			.orderBy(sql`${builds.plannedFor} IS NULL`, asc(builds.plannedFor), asc(builds.id)),
-		db
-			.select({
-				id: parts.id,
-				supplierId: parts.supplierId,
-				supplierRef: parts.supplierRef,
-				moqMilli: parts.moqMilli,
-				packSizeMilli: parts.packSizeMilli,
-				leadDays: parts.leadDays,
-			})
-			.from(parts),
-		db.select({ id: suppliers.id, name: suppliers.name }).from(suppliers),
+		db.select({ id: parts.id, supplierId: parts.supplierId }).from(parts),
+		offersByPart(db),
 	]);
-	const purchasing = new Map(partRows.map((p) => [p.id, p]));
-	const supplierName = new Map(supplierRows.map((s) => [s.id, s.name]));
+	const preferredSupplier = new Map(partRows.map((p) => [p.id, p.supplierId]));
 	const available = new Map(onHand);
 	const need = new Map<number, { qty: number; builds: Set<string> }>();
 	const missing = new Map<number, { qty: number; builds: Set<string> }>();
@@ -124,30 +132,42 @@ export async function computeShortages(db: Db): Promise<Shortages> {
 	const groups = new Map<number | null, SupplierGroup>();
 	for (const [partId, n] of need) {
 		const gp = graph.parts.get(partId);
-		const pp = purchasing.get(partId);
-		if (!gp || !pp) continue;
+		if (!gp) continue;
+		const supplierId = preferredSupplier.get(partId) ?? null;
+		const partOffers = offers.get(partId) ?? [];
+		const preferred = partOffers.find((o) => o.supplierId === supplierId);
+		const terms = preferred ?? NO_TERMS;
 		const stock = onHand.get(partId) ?? 0;
 		const ordered = onOrder.get(partId) ?? 0;
 		const net = n.qty - stock - ordered;
 		if (net <= 0) continue;
 		const line: ShortageLine = {
-			part: { ...gp, ...pp },
+			part: {
+				...gp,
+				supplierId,
+				supplierRef: terms.supplierRef,
+				moqMilli: terms.moqMilli,
+				packSizeMilli: terms.packSizeMilli,
+				leadDays: terms.leadDays,
+			},
+			offers: partOffers,
+			unitPriceCents: poUnitPrice(terms.priceCents, gp.costCents),
 			needMilli: n.qty,
 			onHandMilli: stock,
 			onOrderMilli: ordered,
 			netMilli: net,
-			orderMilli: roundOrderQty(net, pp.moqMilli, pp.packSizeMilli),
+			orderMilli: roundOrderQty(net, terms.moqMilli, terms.packSizeMilli),
 			builds: [...n.builds],
 		};
-		const key = pp.supplierId;
+		const key = supplierId;
 		const g = groups.get(key) ?? {
 			supplierId: key,
-			supplierName: key === null ? "" : (supplierName.get(key) ?? ""),
+			supplierName: preferred?.supplierName ?? "",
 			lines: [],
 			totalCents: 0,
 		};
 		g.lines.push(line);
-		g.totalCents += lineCostCents(line.orderMilli, gp.costCents ?? 0);
+		g.totalCents += lineCostCents(line.orderMilli, line.unitPriceCents);
 		groups.set(key, g);
 	}
 	const sorted = [...groups.values()].sort((a, b) =>
@@ -199,19 +219,56 @@ export async function nextPoNumbers(db: Db, count: number): Promise<string[]> {
 
 const poIdByNumber = (number: string) => sql`(SELECT id FROM purchase_orders WHERE number = ${number})`;
 
-/** Statements creating one draft PO per supplier group (expected date = today + longest lead time). */
+/** What to order from one supplier. */
+export type DraftOrder = {
+	supplierId: number;
+	lines: { partId: number; qtyMilli: number; unitPriceCents: number; leadDays: number }[];
+};
+
+/**
+ * Turns the shortage list into draft orders: lines of the checked supplier groups, each ordered from the
+ * supplier chosen for it (its preferred one by default). A line moved to another supplier is rounded to
+ * that supplier's MOQ and pack size and priced at its offer (else the standard cost). Lines without a
+ * preferred supplier are ordered only when a supplier is chosen for them.
+ */
+export function planDraftOrders(
+	groups: SupplierGroup[],
+	include: (supplierId: number) => boolean,
+	choice: (partId: number) => number | undefined,
+): DraftOrder[] {
+	const orders = new Map<number, DraftOrder>();
+	for (const g of groups) {
+		if (g.supplierId !== null && !include(g.supplierId)) continue;
+		for (const l of g.lines) {
+			const chosen = choice(l.part.id) ?? g.supplierId;
+			const offer = l.offers.find((o) => o.supplierId === chosen);
+			if (chosen === null || !offer) continue;
+			const order = orders.get(chosen) ?? { supplierId: chosen, lines: [] };
+			order.lines.push({
+				partId: l.part.id,
+				qtyMilli: roundOrderQty(l.netMilli, offer.moqMilli, offer.packSizeMilli),
+				unitPriceCents: poUnitPrice(offer.priceCents, l.part.costCents),
+				leadDays: offer.leadDays,
+			});
+			orders.set(chosen, order);
+		}
+	}
+	return [...orders.values()];
+}
+
+/** Statements creating one draft PO per order (expected date = today + longest lead time). */
 export function draftPoStatements(
 	db: Db,
-	groups: SupplierGroup[],
+	orders: DraftOrder[],
 	numbers: string[],
 	user: string,
 	now: string,
 ): Statement[] {
 	const stmts: Statement[] = [];
-	groups.forEach((g, i) => {
+	orders.forEach((g, i) => {
 		const number = numbers[i];
-		if (g.supplierId === null || !number) return;
-		const lead = Math.max(0, ...g.lines.map((l) => l.part.leadDays));
+		if (!number) return;
+		const lead = Math.max(0, ...g.lines.map((l) => l.leadDays));
 		const expected = new Date(Date.parse(now) + lead * 86_400_000).toISOString().slice(0, 10);
 		stmts.push(
 			db.insert(purchaseOrders).values({
@@ -229,9 +286,9 @@ export function draftPoStatements(
 			stmts.push(
 				db.insert(poLines).values({
 					poId: poIdByNumber(number),
-					partId: l.part.id,
-					qtyMilli: l.orderMilli,
-					unitPriceCents: l.part.costCents ?? 0,
+					partId: l.partId,
+					qtyMilli: l.qtyMilli,
+					unitPriceCents: l.unitPriceCents,
 					createdBy: user,
 					updatedBy: user,
 					createdAt: now,
@@ -290,11 +347,16 @@ export async function getPoLines(db: Db, poId: number) {
 			ref: parts.ref,
 			name: parts.name,
 			unit: parts.unit,
-			supplierRef: parts.supplierRef,
+			supplierRef: sql<string>`COALESCE(${partSuppliers.supplierRef}, '')`,
 			trackSerial: parts.trackSerial,
 		})
 		.from(poLines)
 		.innerJoin(parts, eq(poLines.partId, parts.id))
+		.innerJoin(purchaseOrders, eq(poLines.poId, purchaseOrders.id))
+		.leftJoin(
+			partSuppliers,
+			and(eq(partSuppliers.partId, poLines.partId), eq(partSuppliers.supplierId, purchaseOrders.supplierId)),
+		)
 		.where(eq(poLines.poId, poId))
 		.orderBy(asc(poLines.id));
 }

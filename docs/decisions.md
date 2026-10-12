@@ -219,3 +219,57 @@ Short log of choices made where the brief left room. Newest at the bottom of eac
 - **D89. The mobile sidebar is a native popover** (`popover="auto"` opened by `popovertarget`): off-canvas
   with a backdrop, light dismiss and Escape, without JavaScript. From the `lg` breakpoint CSS shows the same
   element as a sticky column, collapsible to icons.
+
+## Pricing
+
+- **D90. Several suppliers per part, one preferred.** Offers live in `part_suppliers` (one row per part and
+  supplier: reference, price, MOQ, pack size, lead time, notes). The preferred supplier is still
+  `parts.supplier_id`: a pointer, so "exactly one preferred" needs no flag or partial index. The old
+  `parts.supplier_ref`, `moq_milli`, `pack_size_milli` and `lead_days` columns are deprecated, never read or
+  written: dropping them would rebuild `parts` (a CHECK constraint covers them) under four child tables on
+  the live D1, which an additive migration avoids. Migration 0002 copies them into one offer per part.
+  An offer price can be unknown: PO lines then use the standard cost, so nothing changes until supplier
+  prices are entered. `parts.csv` keeps its supplier columns, meaning the preferred offer;
+  `part_suppliers.csv` loads the others.
+- **D91. Valuation shows two methods side by side; the company has not chosen one.** *Standard*: on-hand ×
+  the standard cost valid on the "as of" date (make parts at their roll-up with today's BoM structure).
+  *Weighted average* (PMP): a pure replay of the ledger (`src/domain/costing.ts`) with a running quantity
+  and value per part in integer millicents (no rounded average carried over). Receipts enter at the PO
+  price and reset the average on empty or negative stock; build outputs enter at the average value of what
+  the build consumed plus its fees (recorded output value − recorded consumption, so no schema change);
+  other entries at the current average, else the move's recorded cost, else the standard cost. Each method
+  flags its own incomplete rows. Old backups no longer restore after migration 0002 (D53).
+- **D92. Price history is an append-only log** (`price_history`), written in the same batch as every change
+  of a standard cost, an offer price or a selling price (from a form or an import), never updated or
+  deleted. Prices actually paid are not copied: they are the receipt moves (at the PO price). The `po`
+  source is reserved for a future hook that would update an offer from a receipt (not done: offers change
+  only when someone edits or imports them). Before migration 0002
+  nothing was recorded, so each cost's history starts with a seed row dated from the part's last update; an
+  "as of" date before it falls back to that first value, and the valuation page says so.
+- **D93. Selling prices: one per product, optionally overridden per BoM variant**
+  (`parts.sale_price_cents`, `boms.sale_price_cents`; `boms.csv` gains an optional `sale_price` column, one
+  value per BoM). Prices exclude VAT. Margins are shown as an amount, as a rate on the selling price
+  (*taux de marque*) and as a markup on cost (*taux de marge*), in integer basis points. Planned margin uses
+  the standard cost roll-up; actual margin uses completed builds valued at weighted average cost.
+- **D94. Ordering from another supplier is a per-line choice on the shortage list.** Lines stay grouped by
+  preferred supplier; a line moved to another supplier is re-rounded to that supplier's MOQ and pack size
+  and priced at its offer, and lands on that supplier's draft PO. Manual PO lines default to the PO
+  supplier's offer price, else the standard cost.
+- **D95. Margins page.** "Low margin" means a rate on the selling price under 30 % (`LOW_MARGIN_BP`), a
+  starting point to adjust with the company. The stat cards always count every sellable item; the filter
+  (planned only = no completed build yet, built = at least one) narrows the table and its CSV. CSV
+  percentages are plain numbers with one decimal (no `%`), for spreadsheets. A build's actual cost is
+  flagged incomplete when it consumed units whose cost is unknown (they stay "tainted" in the average until
+  the stock is used up or a priced receipt resets it).
+- **D96. Valuation CSV names both methods.** Columns `standard_unit_cost`, `standard_value`,
+  `standard_incomplete` (formerly `unit_cost`, `value`, `incomplete`, same positions) are followed by
+  `average_unit_cost`, `average_value`, `average_incomplete`; the dashboard card says "at standard cost" and
+  shows the weighted average as its hint. On the shortage list, lines without a preferred supplier can now
+  be ordered once a supplier is chosen for them.
+- **D97. Part page pricing.** The Purchasing card gave way to a Suppliers card (one row per offer, with the
+  last price paid) and a Prices card (standard, planned and weighted average costs, selling price, planned
+  margin); the preferred supplier's contact moved to Details. Offers are only for stocked parts (buy, make).
+  Unticking "preferred" never leaves a part without one: switch by making another supplier preferred.
+  "Use average as standard cost" (refused while the average is incomplete) and "Use preferred offer price
+  as standard cost" write the history with a note in the user's language. The price chart is server-rendered
+  SVG: standard cost as a step line, prices paid as dots.

@@ -125,3 +125,24 @@ export function parseBool(input: string): boolean | null {
 	if (["1", "yes", "y", "true", "oui", "o", "x", "on", "t"].includes(v)) return true;
 	return null;
 }
+
+/** round(a × b / c) half away from zero, exact for large values (BigInt intermediate). */
+export function mulDivRound(a: number, b: number, c: number): number {
+	const n = BigInt(a) * BigInt(b);
+	const d = BigInt(c);
+	const q = n / d;
+	const r = n - q * d;
+	const abs = (x: bigint) => (x < 0n ? -x : x);
+	if (abs(r) * 2n >= abs(d)) return Number(q + (n < 0n !== d < 0n ? -1n : 1n));
+	return Number(q);
+}
+
+/** A ratio in basis points (1 % = 100): numerator / denominator × 10 000, rounded; null when undefined. */
+export function basisPoints(numerator: number, denominator: number): number | null {
+	return denominator === 0 ? null : mulDivRound(numerator, 10_000, denominator);
+}
+
+/** 3825 -> "38.3 %" (en) / "38,3 %" (fr). */
+export function formatPercent(bp: number, locale: NumberLocale = "en"): string {
+	return `${formatScaled(roundDiv(bp, 10), 1, { locale, minDecimals: 1, group: true })} %`;
+}
