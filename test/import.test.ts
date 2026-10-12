@@ -1,0 +1,217 @@
+import { describe, expect, it } from "vitest";
+import demoParts from "../examples/demo/parts.csv?raw";
+import demoStock from "../examples/demo/stock.csv?raw";
+import demoSuppliers from "../examples/demo/suppliers.csv?raw";
+import { insertMove, insertPart, insertSupplier, one, postForm, request, rows } from "./helpers";
+
+const NOT_ADMIN = { ADMIN_EMAILS: "someone-else@example.com" };
+
+const preview = (type: string, csv: string, overrides = {}) => postForm(`/import/${type}/preview`, { csv }, overrides);
+const commit = (type: string, csv: string, overrides = {}) => postForm(`/import/${type}/commit`, { csv }, overrides);
+
+async function importOk(type: string, csv: string) {
+	const p = await preview(type, csv);
+	const html = await p.text();
+	expect(p.status, html.match(/<section class="card danger">.*?<\/section>/s)?.[0]).toBe(200);
+	const c = await commit(type, csv);
+	expect(c.status).toBe(303);
+	return c.headers.get("Location")!;
+}
+
+describe("suppliers import", () => {
+	it("previews, commits, then detects updates and unchanged rows", async () => {
+		const csv = "name,email\nAcme,a@acme.example\nBolt Co,\n";
+		const p = await preview("suppliers", csv);
+		const html = await p.text();
+		expect(html).toContain("2 to create, 0 to update, 0 unchanged.");
+		expect(await rows("SELECT * FROM suppliers")).toHaveLength(0);
+		expect(await importOk("suppliers", csv)).toBe("/import?done=suppliers&create=2&update=0");
+		const again = await (await preview("suppliers", "name,email\nACME,new@acme.example\nBolt Co,\n")).text();
+		expect(again).toContain("0 to create, 1 to update, 1 unchanged.");
+		expect(again).toContain("email: a@acme.example → new@acme.example");
+	});
+
+	it("keeps columns that are absent from the file", async () => {
+		await importOk("suppliers", "name,email,phone\nAcme,a@acme.example,+33 1\n");
+		await importOk("suppliers", "name,notes\nAcme,Net 30\n");
+		expect(await one("SELECT email, phone, notes FROM suppliers")).toEqual({
+			email: "a@acme.example",
+			phone: "+33 1",
+			notes: "Net 30",
+		});
+	});
+});
+
+describe("parts import", () => {
+	it("reports row-level errors with line numbers and writes nothing", async () => {
+		await insertSupplier("Acme");
+		const csv = [
+			"ref,name,kind,cost,supplier,moq",
+			"OK-1,Fine,buy,1.5,Acme,10",
+			"BAD-1,Bad kind,gizmo,,,",
+			"BAD-2,Bad cost,buy,abc,,",
+			"BAD-3,Unknown supplier,buy,,Nobody,",
+			"OK-1,Duplicate,buy,,,",
+			",No ref,buy,,,",
+		].join("\n");
+		const res = await preview("parts", csv);
+		expect(res.status).toBe(422);
+		const html = await res.text();
+		expect(html).toContain("5 error(s)");
+		expect(html).toContain("Kind must be buy, make, kit or fee.");
+		expect(html).toContain("Not a valid amount");
+		expect(html).toContain("Unknown supplier “Nobody”");
+		expect(html).toContain("Duplicate of line 2.");
+		expect(html).not.toContain("Confirm import");
+		// Committing anyway is refused and atomic.
+		expect((await commit("parts", csv)).status).toBe(422);
+		expect(await rows("SELECT * FROM parts")).toHaveLength(0);
+	});
+
+	it("upserts by ref and only touches the columns present", async () => {
+		await insertSupplier("Acme");
+		await importOk(
+			"parts",
+			"ref,name,kind,unit,cost,supplier,moq,pack_size,track_serial\nP1,Panel,buy,m,1.50,Acme,10,2.5,no\n",
+		);
+		expect(await one("SELECT name, unit, cost_cents, moq_milli, pack_size_milli FROM parts")).toEqual({
+			name: "Panel",
+			unit: "m",
+			cost_cents: 150,
+			moq_milli: 10000,
+			pack_size_milli: 2500,
+		});
+		const html = await (await preview("parts", "ref,cost\nP1,1.75\n")).text();
+		expect(html).toContain("cost: 1.50 → 1.75");
+		await importOk("parts", "ref,cost\nP1,1.75\n");
+		expect(await one("SELECT name, unit, cost_cents, moq_milli FROM parts")).toEqual({
+			name: "Panel",
+			unit: "m",
+			cost_cents: 175,
+			moq_milli: 10000,
+		});
+	});
+
+	it("accepts French spreadsheets: semicolons, decimal commas, oui/non, Windows-1252", async () => {
+		await insertSupplier("Acme");
+		const text = "ref;name;kind;cost;supplier;track_serial\nP1;Câble éco;buy;0,45;Acme;oui\n";
+		const bytes = new Uint8Array([...text].map((ch) => ({ â: 0xe2, é: 0xe9 })[ch] ?? ch.charCodeAt(0)));
+		const form = new FormData();
+		form.set("file", new File([bytes], "parts.csv", { type: "text/csv" }));
+		const res = await request("/import/parts/preview", { method: "POST", body: form });
+		expect(res.status).toBe(200);
+		await commit("parts", text);
+		expect(await one("SELECT name, cost_cents, track_serial FROM parts")).toEqual({
+			name: "Câble éco",
+			cost_cents: 45,
+			track_serial: 1,
+		});
+	});
+
+	it("rejects refs differing only by case and kit/fee for stocked parts", async () => {
+		const id = await insertPart("ABC-1");
+		await insertMove(id, 1000);
+		const html = await (await preview("parts", "ref,name,kind\nabc-1,X,buy\nABC-1,X,kit\n")).text();
+		expect(html).toContain("Differs only by upper/lower case from existing reference ABC-1.");
+		expect(html).toContain("cannot become a kit or a fee");
+	});
+
+	it("only lets admins commit", async () => {
+		const csv = "ref,name,kind\nP1,Part,buy\n";
+		const html = await (await preview("parts", csv, NOT_ADMIN)).text();
+		expect(html).toContain("Only administrators can confirm an import.");
+		expect(html).not.toContain("Confirm import");
+		expect((await commit("parts", csv, NOT_ADMIN)).status).toBe(403);
+		expect(await rows("SELECT * FROM parts")).toHaveLength(0);
+	});
+
+	it("round-trips through export", async () => {
+		await importOk("suppliers", demoSuppliers);
+		await importOk("parts", demoParts);
+		const res = await request("/import/parts/export.csv");
+		const bytes = new Uint8Array(await res.clone().arrayBuffer());
+		expect([...bytes.slice(0, 3)]).toEqual([0xef, 0xbb, 0xbf]); // BOM so Excel detects UTF-8
+		const exported = await res.text();
+		expect(exported.startsWith("ref,name,kind,unit,cost,supplier")).toBe(true);
+		const html = await (await preview("parts", exported)).text();
+		expect(html).toContain("0 to create, 0 to update, 23 unchanged.");
+		// French export uses semicolons and decimal commas, and re-imports cleanly too.
+		const fr = await (await request("/import/parts/export.csv", { headers: { Cookie: "kitting_lang=fr" } })).text();
+		expect(fr).toContain("LED-5W-CW;LED module 5W cool white;buy;pcs;4,20;Lumen Parts Co");
+		expect(await (await preview("parts", fr)).text()).toContain("0 to create, 0 to update, 23 unchanged.");
+	});
+
+	it("serves templates", async () => {
+		const res = await request("/import/parts/template.csv");
+		expect(res.headers.get("Content-Type")).toContain("text/csv");
+		expect(res.headers.get("Content-Disposition")).toContain("parts-template.csv");
+		const csv = await res.text();
+		expect(csv).toContain("ref,name,kind,unit,cost,supplier,supplier_ref,moq,pack_size,lead_days,track_serial,notes");
+		expect((await request("/import/nope/template.csv")).status).toBe(404);
+	});
+});
+
+describe("stock import", () => {
+	it("posts count moves for the difference only", async () => {
+		const a = await insertPart("A", "buy", { costCents: 120 });
+		await insertPart("B", "buy");
+		await insertMove(a, 4000);
+		await importOk("stock", "ref,qty\nA,10\nB,2.5\n");
+		const moves = await rows<{ ref: string; qty_milli: number; reason: string; unit_cost_cents: number | null }>(
+			"SELECT p.ref, m.qty_milli, m.reason, m.unit_cost_cents FROM stock_moves m JOIN parts p ON p.id = m.part_id WHERE m.reason = 'count' ORDER BY p.ref",
+		);
+		expect(moves).toEqual([
+			{ ref: "A", qty_milli: 6000, reason: "count", unit_cost_cents: 120 },
+			{ ref: "B", qty_milli: 2500, reason: "count", unit_cost_cents: null },
+		]);
+		// Same counts again: nothing to do.
+		expect(await (await preview("stock", "ref,qty\nA,10\nB,2.5\n")).text()).toContain("0 to update, 2 unchanged");
+	});
+
+	it("records one move per serial for serial-tracked parts", async () => {
+		await insertPart("LED", "buy", { trackSerial: true });
+		await importOk("stock", "ref,qty,serial\nLED,1,S1\nLED,1,S2\n");
+		expect(await rows("SELECT serial, qty_milli FROM stock_moves ORDER BY serial")).toEqual([
+			{ serial: "S1", qty_milli: 1000 },
+			{ serial: "S2", qty_milli: 1000 },
+		]);
+	});
+
+	it("rejects unknown refs, kits, bad serial rows and duplicates", async () => {
+		await insertPart("KIT", "kit");
+		await insertPart("PLAIN", "buy");
+		await insertPart("OTHER", "buy");
+		await insertPart("TRACKED", "buy", { trackSerial: true });
+		const csv = ["ref,qty,serial", "NOPE,1,", "KIT,1,", "PLAIN,1,X1", "TRACKED,2,S1", "OTHER,3,", "OTHER,4,"].join(
+			"\n",
+		);
+		const html = await (await preview("stock", csv)).text();
+		expect(html).toContain("Unknown part reference “NOPE”.");
+		expect(html).toContain("kit parts are never stocked.");
+		expect(html).toContain("one row per serial with quantity 1");
+		expect(html).toContain("Duplicate of line 6.");
+		// Errors are listed in file order.
+		const lines = [...html.matchAll(/<td class="num">(\d+)<\/td><td><code>/g)].map((m) => Number(m[1]));
+		expect(lines).toEqual([...lines].sort((a, b) => a - b));
+	});
+});
+
+describe("demo dataset", () => {
+	it("imports cleanly in order", async () => {
+		await importOk("suppliers", demoSuppliers);
+		await importOk("parts", demoParts);
+		await importOk("stock", demoStock);
+		expect(await one("SELECT count(*) AS n FROM suppliers")).toEqual({ n: 5 });
+		expect(await one("SELECT count(*) AS n FROM parts")).toEqual({ n: 23 });
+		expect(
+			await one(
+				"SELECT SUM(qty_milli) AS n FROM stock_moves m JOIN parts p ON p.id = m.part_id WHERE p.ref = 'LED-5W-CW'",
+			),
+		).toEqual({ n: 6000 });
+		expect(
+			await one(
+				"SELECT SUM(qty_milli) AS n FROM stock_moves m JOIN parts p ON p.id = m.part_id WHERE p.ref = 'CABLE-2C'",
+			),
+		).toEqual({ n: 42500 });
+	});
+});

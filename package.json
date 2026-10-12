@@ -1,0 +1,42 @@
+{
+	"name": "kitting",
+	"version": "0.1.0",
+	"private": true,
+	"description": "Lightweight mini-MRP for small hardware makers, on Cloudflare Workers + D1 + Access.",
+	"license": "MIT",
+	"type": "module",
+	"dependencies": {
+		"drizzle-orm": "0.45.4",
+		"hono": "4.13.13",
+		"jose": "6.2.12",
+		"zod": "4.6.7"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "2.5.15",
+		"@cloudflare/vitest-plugin": "1.4.0",
+		"@cloudflare/workers-types": "5.20261012.1",
+		"drizzle-kit": "0.31.11",
+		"htmx.org": "2.0.11",
+		"typescript": "7.0.2",
+		"vitest": "4.1.11",
+		"wrangler": "4.149.0"
+	},
+	"scripts": {
+		"dev": "wrangler dev",
+		"deploy": "wrangler d1 migrations apply DB --remote && wrangler deploy",
+		"config": "node scripts/gen-wrangler-config.mjs",
+		"db:generate": "drizzle-kit generate",
+		"db:migrate:local": "wrangler d1 migrations apply DB --local",
+		"db:migrate:remote": "wrangler d1 migrations apply DB --remote",
+		"cf-typegen": "wrangler types --config wrangler.example.jsonc --include-runtime=false --strict-vars=false",
+		"vendor:htmx": "cp node_modules/htmx.org/dist/htmx.min.js public/static/htmx.min.js",
+		"typecheck": "tsc -p .",
+		"lint": "biome check .",
+		"format": "biome check --write .",
+		"test": "vitest run",
+		"check": "npm run typecheck && npm run lint && npm run test"
+	},
+	"engines": {
+		"node": ">=20"
+	}
+}

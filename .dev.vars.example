@@ -1,0 +1,4 @@
+# Copy to .dev.vars for `npm run dev`. Never used in production.
+ENVIRONMENT=development
+DEV_AUTH_EMAIL=dev@example.com
+ADMIN_EMAILS=dev@example.com

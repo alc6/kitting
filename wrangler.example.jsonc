@@ -1,0 +1,40 @@
+// Template for wrangler.jsonc. Copy it (`cp wrangler.example.jsonc wrangler.jsonc`)
+// and replace every placeholder, or let `npm run config` / the deploy workflow
+// generate wrangler.jsonc from environment variables.
+// The real wrangler.jsonc is gitignored: never commit account-specific values.
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "kitting",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-10-01",
+	// Never expose the Worker on *.workers.dev or preview URLs:
+	// Cloudflare Access only protects the custom domain below.
+	"workers_dev": false,
+	"preview_urls": false,
+	"routes": [{ "pattern": "kitting.example.com", "custom_domain": true }],
+	"assets": { "directory": "./public" },
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "kitting",
+			"database_id": "00000000-0000-0000-0000-000000000000",
+			"migrations_dir": "migrations"
+		}
+	],
+	"vars": {
+		"ENVIRONMENT": "production",
+		// Your Zero Trust team domain, e.g. "acme.cloudflareaccess.com".
+		"TEAM_DOMAIN": "your-team.cloudflareaccess.com",
+		// "Application Audience (AUD) Tag" of the Access application.
+		"ACCESS_AUD": "replace-with-your-access-aud-tag",
+		// Comma-separated emails allowed to import, delete and archive.
+		"ADMIN_EMAILS": "admin@example.com",
+		// "en" or "fr".
+		"DEFAULT_LOCALE": "en",
+		// ISO 4217 code used to display money.
+		"CURRENCY": "EUR",
+		// Only honoured when ENVIRONMENT is "development". Leave empty in production.
+		"DEV_AUTH_EMAIL": ""
+	},
+	"observability": { "enabled": true }
+}

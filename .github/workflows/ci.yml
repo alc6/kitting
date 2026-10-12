@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Lint
+        run: npm run lint
+      - name: Test (workerd + D1)
+        run: npm test
+      - name: Migrations are up to date with the schema
+        run: |
+          npx drizzle-kit generate --name ci-check
+          if [ -n "$(git status --porcelain -- migrations)" ]; then
+            echo "::error::src/db/schema.ts changed without a migration. Run: npm run db:generate"
+            git status --porcelain -- migrations
+            exit 1
+          fi
