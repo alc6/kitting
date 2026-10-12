@@ -11,6 +11,7 @@ import { buildRoutes } from "./routes/builds";
 import { dashboardRoutes } from "./routes/dashboard";
 import { importRoutes } from "./routes/import";
 import { partRoutes } from "./routes/parts";
+import { purchasingRoutes } from "./routes/purchasing";
 import { stockRoutes } from "./routes/stock";
 import { supplierRoutes } from "./routes/suppliers";
 import type { AppEnv } from "./types";
@@ -59,6 +60,7 @@ export function createApp() {
 	app.route("/builds", buildRoutes);
 	app.route("/boms", bomRoutes);
 	app.route("/stock", stockRoutes);
+	app.route("/purchasing", purchasingRoutes);
 	app.route("/import", importRoutes);
 
 	app.notFound((c) => (c.var.t ? notFound(c) : c.text("Not found", 404)));

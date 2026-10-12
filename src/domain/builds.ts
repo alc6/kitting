@@ -230,7 +230,8 @@ export function completionStatements(
 	});
 	for (const r of pick.explosion.requirements) {
 		const cost = calc.part(r.part.id);
-		const unitCents = cost.incomplete && cost.millicents === 0 ? null : centsOf(cost.millicents);
+		// Unknown (or partly unknown) costs are stored as NULL so the as-built record can flag them.
+		const unitCents = cost.incomplete ? null : centsOf(cost.millicents);
 		totalMillicents += calc.extended(r.part.id, r.qtyMilli);
 		const units = r.part.trackSerial ? (pick.serials.get(r.part.id) ?? []) : [];
 		if (units.length > 0) {

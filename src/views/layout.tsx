@@ -25,6 +25,7 @@ export const NAV: { key: NavKey; href: string }[] = [
 	{ key: "builds", href: "/builds" },
 	{ key: "boms", href: "/boms" },
 	{ key: "stock", href: "/stock" },
+	{ key: "purchasing", href: "/purchasing" },
 	{ key: "suppliers", href: "/suppliers" },
 	{ key: "import", href: "/import" },
 ];

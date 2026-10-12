@@ -134,11 +134,11 @@ describe("parts import", () => {
 		const exported = await res.text();
 		expect(exported.startsWith("ref,name,kind,unit,cost,supplier")).toBe(true);
 		const html = await (await preview("parts", exported)).text();
-		expect(html).toContain("0 to create, 0 to update, 23 unchanged.");
+		expect(html).toContain("0 to create, 0 to update, 25 unchanged.");
 		// French export uses semicolons and decimal commas, and re-imports cleanly too.
 		const fr = await (await request("/import/parts/export.csv", { headers: { Cookie: "kitting_lang=fr" } })).text();
 		expect(fr).toContain("LED-5W-CW;LED module 5W cool white;buy;pcs;4,20;Lumen Parts Co");
-		expect(await (await preview("parts", fr)).text()).toContain("0 to create, 0 to update, 23 unchanged.");
+		expect(await (await preview("parts", fr)).text()).toContain("0 to create, 0 to update, 25 unchanged.");
 	});
 
 	it("serves templates", async () => {
@@ -202,7 +202,7 @@ describe("demo dataset", () => {
 		await importOk("parts", demoParts);
 		await importOk("stock", demoStock);
 		expect(await one("SELECT count(*) AS n FROM suppliers")).toEqual({ n: 5 });
-		expect(await one("SELECT count(*) AS n FROM parts")).toEqual({ n: 23 });
+		expect(await one("SELECT count(*) AS n FROM parts")).toEqual({ n: 25 });
 		expect(
 			await one(
 				"SELECT SUM(qty_milli) AS n FROM stock_moves m JOIN parts p ON p.id = m.part_id WHERE p.ref = 'LED-5W-CW'",

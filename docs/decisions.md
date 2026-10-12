@@ -119,6 +119,27 @@ Short log of choices made where the brief left room. Newest at the bottom of eac
 - **D65. Cancelling a build frees its serial** (the unique index ignores cancelled builds — migration 0001).
 - **D66. Build numbers** are sequential `B-0001`, computed as max + 1 with one retry on a unique conflict.
 
+## Purchasing
+
+- **D70. Shortages = all planned and in-progress builds**, exploded in planned-date order with one shared
+  availability map, so sub-assemblies in stock are allotted once. Only `buy` parts are netted:
+  `need − on_hand − on_order`; make parts taken from stock are already covered, and make parts that must be
+  built without an active BoM are listed apart. A buy part below zero is short of its deficit even when no
+  build needs it.
+- **D71. "On order" = remaining quantities of draft, sent and partly received POs.** Counting drafts means
+  "create draft POs" can be clicked twice without ordering twice; cancelling a draft brings the shortage back.
+- **D72. Draft POs** are created per selected supplier at the part's standard cost, rounded to MOQ and pack
+  size, expected date = today + the longest lead time of their lines. Parts without supplier cannot be
+  ordered until a supplier is set (`supplier_id` is required on a PO).
+- **D73. Receiving** is allowed from draft, sent or partial POs (receiving a draft marks it sent). One batch
+  posts the receipt moves at the PO price (one +1 move per serial when serials are entered; their count must
+  match the quantity), increments `received_qty_milli` in SQL and recomputes the PO status from its lines.
+  Over-delivery is accepted.
+- **D74. Short shipments:** a sent or partial PO can be **closed** (status `received`) without moves; its
+  remainder stops counting as on order. Cancelling is only possible before anything is received; deleting is
+  for draft POs and admins only.
+- **D75. Numbers** `PO-0001`… are sequential (max + 1, one retry on a unique conflict).
+
 ## CSV import / export
 
 - **D30. Dialects.** Delimiter auto-detected (`,` `;` tab), decimals with `.` or `,`, UTF-8 with

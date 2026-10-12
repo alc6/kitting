@@ -20,11 +20,13 @@ LAMP-DESK,warm,Rev1,active,FEE-WEEE,1
 HEAD-KIT-CW,std,Rev1,active,LED-5W-CW,1
 HEAD-KIT-CW,std,Rev1,active,HS-ALU-40,1
 HEAD-KIT-CW,std,Rev1,active,DIFF-OPAL,1
-HEAD-KIT-CW,std,Rev1,active,SCREW-M3X8,3
+HEAD-KIT-CW,std,Rev1,active,FIX-KIT-HEAD,1
 HEAD-KIT-WW,std,Rev1,active,LED-5W-WW,1
 HEAD-KIT-WW,std,Rev1,active,HS-ALU-40,1
 HEAD-KIT-WW,std,Rev1,active,DIFF-OPAL,1
-HEAD-KIT-WW,std,Rev1,active,SCREW-M3X8,3
+HEAD-KIT-WW,std,Rev1,active,FIX-KIT-HEAD,1
+FIX-KIT-HEAD,std,Rev1,active,SCREW-M3X8,3
+FIX-KIT-HEAD,std,Rev1,active,WASHER-M3,3
 ARM-ASSY,std,Rev1,active,ARM-TUBE-300,1
 ARM-ASSY,std,Rev1,active,JOINT-KNOB,2
 ARM-ASSY,std,Rev1,active,SPRING-TENS,2

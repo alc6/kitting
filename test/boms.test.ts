@@ -130,8 +130,9 @@ describe("BoM views", () => {
 		const html = await (await request(`/boms/${await bomId("LAMP-DESK")}/tree?qty=2`)).text();
 		expect(html).toContain("ARM-ASSY");
 		expect(html).toContain("<details open=");
-		expect(html).toContain("€37.80");
-		expect(html).toContain("€75.60");
+		expect(html).toContain("€37.83");
+		expect(html).toContain("€75.66");
+		expect(html).toContain("FIX-KIT-HEAD"); // nested kit shown in the tree
 		expect(html).toContain("Incomplete: no cost for MANUAL.");
 	});
 
@@ -175,13 +176,13 @@ describe("boms.csv import", () => {
 
 	it("imports the demo BoMs and is idempotent", async () => {
 		await loadDemo();
-		expect(await one("SELECT count(*) AS n FROM boms")).toEqual({ n: 7 });
-		expect(await one("SELECT count(*) AS n FROM boms WHERE status = 'active'")).toEqual({ n: 6 });
+		expect(await one("SELECT count(*) AS n FROM boms")).toEqual({ n: 8 });
+		expect(await one("SELECT count(*) AS n FROM boms WHERE status = 'active'")).toEqual({ n: 7 });
 		const html = await (await preview(DEMO.boms)).text();
-		expect(html).toContain("0 to create, 0 to update, 7 unchanged.");
+		expect(html).toContain("0 to create, 0 to update, 8 unchanged.");
 		const exported = await (await request("/import/boms/export.csv")).text();
 		expect(exported.startsWith("parent_ref,code,revision,status,component_ref,qty,notes")).toBe(true);
-		expect(await (await preview(exported)).text()).toContain("0 to create, 0 to update, 7 unchanged.");
+		expect(await (await preview(exported)).text()).toContain("0 to create, 0 to update, 8 unchanged.");
 	});
 
 	it("replaces lines, activates and archives the previous revision", async () => {

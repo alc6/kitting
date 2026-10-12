@@ -48,10 +48,17 @@ After M2 the catalogue and BoMs can be loaded; after M4 real builds can run.
 - [x] Sub-assembly pre-builds (make parts without the final product)
 - [x] Builds list (planned / in progress / done / cancelled)
 
-## M5: Purchasing
+## M5: Purchasing ✅
 
-- [ ] Shortage engine for planned + in-progress builds (need − on-hand − open PO), MOQ/pack rounding, by supplier
-- [ ] "Create draft POs" (one per supplier)
-- [ ] PO edit, mark sent, cancel
-- [ ] Receiving (partial), receipt moves, PO status
-- [ ] Dashboard: shortages, parts below zero / below MOQ, open POs, last builds
+- [x] Shortage engine for planned + in-progress builds (need − on-hand − open PO), MOQ/pack rounding, by supplier
+- [x] "Create draft POs" (one per supplier)
+- [x] PO edit, mark sent, cancel, close short-shipped POs, CSV for the supplier
+- [x] Receiving (partial), receipt moves, PO status
+- [x] Dashboard: shortages, parts below zero / below MOQ, open POs, last builds
+
+## After v1 (ideas, not planned)
+
+- Serial inventory (which serials are in stock) enforced at build time, if the shop starts scanning receipts.
+- Reservations of stock for planned builds; build scheduling.
+- PDF purchase orders; supplier price history.
+- Multi-level "build all missing sub-assemblies" helper from the shortage list.

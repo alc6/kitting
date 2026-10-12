@@ -127,13 +127,16 @@ describe("completing builds", () => {
 		const before = {
 			arms: await onHand("ARM-ASSY"),
 			screws: await onHand("SCREW-M3X8"),
+			washers: await onHand("WASHER-M3"),
 			leds: await onHand("LED-5W-CW"),
 		};
 		const res = await postForm(`/builds/${id}/complete`, fields);
 		expect(res.headers.get("Location")).toBe(`/builds/${id}?ok=completed`);
 		expect(await one("SELECT status FROM builds WHERE id = ?", id)).toEqual({ status: "done" });
 		expect(await onHand("ARM-ASSY")).toBe(before.arms - 2000);
-		expect(await onHand("SCREW-M3X8")).toBe(before.screws - 3000); // head kit only; arms came from stock
+		expect(await onHand("SCREW-M3X8")).toBe(before.screws - 3000); // fixing kit only; arms came from stock
+		expect(await onHand("WASHER-M3")).toBe(before.washers - 3000); // two kit levels down
+		expect(await onHand("FIX-KIT-HEAD")).toBe(0); // kits are never stocked
 		expect(await onHand("LED-5W-CW")).toBe(before.leds - 1000);
 		expect(await onHand("LAMP-DESK")).toBe(1000);
 		expect(await onHand("FEE-WEEE")).toBe(0); // fees are never stocked
@@ -141,7 +144,7 @@ describe("completing builds", () => {
 			"SELECT serial, unit_cost_cents, qty_milli FROM stock_moves WHERE reason = 'build_output' AND ref_id = ?",
 			id,
 		);
-		expect(output).toEqual({ serial: "L-0042", unit_cost_cents: 3780, qty_milli: 1000 }); // frozen as-built cost
+		expect(output).toEqual({ serial: "L-0042", unit_cost_cents: 3783, qty_milli: 1000 }); // frozen as-built cost
 		const lines = await rows<{ ref: string; serial: string | null; qty_milli: number }>(
 			"SELECT p.ref, l.serial, l.qty_milli FROM build_lines l JOIN parts p ON p.id = l.part_id WHERE l.build_id = ? ORDER BY p.ref",
 			id,
@@ -153,6 +156,9 @@ describe("completing builds", () => {
 		});
 		expect(lines.find((l) => l.ref === "ARM-ASSY")).toEqual({ ref: "ARM-ASSY", serial: null, qty_milli: 2000 });
 		expect(lines.map((l) => l.ref)).not.toContain("FEE-WEEE");
+		expect(lines.map((l) => l.ref)).not.toContain("HEAD-KIT-CW");
+		expect(lines.map((l) => l.ref)).not.toContain("FIX-KIT-HEAD");
+		expect(lines.find((l) => l.ref === "WASHER-M3")).toEqual({ ref: "WASHER-M3", serial: null, qty_milli: 3000 });
 		const detail = await (await request(`/builds/${id}`)).text();
 		expect(detail).toContain("As-built record");
 		expect(detail).toContain("CW-24-0003");

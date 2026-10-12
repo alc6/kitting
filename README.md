@@ -6,8 +6,8 @@ stock, purchasing and builds with per-serial traceability.
 It runs entirely on Cloudflare (Workers + D1 + Access): no server to manage, and the free
 tiers cover a small workshop. Deployment is one command.
 
-> **Status:** milestones M1–M4 are done: catalogue, BoMs, stock and builds with per-serial
-> traceability. Purchasing (shortages, POs, receiving) is next. See [docs/plan.md](docs/plan.md).
+> **Status:** v1 is feature-complete (milestones M1–M5): catalogue, BoMs, stock, builds
+> with per-serial traceability, and purchasing. See [docs/plan.md](docs/plan.md).
 
 ## What it does
 
@@ -28,6 +28,11 @@ tiers cover a small workshop. Deployment is one command.
   "build now"), asks one serial per serial-tracked unit, and completion posts everything in one
   transaction. The as-built record answers "what exactly is inside serial #0042", and search
   answers "which build used LED serial X".
+- **Purchasing**: shortages for all planned builds (need − on hand − on order, rounded to MOQ
+  and pack size, grouped by supplier), one-click draft POs per supplier, PO editing, "mark as
+  sent", partial receipts (with serials), closing short-shipped POs, CSV for the supplier.
+- **Dashboard**: shortages, parts below zero or below MOQ, open POs (overdue flagged), planned
+  and last builds, stock value.
 - **CSV import** for suppliers, parts, BoMs and initial stock, with a dry-run preview and
   row-level errors. Nothing is written until you confirm, and the commit is atomic.
   Works with Excel files from French or English locales (`;` or `,`, decimal comma or point).

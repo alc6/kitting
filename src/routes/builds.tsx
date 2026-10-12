@@ -574,6 +574,7 @@ function AsBuilt(props: {
 	qtyMilli: number;
 }) {
 	const { t } = useApp();
+	const incomplete = props.lines.some((l) => l.line.unitCostCents === null);
 	const materials = props.lines.reduce(
 		(s, l) => s + (l.line.unitCostCents === null ? 0 : lineCostCents(l.line.qtyMilli, l.line.unitCostCents)),
 		0,
@@ -636,12 +637,14 @@ function AsBuilt(props: {
 								<td colspan={4}>{t.builds.totalCost}</td>
 								<td class="num">
 									<Money cents={lineCostCents(props.qtyMilli, props.outputCost)} />
+									{incomplete ? <span class="warn"> *</span> : null}
 								</td>
 							</tr>
 						) : null}
 					</tfoot>
 				</table>
 			</div>
+			{incomplete ? <p class="warn small">{t.builds.costIncomplete}</p> : null}
 		</section>
 	);
 }

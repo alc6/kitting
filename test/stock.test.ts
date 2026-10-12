@@ -149,7 +149,7 @@ describe("JSON backup and restore", () => {
 		const json = await backupRes.text();
 		const backup = JSON.parse(json);
 		expect(backup.format).toBe("kitting-backup");
-		expect(backup.tables.parts).toHaveLength(23);
+		expect(backup.tables.parts).toHaveLength(25);
 		const before = await rows("SELECT * FROM stock_moves ORDER BY id");
 
 		// Wreck the data, then restore.
@@ -166,7 +166,7 @@ describe("JSON backup and restore", () => {
 		expect(await one("SELECT name FROM parts WHERE id = ?", await partId("LAMP-DESK"))).toEqual({
 			name: "Modular desk lamp",
 		});
-		expect(await one("SELECT count(*) AS n FROM bom_lines")).toEqual({ n: 37 });
+		expect(await one("SELECT count(*) AS n FROM bom_lines")).toEqual({ n: 39 });
 	});
 
 	it("rejects foreign files, unknown columns and other schema versions; admin only", async () => {

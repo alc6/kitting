@@ -33,14 +33,24 @@ describe("explosion on the demo lamp", () => {
 		const graph = await loadGraph(testDb());
 		const e = explode(graph, await bomId("LAMP-DESK"), 1000);
 		const r = req(e);
-		expect(r["SCREW-M3X8"]).toBe(11_000); // 2 arms x 4 + head kit 3
+		expect(r["SCREW-M3X8"]).toBe(11_000); // 2 arms x 4 + fixing kit 3
+		expect(r["WASHER-M3"]).toBe(3_000);
 		expect(r["CABLE-2C"]).toBe(2_200); // base 1.5 m + 2 arms x 0.35 m
 		expect(r["ARM-TUBE-300"]).toBe(2_000);
 		expect(r["LED-5W-CW"]).toBe(1_000);
-		expect(r["MANUAL"]).toBe(1_000);
+		expect(r.MANUAL).toBe(1_000);
 		expect(r["HEAD-KIT-CW"]).toBeUndefined(); // phantom
+		expect(r["FIX-KIT-HEAD"]).toBeUndefined(); // phantom inside a phantom
 		expect(r["ARM-ASSY"]).toBeUndefined(); // no stock given: everything is built
 		expect(e.fees.map((f) => [f.part.ref, f.qtyMilli])).toEqual([["FEE-WEEE", 1000]]);
+		// Kit inside a kit: both levels explode, the leaves keep their cumulative quantities.
+		const head = e.tree.find((n) => n.part.ref === "HEAD-KIT-CW")!;
+		const fix = head.children.find((n) => n.part.ref === "FIX-KIT-HEAD")!;
+		expect([head.mode, fix.mode, fix.depth]).toEqual(["kit", "kit", 1]);
+		expect(fix.children.map((n) => [n.part.ref, n.qtyMilli])).toEqual([
+			["SCREW-M3X8", 3000],
+			["WASHER-M3", 3000],
+		]);
 		const arm = e.tree.find((n) => n.part.ref === "ARM-ASSY")!;
 		expect(arm.perParentMilli).toBe(2000);
 		const screw = arm.children.find((n) => n.part.ref === "SCREW-M3X8")!;
@@ -171,7 +181,9 @@ describe("cost roll-up", () => {
 		expect(arm).toEqual({ millicents: 453_750, incomplete: false, missing: [] }); // €4.5375
 		expect(centsOf(arm.millicents)).toBe(454);
 		const lamp = calc.bom(await bomId("LAMP-DESK"));
-		expect(centsOf(lamp.millicents)).toBe(3780); // €37.80 without the manual
+		expect(centsOf(lamp.millicents)).toBe(3783); // €37.83 without the manual
+		// Head kit cost rolls up through its nested fixing kit: 4.20 + 1.90 + 0.85 + 3 x 0.02 + 3 x 0.01
+		expect(centsOf(calc.part(await partId("HEAD-KIT-CW")).millicents)).toBe(704);
 		expect(lamp.incomplete).toBe(true);
 		expect(lamp.missing).toEqual([await partId("MANUAL")]);
 	});
@@ -196,16 +208,18 @@ describe("where-used and cycle check (recursive CTEs)", () => {
 		await loadDemo();
 		const rows = await whereUsed(testDb(), await partId("SCREW-M3X8"));
 		const direct = rows.filter((r) => r.depth === 1).map((r) => r.parentRef);
-		expect(direct.sort()).toEqual(["ARM-ASSY", "HEAD-KIT-CW", "HEAD-KIT-WW"]);
+		expect(direct.sort()).toEqual(["ARM-ASSY", "FIX-KIT-HEAD"]);
 		const indirect = rows
 			.filter((r) => r.depth === 2)
 			.map((r) => `${r.parentRef}/${r.code}/${r.revision} via ${r.viaRef}`);
 		expect(indirect.sort()).toEqual([
+			"HEAD-KIT-CW/std/Rev1 via FIX-KIT-HEAD",
+			"HEAD-KIT-WW/std/Rev1 via FIX-KIT-HEAD",
 			"LAMP-DESK/std/Rev2 via ARM-ASSY",
-			"LAMP-DESK/std/Rev2 via HEAD-KIT-CW",
 			"LAMP-DESK/warm/Rev1 via ARM-ASSY",
-			"LAMP-DESK/warm/Rev1 via HEAD-KIT-WW",
 		]);
+		const deepest = rows.filter((r) => r.depth === 3).map((r) => `${r.parentRef}/${r.code} via ${r.viaRef}`);
+		expect(deepest.sort()).toEqual(["LAMP-DESK/std via HEAD-KIT-CW", "LAMP-DESK/warm via HEAD-KIT-WW"]);
 	});
 
 	it("detects cycles through draft and active BoMs", async () => {

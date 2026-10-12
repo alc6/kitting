@@ -907,17 +907,17 @@ input.qty {
 	outline: 3px solid color-mix(in srgb, var(--primary) 45%, transparent);
 }
 
-.depth-1 {
-	padding-left: 1.75rem !important;
+.table td.depth-1 {
+	padding-left: 1.75rem;
 }
 
-.depth-2 {
-	padding-left: 2.75rem !important;
+.table td.depth-2 {
+	padding-left: 2.75rem;
 }
 
-.depth-3,
-.depth-4 {
-	padding-left: 3.75rem !important;
+.table td.depth-3,
+.table td.depth-4 {
+	padding-left: 3.75rem;
 }
 
 .serials {
