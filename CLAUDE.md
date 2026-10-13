@@ -12,6 +12,17 @@ Record every new non-obvious choice in `docs/decisions.md`.
   `.dev.vars.example` (placeholders) are committed.
 - Keep `workers_dev: false` and `preview_urls: false`.
 
+## Agent setup
+
+Before UI work, install the official shadcn/ui agent skill (third-party, so not committed):
+
+```bash
+npx skills add shadcn/ui
+```
+
+It lands in `.claude/skills/shadcn` (gitignored). `skills-lock.json` records the version the project
+was built with; `npx skills update` refreshes it.
+
 ## Commands
 
 - `npm run check`: CSS build + typecheck (`tsc`, TypeScript 7) + lint (Biome) + tests. Run it before committing.
@@ -87,9 +98,8 @@ Record every new non-obvious choice in `docs/decisions.md`.
 
 - Server-rendered Hono JSX. Pages use `page(c, title, body)`; flash messages use
   POST-redirect-GET with `?ok=saved` (see `redirectOk`).
-- Design system: shadcn/ui, ported to Hono JSX (no React). The official skill is in
-  `.claude/skills/shadcn` (`npx skills add shadcn/ui`; `npx skills update` to refresh) and its
-  rules apply: semantic tokens only (`bg-primary`, `text-muted-foreground`, never `text-red-600`),
+- Design system: shadcn/ui, ported to Hono JSX (no React). The official agent skill (see
+  "Agent setup") and its rules apply: semantic tokens only (`bg-primary`, `text-muted-foreground`, never `text-red-600`),
   `gap-*` not `space-y-*`, `size-*`, `truncate`, `cn()` for conditional classes, built-in variants
   before custom classes. Never run `shadcn init`/`add` or add React/Radix: read a component's
   canonical recipe with `npx shadcn@latest view @shadcn/<name>` and port it to `src/views/ui.tsx`.

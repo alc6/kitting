@@ -9,7 +9,7 @@ wrangler.toml
 .DS_Store
 coverage/
 dist/
-.claude/*
-!.claude/skills/
+# Local agent files: preview config and installed skills (see "Agent setup" in CLAUDE.md).
+.claude/
 # Built by `npm run css` from src/styles/app.css.
 public/static/app.css

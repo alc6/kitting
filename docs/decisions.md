@@ -181,9 +181,9 @@ Short log of choices made where the brief left room. Newest at the bottom of eac
   a strict CSP, and every feature works as a plain form. shadcn components are React + Radix: they need
   client-side React and set inline styles, which would mean an SPA and a weaker CSP. Instead,
   `src/views/ui.tsx` ports their anatomy (`data-slot`), variants and Tailwind recipes, read from the
-  registry with `npx shadcn@latest view @shadcn/<name>`. The official agent skill is committed in
-  `.claude/skills/shadcn` (`npx skills add shadcn/ui`, pinned by `skills-lock.json`) for its rules and
-  references; there is deliberately no `components.json` (no React project for `shadcn init`/`add`).
+  registry with `npx shadcn@latest view @shadcn/<name>`. The official agent skill is not committed (third-party
+  content): contributors install it with `npx skills add shadcn/ui` into the gitignored `.claude/skills/shadcn`,
+  and `skills-lock.json` records the version used; there is deliberately no `components.json` (no React project for `shadcn init`/`add`).
 - **D81. Tailwind CSS v4 as a build step.** `@tailwindcss/cli` compiles `src/styles/app.css` (shadcn neutral
   theme in OKLCH, `@theme inline` mapping, base layer) to `public/static/app.css`, still one static file under
   `style-src 'self'`. The output is gitignored and built by `npm run css`, chained in `dev`, `deploy` and

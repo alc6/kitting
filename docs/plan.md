@@ -58,7 +58,7 @@ After M2 the catalogue and BoMs can be loaded; after M4 real builds can run.
 
 ## M6: UI refresh ✅
 
-- [x] shadcn/ui design system on Tailwind CSS v4 (official skill in `.claude/skills/shadcn`), components ported to Hono JSX
+- [x] shadcn/ui design system on Tailwind CSS v4 (official agent skill installed locally, see CLAUDE.md), components ported to Hono JSX
 - [x] Left sidebar (grouped, collapsible to icons, off-canvas on phones), header with breadcrumb and search
 - [x] Light / dark / system theme, stored in a cookie (no flash, no inline script)
 - [x] Every page rebuilt on the components (cards, tables, fields, badges, alerts, empty states, stat cards)
