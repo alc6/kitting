@@ -53,6 +53,7 @@ import type { AppEnv } from "../types";
 import { type AppView, useApp } from "../views/context";
 import { RecordTabs } from "../views/history";
 import { Icon, icons } from "../views/icons";
+import { PartPicker, PartPickerDialog } from "../views/part-picker";
 import { idParam, notFound, nowIso, page, redirectOk, saveChanges, translateErrors } from "../views/render";
 import {
 	Alert,
@@ -769,10 +770,11 @@ function DraftLines(props: {
 					>
 						<ErrorBanner show={Object.keys(props.errors).length > 0} />
 						<div class="grid gap-4 md:grid-cols-[2fr_1fr_1fr_auto] md:items-start">
-							<TextField
+							<PartPicker
 								name="part"
 								label={t.purchasing.part}
-								list="po-parts"
+								listId="po-parts"
+								options={props.options}
 								required
 								values={props.values}
 								errors={props.errors}
@@ -801,12 +803,8 @@ function DraftLines(props: {
 								<Button icon={icons.plus}>{t.purchasing.addLine}</Button>
 							</div>
 						</div>
-						<datalist id="po-parts">
-							{props.options.map((o) => (
-								<option value={o.ref}>{o.name}</option>
-							))}
-						</datalist>
 					</form>
+					<PartPickerDialog name="part" scope={{ kinds: ["buy", "make"] }} />
 				</CardFooter>
 			</Card>
 		</div>

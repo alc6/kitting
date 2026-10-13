@@ -1,6 +1,11 @@
 /** Builds a LIKE pattern for a "contains" search; use with `ESCAPE '\'`. */
 export function likePattern(q: string): string {
-	return `%${q.trim().replace(/[\\%_]/g, (m) => `\\${m}`)}%`;
+	return `%${escapeLike(q.trim())}%`;
+}
+
+/** Escapes `%`, `_` and `\` so a value matches literally in a LIKE with `ESCAPE '\'`. */
+export function escapeLike(value: string): string {
+	return value.replace(/[\\%_]/g, (m) => `\\${m}`);
 }
 
 /** True when a D1 error is a constraint violation (unique / foreign key / check). */

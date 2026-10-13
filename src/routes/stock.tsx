@@ -25,6 +25,7 @@ import { requirePermission } from "../middleware/roles";
 import type { AppEnv } from "../types";
 import { useApp } from "../views/context";
 import { type IconNode, icons } from "../views/icons";
+import { PartPicker, PartPickerDialog } from "../views/part-picker";
 import { nowIso, page, saveChanges, translateErrors } from "../views/render";
 import {
 	Alert,
@@ -232,12 +233,15 @@ function AdjustForm(props: { values: FormValues; errors: FormErrors; options: { 
 						</Alert>
 					) : null}
 					<FieldGroup>
-						<TextField name="part" label={t.stock.part} list="stock-parts" required autofocus {...p} />
-						<datalist id="stock-parts">
-							{props.options.map((o) => (
-								<option value={o.ref}>{o.name}</option>
-							))}
-						</datalist>
+						<PartPicker
+							name="part"
+							label={t.stock.part}
+							listId="stock-parts"
+							options={props.options}
+							required
+							autofocus
+							{...p}
+						/>
 						<div class="grid gap-4 md:grid-cols-2">
 							<TextField name="qty" label={t.stock.qty} hint={t.stock.adjustHint} inputmode="decimal" required {...p} />
 							<TextField name="serial" label={t.stock.serial} hint={t.stock.serialHint} {...p} />
@@ -251,6 +255,7 @@ function AdjustForm(props: { values: FormValues; errors: FormErrors; options: { 
 						</Button>
 					</div>
 				</form>
+				<PartPickerDialog name="part" scope={{ kinds: ["buy", "make"] }} />
 			</CardContent>
 		</Card>
 	);

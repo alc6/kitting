@@ -72,6 +72,7 @@ export function Button(
 		name?: string;
 		value?: string;
 		disabled?: boolean;
+		hidden?: boolean;
 		title?: string;
 		"aria-label"?: string;
 		form?: string;
@@ -735,7 +736,7 @@ export function FieldError(props: { children?: Child; id?: string }) {
 	) : null;
 }
 
-type FieldProps = {
+export type FieldProps = {
 	name: string;
 	label: string;
 	values: FormValues;
@@ -744,7 +745,7 @@ type FieldProps = {
 	required?: boolean;
 };
 
-function FieldWrap(props: FieldProps & { children: Child }) {
+export function FieldWrap(props: FieldProps & { children: Child }) {
 	const error = props.errors[props.name];
 	return (
 		<div

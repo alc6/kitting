@@ -15,6 +15,7 @@ import { historyRoutes } from "./routes/history";
 import { imageRoutes } from "./routes/images";
 import { importRoutes } from "./routes/import";
 import { marginRoutes } from "./routes/margins";
+import { pickerRoutes } from "./routes/part-picker";
 import { partRoutes } from "./routes/parts";
 import { purchasingRoutes } from "./routes/purchasing";
 import { searchRoutes } from "./routes/search";
@@ -82,6 +83,7 @@ export function createApp() {
 
 	app.route("/", dashboardRoutes);
 	app.route("/suppliers", supplierRoutes);
+	app.route("/parts/pick", pickerRoutes);
 	app.route("/parts", imageRoutes);
 	app.route("/parts", partRoutes);
 	app.route("/builds", buildRoutes);

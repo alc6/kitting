@@ -661,6 +661,20 @@ Short log of choices made where the brief left room. Newest at the bottom of eac
   rows left a void under whichever card was shorter (an empty shortage list next to ten alerts). The rail starts at
   `xl` because at `lg` with the sidebar open it is too narrow for a part reference; alert rows stack the quantity
   above the badge for the same reason. Below `xl` the alerts come after the open POs.
+- **D138. A searchable dialog picks the part, the typed field stays.** The forms that take a part (BoM line, new BoM
+  product, PO line, stock adjustment) kept a text input with a `<datalist>`: no search beyond the prefix, no photos,
+  and the whole catalogue in the page. `PartPicker` (`src/views/part-picker.tsx`) keeps that field as the baseline
+  (same name, validation and posts) and adds a "Browse" button that `app.js` reveals, while it drops the input's
+  `list`. The button opens a native `<dialog>` placed after the form (a control inside it would belong to the form
+  and submit it) whose results are loaded by htmx from `GET /parts/pick` (`src/routes/part-picker.tsx`, any
+  signed-in user, no price or cost): `q` on reference and name (case-insensitive, `%`/`_` escaped), exact reference
+  first then prefix then reference, 20 per page, page clamped to the last, one query for the page and one count
+  (`src/domain/part-picker.ts`). The form's rules travel as parameters so the picker never offers a part the form
+  refuses: `kinds` (`buy,make` for the PO line and the adjustment, as `isStocked`; `make,kit` for a new BoM) and
+  `exclude` (a BoM's own product; cycles stay checked on save). The new BoM product is a `<select>` of part ids, not
+  a text input (the MCP tool posts the same field): it stays one, and a pick sets its value from `data-pick-id`.
+  The dialog's own kind filter is a radio group (`kind`) inside `kinds`, never a set of checkboxes, so clearing it
+  cannot widen the form's set. Arrow-key navigation is left out: results are buttons, Tab and Enter work.
 
 - **D139. The Users page shows what each role can do as a matrix generated from the permission table.** The old card
   of four one-line role descriptions could drift from the rules. The matrix lists every action of `PERMISSIONS`,

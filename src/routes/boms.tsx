@@ -60,6 +60,7 @@ import { CostView, StatusBadge } from "../views/bom";
 import { BomDiagram, type DiagramView, diagramTree, treeDepth } from "../views/bom-diagram";
 import { useApp } from "../views/context";
 import { Icon, type IconNode, icons } from "../views/icons";
+import { PartPicker, PartPickerDialog, PartSelectPicker } from "../views/part-picker";
 import { idParam, notFound, nowIso, page, redirectOk, saveChanges, translateErrors } from "../views/render";
 import {
 	Alert,
@@ -369,15 +370,12 @@ function NewBomForm(props: {
 				<CardContent>
 					<ErrorBanner show={Object.keys(props.errors).length > 0} />
 					<FieldGroup>
-						<SelectField
+						<PartSelectPicker
 							name="parent_part_id"
 							label={t.boms.parent}
 							hint={t.boms.parentHint}
 							required
-							options={[
-								{ value: "", label: "—" },
-								...props.parents.map((o) => ({ value: String(o.id), label: `${o.ref} · ${o.name}` })),
-							]}
+							options={props.parents}
 							{...p}
 						/>
 						<div class="grid gap-4 md:grid-cols-2">
@@ -403,6 +401,7 @@ function NewBomForm(props: {
 					</Button>
 				</CardFooter>
 			</form>
+			<PartPickerDialog name="parent_part_id" scope={{ kinds: ["make", "kit"] }} />
 		</Card>
 	);
 }
@@ -674,11 +673,12 @@ function LinesEditor(props: {
 						>
 							<ErrorBanner show={Object.keys(props.errors).length > 0} />
 							<div class="grid gap-3 md:grid-cols-[2fr_1fr_2fr_auto] md:items-end">
-								<TextField
+								<PartPicker
 									name="component"
 									label={t.boms.component}
 									placeholder={t.boms.componentHint}
-									list="part-refs"
+									listId="part-refs"
+									options={props.options}
 									required
 									values={props.values}
 									errors={props.errors}
@@ -694,12 +694,8 @@ function LinesEditor(props: {
 								<TextField name="notes" label={t.common.notes} values={props.values} errors={props.errors} />
 								<Button icon={icons.plus}>{t.boms.addLine}</Button>
 							</div>
-							<datalist id="part-refs">
-								{props.options.map((o) => (
-									<option value={o.ref}>{o.name}</option>
-								))}
-							</datalist>
 						</form>
+						<PartPickerDialog name="component" scope={{ exclude: props.part.id }} />
 					</CardFooter>
 				) : null}
 			</Card>

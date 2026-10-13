@@ -127,6 +127,8 @@ function pages(s: Awaited<ReturnType<typeof seed>>): string[] {
 		"/stock/count",
 		"/stock/adjust",
 		"/search?q=BOX",
+		"/parts/pick",
+		"/parts/pick?q=BOX",
 		"/history",
 		`/history/${s.priced}`,
 		`/parts/${s.box}/history`,

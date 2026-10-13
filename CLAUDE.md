@@ -62,6 +62,8 @@ was built with; `npx skills update` refreshes it.
 - `src/views/`: layout (sidebar, header), shadcn-style components (`ui.tsx`), icons (`icons.tsx`),
   BoM diagram (`bom-diagram.tsx`), time charts (`chart.tsx`), render helpers, view context
   (`useApp()`: locale, theme, sidebar…).
+- Part picker (D138): `PartPicker`/`PartPickerDialog` in `src/views/part-picker.tsx` (dialog after the form, scoped by
+  `kinds`/`exclude` to what the form accepts), results from `GET /parts/pick` (`src/routes/part-picker.tsx`, `src/domain/part-picker.ts`).
 - `src/styles/app.css`: Tailwind source: shadcn tokens (light/dark), base layer, legacy classes.
 - `src/lib/`: units (fixed-point), CSV, validation (zod field builders), SQL helpers, batch.
 - `src/i18n/`: `en.ts` defines the `Dict` type; `fr.ts` must match it (compile error otherwise).

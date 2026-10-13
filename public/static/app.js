@@ -196,6 +196,72 @@
 		}
 	});
 
+	// Part picker (D138): a field with a hidden [data-picker-open] "Browse" button and a <dialog data-part-picker>
+	// next to its form. Where <dialog> works, the button appears and the datalist is dropped (it would fight the
+	// dialog); results are loaded by htmx from /parts/pick. A [data-pick] result writes its reference into the field
+	// (its id for a <select>), fires input and change, closes the dialog and moves on to the next field.
+	const enhancePickers = (root) => {
+		if (!(root instanceof Element || root instanceof Document)) return;
+		for (const button of root.querySelectorAll("[data-picker-open]")) {
+			const dialog = document.getElementById(button.dataset.pickerOpen);
+			if (!(dialog instanceof HTMLDialogElement) || typeof dialog.showModal !== "function") continue;
+			const field = document.getElementById(dialog.dataset.target);
+			if (field instanceof HTMLInputElement) {
+				field.removeAttribute("list");
+				field.autocomplete = "off";
+			}
+			button.hidden = false;
+		}
+	};
+	enhancePickers(document);
+	// The line forms are swapped by htmx: enhance what arrives.
+	document.addEventListener("htmx:load", (event) => enhancePickers(event.target));
+
+	const focusAfter = (target) => {
+		const controls = target.form ? [...target.form.elements] : [];
+		for (const next of controls.slice(controls.indexOf(target) + 1)) {
+			if (
+				!(next instanceof HTMLInputElement || next instanceof HTMLSelectElement || next instanceof HTMLTextAreaElement)
+			)
+				continue;
+			if (next.type === "hidden" || next.disabled) continue;
+			next.focus();
+			return;
+		}
+	};
+
+	document.addEventListener("click", (event) => {
+		if (!(event.target instanceof Element)) return;
+		const open = event.target.closest("[data-picker-open]");
+		if (open instanceof HTMLElement) {
+			const dialog = document.getElementById(open.dataset.pickerOpen);
+			if (!(dialog instanceof HTMLDialogElement) || dialog.open) return;
+			dialog.showModal();
+			const search = dialog.querySelector('input[type="search"]');
+			if (search instanceof HTMLInputElement) {
+				search.focus();
+				// Load the first page (the "search" event is one of the input's htmx triggers).
+				window.htmx?.trigger(search, "search");
+			}
+			return;
+		}
+		const dialog = event.target.closest("dialog[data-part-picker]");
+		// A click on the backdrop lands on the dialog itself.
+		if (event.target === dialog || event.target.closest("[data-picker-close]")) {
+			dialog?.close();
+			return;
+		}
+		const pick = event.target.closest("[data-pick]");
+		if (!(pick instanceof HTMLElement) || !(dialog instanceof HTMLDialogElement)) return;
+		const target = document.getElementById(dialog.dataset.target);
+		if (!(target instanceof HTMLInputElement || target instanceof HTMLSelectElement)) return;
+		target.value = target instanceof HTMLSelectElement ? pick.dataset.pickId : pick.dataset.pick;
+		target.dispatchEvent(new Event("input", { bubbles: true }));
+		target.dispatchEvent(new Event("change", { bubbles: true }));
+		dialog.close();
+		focusAfter(target);
+	});
+
 	// "/" or Ctrl/Cmd+K: jump to the global search.
 	document.addEventListener("keydown", (event) => {
 		const target = event.target;
