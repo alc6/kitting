@@ -14,14 +14,13 @@ export const en = {
 		searchAll: "Search parts, BoMs, builds…",
 		theme: "Theme",
 		themes: { system: "System", light: "Light", dark: "Dark" },
-		administrator: "Administrator",
-		signedIn: "Signed in",
 	},
 	navGroups: {
 		overview: "Overview",
 		catalogue: "Catalogue",
 		operations: "Operations",
 		data: "Data",
+		admin: "Administration",
 	},
 	nav: {
 		dashboard: "Dashboard",
@@ -33,6 +32,7 @@ export const en = {
 		stock: "Stock",
 		import: "Import / Export",
 		margins: "Margins",
+		users: "Users",
 	},
 	common: {
 		search: "Search",
@@ -80,6 +80,7 @@ export const en = {
 		not_positive: "Must be more than zero.",
 		not_integer: "Must be a whole number.",
 		invalid_email: "Not a valid email address.",
+		user_from_config: "This email is in ADMIN_EMAILS: it is always an administrator.",
 		invalid_kind: "Kind must be buy, make, kit or fee.",
 		invalid_bool: "Use yes or no.",
 		invalid_ref: "Use letters, digits and - _ . / only (no spaces).",
@@ -748,6 +749,42 @@ export const en = {
 			"Two methods side by side; neither is the official value. Standard cost: on-hand × the standard cost valid on that date (make parts at their BoM roll-up). Weighted average: the moves ledger replayed at the prices actually paid.",
 		fallbackNote:
 			"Standard costs were only recorded from {date} on: earlier dates use the first known cost of each part.",
+	},
+	roles: {
+		forbidden: "Not allowed",
+		forbiddenHint: "Your role does not allow this. Ask an administrator.",
+		hidden: "Hidden",
+		names: { viewer: "Viewer", operator: "Operator", planner: "Planner", admin: "Administrator" },
+		help: {
+			viewer: "Looks at everything and changes nothing.",
+			operator: "Shop floor: runs builds, adjusts and counts stock, receives deliveries.",
+			planner:
+				"Office: also edits parts, BoMs, suppliers, offers, prices and purchase orders, and exports or previews imports.",
+			admin: "Also confirms imports, deletes, archives, restores backups and manages users.",
+		},
+	},
+	users: {
+		title: "Users",
+		intro:
+			"Cloudflare Access decides who can sign in; this page decides what each person may do. Anyone who signs in without being listed here is a viewer.",
+		email: "Email",
+		role: "Role",
+		listed: "Listed users",
+		add: "Give a role",
+		addHint: "The email the person signs in with. If it is already listed, its role is changed.",
+		save: "Save role",
+		fromConfig: "ADMIN_EMAILS",
+		fromConfigHint: "Always an administrator: change it in the deployment configuration.",
+		remove: "Remove",
+		confirmRemove: "Remove this user? They will be a viewer.",
+		empty: "Nobody is listed yet: everyone who signs in is a viewer.",
+		you: "you",
+		rolesTitle: "What each role can do",
+		costsTitle: "Costs and prices",
+		costsLabel: "Viewers and operators see costs, prices and margins",
+		costsHint:
+			"Planners and administrators always see them. When this is off, the others see “Hidden” instead of any amount, and cannot open margins, valuation or price exports.",
+		costsSave: "Save",
 	},
 };
 

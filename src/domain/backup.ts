@@ -13,8 +13,10 @@ import {
 	poLines,
 	priceHistory,
 	purchaseOrders,
+	settings,
 	stockMoves,
 	suppliers,
+	users,
 } from "../db/schema";
 
 export const BACKUP_FORMAT = "kitting-backup";
@@ -32,6 +34,9 @@ const TABLES: SQLiteTable[] = [
 	stockMoves,
 	partSuppliers,
 	priceHistory,
+	// Roles and admin options: a restore brings back who may do what (ADMIN_EMAILS still apply).
+	users,
+	settings,
 ];
 
 export const TABLE_NAMES = TABLES.map((t) => getTableName(t));

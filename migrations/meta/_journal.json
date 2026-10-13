@@ -29,6 +29,13 @@
       "when": 1791877489907,
       "tag": "0003_part_images",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1791889091911,
+      "tag": "0004_roles",
+      "breakpoints": true
     }
   ]
 }

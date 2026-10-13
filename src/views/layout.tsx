@@ -1,4 +1,5 @@
 import type { Child } from "hono/jsx";
+import { can } from "../domain/permissions";
 import { type Dict, fmt, LOCALES } from "../i18n";
 import { cn } from "../lib/cn";
 import { type AppView, THEMES, useApp } from "./context";
@@ -20,7 +21,8 @@ const HTMX_CONFIG = JSON.stringify({
 });
 
 type NavKey = keyof Dict["nav"];
-type NavItem = { key: NavKey; href: string; icon: IconNode };
+/** `shown` hides an item from users who may not open it (the route refuses them too). */
+type NavItem = { key: NavKey; href: string; icon: IconNode; shown?: (v: AppView) => boolean };
 
 /** Sidebar sections, grouped, in order. */
 export const NAV_GROUPS: { key: keyof Dict["navGroups"]; items: NavItem[] }[] = [
@@ -31,7 +33,7 @@ export const NAV_GROUPS: { key: keyof Dict["navGroups"]; items: NavItem[] }[] = 
 			{ key: "parts", href: "/parts", icon: icons.package },
 			{ key: "boms", href: "/boms", icon: icons.listTree },
 			{ key: "suppliers", href: "/suppliers", icon: icons.factory },
-			{ key: "margins", href: "/margins", icon: icons.chartColumn },
+			{ key: "margins", href: "/margins", icon: icons.chartColumn, shown: (v) => can(v, "costs.view") },
 		],
 	},
 	{
@@ -42,8 +44,19 @@ export const NAV_GROUPS: { key: keyof Dict["navGroups"]; items: NavItem[] }[] = 
 			{ key: "purchasing", href: "/purchasing", icon: icons.shoppingCart },
 		],
 	},
-	{ key: "data", items: [{ key: "import", href: "/import", icon: icons.fileSpreadsheet }] },
+	{
+		key: "data",
+		items: [{ key: "import", href: "/import", icon: icons.fileSpreadsheet, shown: (v) => can(v, "import.preview") }],
+	},
+	{ key: "admin", items: [{ key: "users", href: "/users", icon: icons.users, shown: (v) => can(v, "users.manage") }] },
 ];
+
+/** The sidebar groups and items this user may open; empty groups are dropped. */
+function navFor(view: AppView) {
+	return NAV_GROUPS.map((g) => ({ ...g, items: g.items.filter((i) => !i.shown || i.shown(view)) })).filter(
+		(g) => g.items.length > 0,
+	);
+}
 
 export const NAV: NavItem[] = NAV_GROUPS.flatMap((g) => g.items);
 
@@ -101,7 +114,7 @@ function SegmentedLinks(props: {
 }
 
 function Sidebar(props: { view: AppView }) {
-	const { t, locale, user, isAdmin, path, theme } = props.view;
+	const { t, locale, user, role, path, theme } = props.view;
 	const back = encodeURIComponent(path);
 	return (
 		<aside
@@ -129,7 +142,7 @@ function Sidebar(props: { view: AppView }) {
 				</a>
 			</div>
 			<nav data-slot="sidebar-content" class="flex min-h-0 flex-1 flex-col gap-1 overflow-auto">
-				{NAV_GROUPS.map((group) => (
+				{navFor(props.view).map((group) => (
 					<div data-slot="sidebar-group" class="relative flex w-full min-w-0 flex-col p-2">
 						<div
 							data-slot="sidebar-group-label"
@@ -181,9 +194,7 @@ function Sidebar(props: { view: AppView }) {
 					</span>
 					<span class={cn("grid min-w-0 flex-1 text-left text-sm leading-tight", WHEN_EXPANDED)}>
 						<span class="truncate font-medium">{user}</span>
-						<span class="truncate text-xs text-sidebar-foreground/70">
-							{isAdmin ? t.app.administrator : t.app.signedIn}
-						</span>
+						<span class="truncate text-xs text-sidebar-foreground/70">{t.roles.names[role]}</span>
 					</span>
 				</div>
 			</div>

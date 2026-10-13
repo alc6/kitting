@@ -1,12 +1,13 @@
 import { and, eq, ne, sql } from "drizzle-orm";
 import { Hono } from "hono";
-import { suppliers } from "../db/schema";
+import { type Supplier, suppliers } from "../db/schema";
 import { poUnitPrice, supplierOffers } from "../domain/offers";
+import { can } from "../domain/permissions";
 import { findSupplierByName, getSupplier, listSuppliers, supplierInput, supplierToForm } from "../domain/suppliers";
 import { fmt } from "../i18n";
 import { isConstraintError } from "../lib/sql";
 import { type FieldErrors, validate } from "../lib/validation";
-import { requireAdmin } from "../middleware/auth";
+import { requirePermission } from "../middleware/roles";
 import type { AppEnv } from "../types";
 import { useApp } from "../views/context";
 import { Icon, icons } from "../views/icons";
@@ -21,6 +22,7 @@ import {
 	CardFooter,
 	CardHeader,
 	CardTitle,
+	DetailList,
 	EmptyState,
 	ErrorBanner,
 	FieldGroup,
@@ -48,15 +50,19 @@ export const supplierRoutes = new Hono<AppEnv>();
 type SupplierRow = Awaited<ReturnType<typeof listSuppliers>>[number];
 
 function SupplierList(props: { rows: SupplierRow[]; q: string; ok?: string | undefined }) {
-	const { t } = useApp();
+	const view = useApp();
+	const { t } = view;
+	const canEdit = can(view, "suppliers.edit");
 	return (
 		<>
 			<PageHeader
 				title={t.suppliers.title}
 				actions={
-					<Button href="/suppliers/new" icon={icons.plus}>
-						{t.suppliers.new}
-					</Button>
+					canEdit ? (
+						<Button href="/suppliers/new" icon={icons.plus}>
+							{t.suppliers.new}
+						</Button>
+					) : undefined
 				}
 			/>
 			<Flash ok={props.ok} />
@@ -68,7 +74,7 @@ function SupplierList(props: { rows: SupplierRow[]; q: string; ok?: string | und
 						title={t.suppliers.empty}
 						description={props.q ? t.suppliers.emptyFiltered : t.suppliers.emptyHint}
 					>
-						{props.q ? null : (
+						{props.q || !canEdit ? null : (
 							<Button href="/suppliers/new" icon={icons.plus}>
 								{t.suppliers.new}
 							</Button>
@@ -146,11 +152,30 @@ function SupplierForm(props: {
 	);
 }
 
+/** Read-only contact details, for roles that may not edit suppliers. */
+function SupplierDetails(props: { supplier: Supplier }) {
+	const { t } = useApp();
+	const s = props.supplier;
+	return (
+		<Card>
+			<CardContent>
+				<DetailList
+					items={[
+						{ label: t.suppliers.email, value: s.email ? <a href={`mailto:${s.email}`}>{s.email}</a> : t.common.none },
+						{ label: t.suppliers.phone, value: s.phone || t.common.none },
+						...(s.notes ? [{ label: t.common.notes, value: <span class="whitespace-pre-wrap">{s.notes}</span> }] : []),
+					]}
+				/>
+			</CardContent>
+		</Card>
+	);
+}
+
 type OfferRow = Awaited<ReturnType<typeof supplierOffers>>[number];
 
 /** What this supplier offers: one row per part, with the price a PO would use (D90). */
 function SupplierOffers(props: { offers: OfferRow[] }) {
-	const { t } = useApp();
+	const { t, seeCosts } = useApp();
 	return (
 		<TableCard
 			id="offers"
@@ -169,7 +194,7 @@ function SupplierOffers(props: { offers: OfferRow[] }) {
 						<TableRow>
 							<TableHead>{t.parts.ref}</TableHead>
 							<TableHead>{t.parts.supplierRef}</TableHead>
-							<TableHead class="text-right">{t.parts.offerPrice}</TableHead>
+							{seeCosts ? <TableHead class="text-right">{t.parts.offerPrice}</TableHead> : null}
 							<TableHead class="text-right">{t.parts.moq}</TableHead>
 							<TableHead class="text-right">{t.parts.leadTime}</TableHead>
 							<TableHead>
@@ -189,16 +214,18 @@ function SupplierOffers(props: { offers: OfferRow[] }) {
 									</span>
 								</TableCell>
 								<TableCell class="text-muted-foreground">{o.offer.supplierRef || t.common.none}</TableCell>
-								<TableCell class="text-right whitespace-nowrap">
-									{o.offer.priceCents === null && o.costCents !== null ? (
-										<span class="flex flex-col items-end gap-0.5">
-											<Money cents={poUnitPrice(o.offer.priceCents, o.costCents)} />
-											<span class="text-xs text-muted-foreground">{t.parts.standardCostUsed}</span>
-										</span>
-									) : (
-										<Money cents={o.offer.priceCents} />
-									)}
-								</TableCell>
+								{seeCosts ? (
+									<TableCell class="text-right whitespace-nowrap">
+										{o.offer.priceCents === null && o.costCents !== null ? (
+											<span class="flex flex-col items-end gap-0.5">
+												<Money cents={poUnitPrice(o.offer.priceCents, o.costCents)} />
+												<span class="text-xs text-muted-foreground">{t.parts.standardCostUsed}</span>
+											</span>
+										) : (
+											<Money cents={o.offer.priceCents} />
+										)}
+									</TableCell>
+								) : null}
 								<TableCell class="text-right">
 									{o.offer.moqMilli ? <Qty milli={o.offer.moqMilli} unit={o.unit} /> : t.common.none}
 								</TableCell>
@@ -231,7 +258,7 @@ supplierRoutes.get("/", async (c) => {
 	return page(c, c.var.t.suppliers.title, <SupplierList rows={rows} q={q} ok={c.req.query("ok")} />);
 });
 
-supplierRoutes.get("/new", (c) => {
+supplierRoutes.get("/new", requirePermission("suppliers.edit"), (c) => {
 	const t = c.var.t;
 	return page(
 		c,
@@ -243,7 +270,7 @@ supplierRoutes.get("/new", (c) => {
 	);
 });
 
-supplierRoutes.post("/", async (c) => {
+supplierRoutes.post("/", requirePermission("suppliers.edit"), async (c) => {
 	const t = c.var.t;
 	const body = await c.req.parseBody();
 	const result = validate(supplierInput, body);
@@ -287,7 +314,7 @@ supplierRoutes.get("/:id", async (c) => {
 				title={supplier.name}
 				subtitle={fmt(t.common.updatedBy, { by: supplier.updatedBy, at: supplier.updatedAt.slice(0, 10) })}
 				actions={
-					c.var.isAdmin ? (
+					can(c.var, "suppliers.delete") ? (
 						<PostButton
 							action={`/suppliers/${supplier.id}/delete`}
 							label={t.common.delete}
@@ -301,20 +328,24 @@ supplierRoutes.get("/:id", async (c) => {
 			<Flash ok={c.req.query("ok")} />
 			{c.req.query("err") === "in_use" ? <Alert variant="destructive">{t.errors.in_use}</Alert> : null}
 			<div class="flex flex-col gap-4">
-				<SupplierForm
-					action={`/suppliers/${supplier.id}`}
-					values={supplierToForm(supplier)}
-					errors={{}}
-					submit={t.common.save}
-					title={t.suppliers.edit}
-				/>
+				{can(c.var, "suppliers.edit") ? (
+					<SupplierForm
+						action={`/suppliers/${supplier.id}`}
+						values={supplierToForm(supplier)}
+						errors={{}}
+						submit={t.common.save}
+						title={t.suppliers.edit}
+					/>
+				) : (
+					<SupplierDetails supplier={supplier} />
+				)}
 				<SupplierOffers offers={offers} />
 			</div>
 		</>,
 	);
 });
 
-supplierRoutes.post("/:id", async (c) => {
+supplierRoutes.post("/:id", requirePermission("suppliers.edit"), async (c) => {
 	const t = c.var.t;
 	const id = idParam(c);
 	const supplier = id ? await getSupplier(c.var.db, id) : undefined;
@@ -354,7 +385,7 @@ supplierRoutes.post("/:id", async (c) => {
 	return redirectOk(c, `/suppliers/${supplier.id}`);
 });
 
-supplierRoutes.post("/:id/delete", requireAdmin, async (c) => {
+supplierRoutes.post("/:id/delete", requirePermission("suppliers.delete"), async (c) => {
 	const id = idParam(c);
 	if (!id) return notFound(c);
 	try {

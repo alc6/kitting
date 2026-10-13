@@ -22,6 +22,7 @@ import {
 	serialField,
 } from "../domain/builds";
 import { buildActualCost, marginOf, salePriceOf } from "../domain/margins";
+import { can } from "../domain/permissions";
 import { onHandAt, serialsInStock } from "../domain/stock";
 import { errorText, fmt } from "../i18n";
 import { cn } from "../lib/cn";
@@ -29,6 +30,7 @@ import { runBatch } from "../lib/db";
 import { isConstraintError } from "../lib/sql";
 import { formatMoney, formatPercent, formatQtyInput, lineCostCents, MILLI } from "../lib/units";
 import { type FieldErrors, validate } from "../lib/validation";
+import { requirePermission } from "../middleware/roles";
 import type { AppEnv } from "../types";
 import { useApp } from "../views/context";
 import { Icon, icons } from "../views/icons";
@@ -145,6 +147,7 @@ buildRoutes.get("/", async (c) => {
 	const q = c.req.query("q") ?? "";
 	const status = c.req.query("status") ?? "open";
 	const rows = await listBuilds(c.var.db, { q, status });
+	const canBuild = can(c.var, "builds.plan");
 	return page(
 		c,
 		t.builds.title,
@@ -152,7 +155,7 @@ buildRoutes.get("/", async (c) => {
 			<PageHeader
 				title={t.builds.title}
 				subtitle={t.builds.intro}
-				actions={<LinkButton href="/builds/new" label={t.builds.new} icon={icons.plus} />}
+				actions={canBuild ? <LinkButton href="/builds/new" label={t.builds.new} icon={icons.plus} /> : undefined}
 			/>
 			<Flash ok={c.req.query("ok")} message={c.req.query("ok") === "cancelled" ? t.builds.cancelled : undefined} />
 			<SearchBar action="/builds" q={q}>
@@ -175,7 +178,9 @@ buildRoutes.get("/", async (c) => {
 					</Card>
 				) : (
 					<EmptyState icon={icons.hammer} title={t.builds.noBuilds} description={t.builds.emptyHint}>
-						<LinkButton href="/builds/new" label={t.builds.new} icon={icons.plus} variant="outline" />
+						{canBuild ? (
+							<LinkButton href="/builds/new" label={t.builds.new} icon={icons.plus} variant="outline" />
+						) : null}
 					</EmptyState>
 				)}
 			</div>
@@ -316,7 +321,7 @@ async function newBuildData(c: Context<AppEnv>, partId: number | null) {
 	return { products, product: product?.kind === "make" ? product : undefined, bomOptions };
 }
 
-buildRoutes.get("/new", async (c) => {
+buildRoutes.get("/new", requirePermission("builds.plan"), async (c) => {
 	const t = c.var.t;
 	const q = c.req.query();
 	const partId = /^\d+$/.test(q.part_id ?? q.part ?? "") ? Number(q.part_id ?? q.part) : null;
@@ -338,7 +343,7 @@ buildRoutes.get("/new", async (c) => {
 	);
 });
 
-buildRoutes.post("/", async (c) => {
+buildRoutes.post("/", requirePermission("builds.plan"), async (c) => {
 	const t = c.var.t;
 	const db = c.var.db;
 	const body = await c.req.parseBody();
@@ -406,9 +411,10 @@ buildRoutes.post("/", async (c) => {
 // Detail, pick list, completion
 
 function BuildHeader(props: { data: BuildData }) {
-	const { t } = useApp();
+	const view = useApp();
+	const { t } = view;
 	const { build, part, bom } = props.data;
-	const open = OPEN_STATUSES.includes(build.status);
+	const open = OPEN_STATUSES.includes(build.status) && can(view, "builds.plan");
 	return (
 		<PageHeader
 			title={`${build.number} · ${part.ref}`}
@@ -611,7 +617,8 @@ function PickListForm(props: {
 	values: Record<string, string>;
 	serialHints: Map<number, string[]>;
 }) {
-	const { t, locale } = useApp();
+	const view = useApp();
+	const { t, locale } = view;
 	const { build } = props.data;
 	const { pick } = props;
 	const requirements = pick.explosion.requirements;
@@ -726,11 +733,13 @@ function PickListForm(props: {
 					</CardFooter>
 				) : null}
 			</Card>
-			<div class="sticky bottom-0 z-10 flex flex-wrap items-center justify-end gap-3 border-t bg-background/90 py-4 backdrop-blur print:hidden">
-				<Button size="lg" icon={icons.packageCheck} class="w-full sm:w-auto">
-					{t.builds.complete}
-				</Button>
-			</div>
+			{can(view, "builds.complete") ? (
+				<div class="sticky bottom-0 z-10 flex flex-wrap items-center justify-end gap-3 border-t bg-background/90 py-4 backdrop-blur print:hidden">
+					<Button size="lg" icon={icons.packageCheck} class="w-full sm:w-auto">
+						{t.builds.complete}
+					</Button>
+				</div>
+			) : null}
 		</form>
 	);
 }
@@ -740,7 +749,7 @@ function AsBuilt(props: {
 	outputCost: number | null;
 	qtyMilli: number;
 }) {
-	const { t } = useApp();
+	const { t, seeCosts } = useApp();
 	const incomplete = props.lines.some((l) => l.line.unitCostCents === null);
 	const materials = props.lines.reduce(
 		(s, l) => s + (l.line.unitCostCents === null ? 0 : lineCostCents(l.line.qtyMilli, l.line.unitCostCents)),
@@ -759,8 +768,12 @@ function AsBuilt(props: {
 							<TableHead>{t.builds.component}</TableHead>
 							<TableHead>{t.builds.serial}</TableHead>
 							<TableHead class="text-right">{t.builds.qty}</TableHead>
-							<TableHead class="text-right">{t.builds.unitCost}</TableHead>
-							<TableHead class="text-right">{t.builds.lineCost}</TableHead>
+							{seeCosts ? (
+								<>
+									<TableHead class="text-right">{t.builds.unitCost}</TableHead>
+									<TableHead class="text-right">{t.builds.lineCost}</TableHead>
+								</>
+							) : null}
 						</TableRow>
 					</TableHeader>
 					<TableBody>
@@ -792,37 +805,43 @@ function AsBuilt(props: {
 								<TableCell class="text-right">
 									<Qty milli={line.qtyMilli} unit={unit} />
 								</TableCell>
-								<TableCell class="text-right">
-									<Money cents={line.unitCostCents} />
-								</TableCell>
-								<TableCell class="text-right">
-									{line.unitCostCents === null ? null : (
-										<Money cents={lineCostCents(line.qtyMilli, line.unitCostCents)} />
-									)}
-								</TableCell>
+								{seeCosts ? (
+									<>
+										<TableCell class="text-right">
+											<Money cents={line.unitCostCents} />
+										</TableCell>
+										<TableCell class="text-right">
+											{line.unitCostCents === null ? null : (
+												<Money cents={lineCostCents(line.qtyMilli, line.unitCostCents)} />
+											)}
+										</TableCell>
+									</>
+								) : null}
 							</TableRow>
 						))}
 					</TableBody>
-					<TableFooter>
-						<TableRow>
-							<TableCell colspan={4}>{t.common.total}</TableCell>
-							<TableCell class="text-right">
-								<Money cents={materials} />
-							</TableCell>
-						</TableRow>
-						{props.outputCost !== null ? (
+					{seeCosts ? (
+						<TableFooter>
 							<TableRow>
-								<TableCell colspan={4}>{t.builds.totalCost}</TableCell>
-								<TableCell class="text-right font-semibold">
-									<Money cents={lineCostCents(props.qtyMilli, props.outputCost)} />
-									{incomplete ? <span class="text-warning"> *</span> : null}
+								<TableCell colspan={4}>{t.common.total}</TableCell>
+								<TableCell class="text-right">
+									<Money cents={materials} />
 								</TableCell>
 							</TableRow>
-						) : null}
-					</TableFooter>
+							{props.outputCost !== null ? (
+								<TableRow>
+									<TableCell colspan={4}>{t.builds.totalCost}</TableCell>
+									<TableCell class="text-right font-semibold">
+										<Money cents={lineCostCents(props.qtyMilli, props.outputCost)} />
+										{incomplete ? <span class="text-warning"> *</span> : null}
+									</TableCell>
+								</TableRow>
+							) : null}
+						</TableFooter>
+					) : null}
 				</Table>
 			</CardContent>
-			{incomplete ? (
+			{seeCosts && incomplete ? (
 				<CardFooter>
 					<Alert variant="warning" class="mb-0">
 						{t.builds.costIncomplete}
@@ -887,17 +906,19 @@ async function renderBuild(
 		);
 		body = (
 			<>
-				<EditCard
-					data={data}
-					values={
-						opts.editValues ?? {
-							serial: build.serial ?? "",
-							planned_for: build.plannedFor ?? "",
-							notes: build.notes,
+				{can(c.var, "builds.plan") ? (
+					<EditCard
+						data={data}
+						values={
+							opts.editValues ?? {
+								serial: build.serial ?? "",
+								planned_for: build.plannedFor ?? "",
+								notes: build.notes,
+							}
 						}
-					}
-					errors={translateErrors(c, opts.editErrors ?? {})}
-				/>
+						errors={translateErrors(c, opts.editErrors ?? {})}
+					/>
+				) : null}
 				<PickListForm data={data} pick={pick} values={form} serialHints={hints} />
 			</>
 		);
@@ -922,6 +943,7 @@ async function renderBuild(
 		const margin = marginOf(priceCents, actual?.unitCents ?? null);
 		const low = !margin || actual?.incomplete || (margin.rateBp !== null && margin.rateBp < LOW_MARGIN_BP);
 		const marginStatTone = margin && margin.marginCents < 0 ? "destructive" : low ? "warning" : "default";
+		const costs = done && c.var.seeCosts;
 		stats = (
 			<>
 				{qtyStat}
@@ -936,7 +958,7 @@ async function renderBuild(
 				) : (
 					plannedStat
 				)}
-				{done ? (
+				{costs ? (
 					<StatCard
 						label={t.builds.recordedCost}
 						value={<Money cents={outputCost === null ? null : lineCostCents(build.qtyMilli, outputCost)} />}
@@ -945,7 +967,7 @@ async function renderBuild(
 						tone={incomplete ? "warning" : "default"}
 					/>
 				) : null}
-				{done && actual ? (
+				{costs && actual ? (
 					<StatCard
 						label={t.builds.actualUnitCost}
 						value={<Money cents={actual.unitCents} />}
@@ -954,7 +976,7 @@ async function renderBuild(
 						tone={actual.incomplete ? "warning" : "default"}
 					/>
 				) : null}
-				{done && priceCents !== null ? (
+				{costs && priceCents !== null ? (
 					<StatCard
 						label={t.builds.margin}
 						value={
@@ -1021,7 +1043,7 @@ buildRoutes.get("/:id", async (c) => {
 	return renderBuild(c, data, c.req.query());
 });
 
-buildRoutes.post("/:id", async (c) => {
+buildRoutes.post("/:id", requirePermission("builds.plan"), async (c) => {
 	const data = await loadBuildData(c);
 	if (!data) return notFound(c);
 	const { build, part } = data;
@@ -1063,7 +1085,7 @@ buildRoutes.post("/:id", async (c) => {
 	return redirectOk(c, `/builds/${build.id}`);
 });
 
-buildRoutes.post("/:id/start", async (c) => {
+buildRoutes.post("/:id/start", requirePermission("builds.plan"), async (c) => {
 	const data = await loadBuildData(c);
 	if (!data) return notFound(c);
 	await c.var.db
@@ -1073,7 +1095,7 @@ buildRoutes.post("/:id/start", async (c) => {
 	return redirectOk(c, `/builds/${data.build.id}`, "started");
 });
 
-buildRoutes.post("/:id/cancel", async (c) => {
+buildRoutes.post("/:id/cancel", requirePermission("builds.plan"), async (c) => {
 	const data = await loadBuildData(c);
 	if (!data) return notFound(c);
 	await c.var.db
@@ -1083,7 +1105,7 @@ buildRoutes.post("/:id/cancel", async (c) => {
 	return redirectOk(c, `/builds/${data.build.id}`, "cancelled");
 });
 
-buildRoutes.post("/:id/complete", async (c) => {
+buildRoutes.post("/:id/complete", requirePermission("builds.complete"), async (c) => {
 	const data = await loadBuildData(c);
 	if (!data) return notFound(c);
 	const db = c.var.db;

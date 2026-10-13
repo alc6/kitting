@@ -1,8 +1,22 @@
 import { env } from "cloudflare:workers";
-import { describe, expect, it } from "vitest";
-import { insertMove, insertPart, loadDemo, one, partId, postForm, request, rows, TESTER } from "./helpers";
+import { beforeEach, describe, expect, it } from "vitest";
+import {
+	insertMove,
+	insertPart,
+	loadDemo,
+	NOT_ADMIN,
+	one,
+	partId,
+	postForm,
+	request,
+	rows,
+	setRole,
+	TESTER,
+} from "./helpers";
 
-const NOT_ADMIN = { ADMIN_EMAILS: "someone-else@example.com" };
+// NOT_ADMIN requests run as a planner, so admin-only actions are refused by requireAdmin itself.
+beforeEach(() => setRole("planner"));
+
 const onHand = async (id: number) =>
 	(await one<{ q: number | null }>("SELECT SUM(qty_milli) AS q FROM stock_moves WHERE part_id = ?", id)).q ?? 0;
 

@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
-import { bomId, DEMO, insertPart, loadDemo, one, partId, postForm, request, rows } from "./helpers";
+import { beforeEach, describe, expect, it } from "vitest";
+import { bomId, DEMO, insertPart, loadDemo, NOT_ADMIN, one, partId, postForm, request, rows, setRole } from "./helpers";
 
-const NOT_ADMIN = { ADMIN_EMAILS: "someone-else@example.com" };
+// NOT_ADMIN requests run as a planner, so admin-only actions are refused by requireAdmin itself.
+beforeEach(() => setRole("planner"));
 
 async function createBom(parentId: number, code = "std", revision = "Rev1", copyFrom = "") {
 	const res = await postForm("/boms", {

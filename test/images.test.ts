@@ -1,7 +1,10 @@
 import { env } from "cloudflare:workers";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { MAX_IMAGE_BYTES, sniffImage } from "../src/domain/images";
-import { insertPart, one, postForm, request } from "./helpers";
+import { insertPart, NOT_ADMIN, one, postForm, request, setRole } from "./helpers";
+
+// NOT_ADMIN requests run as a planner, so admin-only actions are refused by requireAdmin itself.
+beforeEach(() => setRole("planner"));
 
 const PNG = new Uint8Array([
 	0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52, 1, 2, 3,
@@ -89,11 +92,9 @@ describe("product images", () => {
 		const id = await insertPart("LAMP-X", "make");
 		await upload(id, PNG);
 		const key = (await imageKey(id)) ?? "";
-		const denied = await postForm(`/parts/${id}/image/delete`, {}, { ADMIN_EMAILS: "other@example.com" });
+		const denied = await postForm(`/parts/${id}/image/delete`, {}, NOT_ADMIN);
 		expect(denied.status).toBe(403);
-		expect(await (await request(`/parts/${id}`, {}, { ADMIN_EMAILS: "other@example.com" })).text()).not.toContain(
-			`/parts/${id}/image/delete`,
-		);
+		expect(await (await request(`/parts/${id}`, {}, NOT_ADMIN)).text()).not.toContain(`/parts/${id}/image/delete`);
 		expect((await postForm(`/parts/${id}/image/delete`, {})).status).toBe(303);
 		expect(await imageKey(id)).toBeNull();
 		expect(await env.IMAGES.head(key)).toBeNull();
@@ -111,9 +112,11 @@ describe("product images", () => {
 		const html = await (await request(`/parts/${id}`, {}, none)).text();
 		expect(html).not.toContain('enctype="multipart/form-data"');
 		expect(html).toContain("Images are not set up");
-		expect(
-			await (await request(`/parts/${id}`, {}, { ...none, ADMIN_EMAILS: "other@example.com" })).text(),
-		).not.toContain("Images are not set up");
+		// The hint is for those who would upload (parts.edit), not for an operator.
+		await setRole("operator");
+		expect(await (await request(`/parts/${id}`, {}, { ...none, ...NOT_ADMIN })).text()).not.toContain(
+			"Images are not set up",
+		);
 		expect((await upload(id, PNG, "photo.png", none)).headers.get("Location")).toBe(`/parts/${id}?err=images_disabled`);
 		expect((await request(`/parts/${id}/image`, {}, none)).status).toBe(404);
 	});

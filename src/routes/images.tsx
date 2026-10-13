@@ -2,7 +2,7 @@
 import { Hono } from "hono";
 import { imagesBucket, readUpload, removeImage, replaceImage } from "../domain/images";
 import { getPart } from "../domain/parts";
-import { requireAdmin } from "../middleware/auth";
+import { requirePermission } from "../middleware/roles";
 import type { AppEnv } from "../types";
 import { idParam, notFound, nowIso, redirectOk } from "../views/render";
 
@@ -30,7 +30,7 @@ imageRoutes.get("/:id/image", async (c) => {
 	});
 });
 
-imageRoutes.post("/:id/image", async (c) => {
+imageRoutes.post("/:id/image", requirePermission("parts.edit"), async (c) => {
 	const id = idParam(c);
 	const part = id ? await getPart(c.var.db, id) : undefined;
 	if (!part) return notFound(c);
@@ -43,7 +43,7 @@ imageRoutes.post("/:id/image", async (c) => {
 	return redirectOk(c, `/parts/${part.id}`);
 });
 
-imageRoutes.post("/:id/image/delete", requireAdmin, async (c) => {
+imageRoutes.post("/:id/image/delete", requirePermission("parts.delete"), async (c) => {
 	const id = idParam(c);
 	const part = id ? await getPart(c.var.db, id) : undefined;
 	if (!part) return notFound(c);

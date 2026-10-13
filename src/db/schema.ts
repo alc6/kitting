@@ -38,6 +38,10 @@ export type PriceKind = (typeof PRICE_KINDS)[number];
 export const PRICE_SOURCES = ["form", "import", "po", "migration"] as const;
 export type PriceSource = (typeof PRICE_SOURCES)[number];
 
+/** What a signed-in user may do, from least to most. Each role can do everything the previous one can. */
+export const ROLES = ["viewer", "operator", "planner", "admin"] as const;
+export type Role = (typeof ROLES)[number];
+
 const inList = (column: string, values: readonly string[]) =>
 	sql.raw(`${column} IN (${values.map((v) => `'${v}'`).join(", ")})`);
 
@@ -316,6 +320,32 @@ export const priceHistory = sqliteTable(
 		check("price_history_source_check", inList("source", PRICE_SOURCES)),
 		check("price_history_price_check", sql`${t.priceCents} IS NULL OR ${t.priceCents} >= 0`),
 	],
+);
+
+// Roles given by admins. Cloudflare Access decides who can sign in; this table decides what they may do.
+// An email without a row is a viewer, and ADMIN_EMAILS are always admins whatever their row says.
+export const users = sqliteTable(
+	"users",
+	{
+		id: integer("id").primaryKey({ autoIncrement: true }),
+		// Lower-cased, as in the Access JWT.
+		email: text("email").notNull(),
+		role: text("role", { enum: ROLES }).notNull(),
+		...audit(),
+	},
+	(t) => [uniqueIndex("users_email_unique").on(t.email), check("users_role_check", inList("role", ROLES))],
+);
+
+// Instance-wide options set by admins, one row per key (see SETTINGS in src/domain/users.ts).
+export const settings = sqliteTable(
+	"settings",
+	{
+		id: integer("id").primaryKey({ autoIncrement: true }),
+		key: text("key").notNull(),
+		value: text("value").notNull(),
+		...audit(),
+	},
+	(t) => [uniqueIndex("settings_key_unique").on(t.key)],
 );
 
 export type Supplier = typeof suppliers.$inferSelect;

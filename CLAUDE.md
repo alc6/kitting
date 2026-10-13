@@ -25,8 +25,10 @@ Record every new non-obvious choice in `docs/decisions.md`.
 
 ## Layout
 
-- `src/app.tsx`: middleware stack (security headers → Access auth → Origin check → locale/db) and route mounting.
-- `src/middleware/`: `auth.ts` (Access JWT, dev bypass, `requireAdmin`), `security.ts` (CSP, CSRF).
+- `src/app.tsx`: middleware stack (security headers → Access auth → Origin check → locale/db → role → access policy)
+  and route mounting.
+- `src/middleware/`: `auth.ts` (Access JWT, dev bypass: who the user is), `roles.tsx` (role loading,
+  `requirePermission(action)`, the startup check that every write route declares one), `security.ts` (CSP, CSRF).
 - `src/db/schema.ts`: Drizzle schema, the single source of truth for tables.
 - `src/domain/`: business logic and queries, framework-free where possible (unit-testable).
   `bom-graph.ts` is pure (explosion, cost roll-up, cycle detection over an in-memory graph);
@@ -36,7 +38,8 @@ Record every new non-obvious choice in `docs/decisions.md`.
   `tree-layout.ts` (pure diagram layout), `search.ts` (global search), `offers.ts` (supplier offers),
   `prices.ts` (price history, dated standard costs), `costing.ts` (pure weighted average replay),
   `margins.ts` (planned and actual margins), `margin-history.ts` (margins over time, replayed from the
-  price history), `images.ts` (product images in R2).
+  price history), `images.ts` (product images in R2), `users.ts` (who has which role, cost visibility option),
+  `permissions.ts` (what each role may do: the permission table, `can()`, cost redaction).
   `src/domain/import/`: one importer per CSV type, all implementing `Importer`.
 - `src/routes/*.tsx`: one Hono router per area, with its page components.
 - `src/views/`: layout (sidebar, header), shadcn-style components (`ui.tsx`), icons (`icons.tsx`),
@@ -108,13 +111,29 @@ Record every new non-obvious choice in `docs/decisions.md`.
 - Tablet-first: controls use `--control-h` (36px with a mouse, 48px on touch screens via
   `@media (pointer: coarse)`); keep touch targets ≥ 48px on touch devices.
 - All user-visible text goes in both dictionaries. No hard-coded strings in components.
-- Destructive actions (import commit, delete, archive) use `requireAdmin` and are only shown to admins.
+- Permissions (D101–D105): roles are viewer < operator < planner < admin, and what each may do is the
+  `PERMISSIONS` table in `src/domain/permissions.ts`, keyed by `area.verb` actions (`stock.adjust`,
+  `purchasing.order`, `costs.view`…), never by URL or role. These names are the future API/MCP scopes.
+  - Check with `can(access, action)`, where access is `{ role, seeCosts }` (`useApp()` in views, `c.var` in
+    handlers): no `atLeast()`, role names or `isAdmin` outside the table.
+  - Every route that changes data declares its action: `xRoutes.post(path, requirePermission("…"), handler)`,
+    or `xRoutes.use("*", requirePermission("…"))` for a whole router. `createApp()` refuses to start if a
+    write route has none. Pages that only some roles may open (forms, cost pages) declare one too.
+  - A new kind of action goes in the table, then in the `CALLS` of `test/permissions.test.ts` (it fails
+    until it is there).
+- Costs, prices, valuations and margins are shown only when `seeCosts` (the cached `can(access,
+  "costs.view")`): drop the column or card, never print an amount outside `Money`/`CostView`.
+  `csvResponse` strips money columns (`MONEY_COLUMNS`) from every CSV; outside HTTP use `redactCosts()`.
+  `test/costs-hidden.test.ts` must list any new page or CSV.
+- Destructive actions (import commit, delete, archive) are admin actions in the table, and only shown to
+  those who `can()` do them.
 
 ## Tests
 
 - Tests call the app through `test/helpers.ts` (`request`, `postForm`), which adds a
   same-origin `Origin` header to POSTs. Each test starts from an empty database.
-- Override env per request to test auth/admin (`{ ADMIN_EMAILS: "other@example.com" }`).
+- Tests run as `TESTER`, an admin through `ADMIN_EMAILS`. For another role: `await setRole("operator")`, then
+  pass `NOT_ADMIN` as env overrides (both in `test/helpers.ts`).
 - Every domain rule (explosion, costs, shortages, completion, receiving, imports) gets tests.
 - The demo dataset is a fixture: `examples/demo/*.csv` must always import cleanly.
 

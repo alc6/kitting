@@ -73,13 +73,7 @@ export const accessAuth = createMiddleware<AppEnv>(async (c, next) => {
 			return c.text("Forbidden: invalid Cloudflare Access token", 403);
 		}
 	}
+	// The role (roles.tsx) is loaded later, once the database is available.
 	c.set("user", email);
-	c.set("isAdmin", parseAdminEmails(c.env.ADMIN_EMAILS).includes(email));
-	await next();
-});
-
-/** Gates destructive actions (import commit, delete, archive) behind ADMIN_EMAILS. */
-export const requireAdmin = createMiddleware<AppEnv>(async (c, next) => {
-	if (!c.var.isAdmin) return c.text(c.var.t?.common.adminOnly ?? "Forbidden", 403);
 	await next();
 });

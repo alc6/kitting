@@ -6,6 +6,7 @@ import demoOffers from "../examples/demo/part_suppliers.csv?raw";
 import demoParts from "../examples/demo/parts.csv?raw";
 import demoStock from "../examples/demo/stock.csv?raw";
 import demoSuppliers from "../examples/demo/suppliers.csv?raw";
+import type { Role } from "../src/db/schema";
 import * as schema from "../src/db/schema";
 import { planImport } from "../src/domain/import";
 import app from "../src/index";
@@ -16,6 +17,8 @@ export const ORIGIN = "https://kitting.example.com";
 export const TESTER = "tester@example.com";
 
 const TABLES = [
+	"users",
+	"settings",
 	"build_lines",
 	"builds",
 	"po_lines",
@@ -118,6 +121,26 @@ export async function insertPart(
 			.run();
 	}
 	return r!.id;
+}
+
+/** Lists `email` in the users table with this role (TESTER by default). */
+export async function setRole(role: Role, email = TESTER): Promise<void> {
+	await env.DB.prepare(
+		`INSERT INTO users (email, role, created_by, updated_by) VALUES (?, ?, 'seed', 'seed')
+		 ON CONFLICT (email) DO UPDATE SET role = excluded.role`,
+	)
+		.bind(email, role)
+		.run();
+}
+
+/** Env override under which TESTER is not in ADMIN_EMAILS: their role then comes from the users table. */
+export const NOT_ADMIN = { ADMIN_EMAILS: "someone-else@example.com" };
+
+/** Lets viewers and operators see costs (the admin option on the users page). */
+export async function letLowerRolesSeeCosts(): Promise<void> {
+	await env.DB.prepare(
+		"INSERT INTO settings (key, value, created_by, updated_by) VALUES ('lower_roles_see_costs', '1', 'seed', 'seed')",
+	).run();
 }
 
 export async function insertMove(partId: number, qtyMilli: number, reason = "adjust", serial: string | null = null) {

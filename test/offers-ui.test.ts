@@ -1,7 +1,19 @@
-import { describe, expect, it } from "vitest";
-import { insertPart, insertSupplier, loadDemo, one, partId, postForm, request, rows } from "./helpers";
+import { beforeEach, describe, expect, it } from "vitest";
+import {
+	insertPart,
+	insertSupplier,
+	loadDemo,
+	NOT_ADMIN,
+	one,
+	partId,
+	postForm,
+	request,
+	rows,
+	setRole,
+} from "./helpers";
 
-const NOT_ADMIN = { ADMIN_EMAILS: "someone-else@example.com" };
+// NOT_ADMIN requests run as a planner, so admin-only actions are refused by requireAdmin itself.
+beforeEach(() => setRole("planner"));
 
 const supplierId = async (name: string) =>
 	(await one<{ id: number }>("SELECT id FROM suppliers WHERE name = ?", name)).id;

@@ -3,6 +3,7 @@ import type { Context } from "hono";
 import { Hono } from "hono";
 import { PO_STATUSES, type PoStatus, parts, poLines, purchaseOrders, suppliers } from "../db/schema";
 import { getOffer, poUnitPrice } from "../domain/offers";
+import { can } from "../domain/permissions";
 import {
 	computeShortages,
 	draftPoStatements,
@@ -38,7 +39,7 @@ import {
 	parseMilli,
 } from "../lib/units";
 import { type FieldErrors, validate } from "../lib/validation";
-import { requireAdmin } from "../middleware/auth";
+import { requirePermission } from "../middleware/roles";
 import type { AppEnv } from "../types";
 import { type AppView, useApp } from "../views/context";
 import { Icon, icons } from "../views/icons";
@@ -173,7 +174,7 @@ function OrderFromSelect(props: { line: ShortageLine }) {
 }
 
 export function ShortageTables(props: { shortages: Shortages; selectable?: boolean }) {
-	const { t } = useApp();
+	const { t, seeCosts } = useApp();
 	const { shortages } = props;
 	return (
 		<>
@@ -205,8 +206,13 @@ export function ShortageTables(props: { shortages: Shortages; selectable?: boole
 								</CardTitle>
 							)}
 							<CardDescription>
-								{fmt(t.purchasing.partCount, { n: g.lines.length })} · {t.purchasing.estimated}:{" "}
-								<Money cents={g.totalCents} />
+								{fmt(t.purchasing.partCount, { n: g.lines.length })}
+								{seeCosts ? (
+									<>
+										{" "}
+										· {t.purchasing.estimated}: <Money cents={g.totalCents} />
+									</>
+								) : null}
 							</CardDescription>
 							{props.selectable && g.supplierId !== null ? (
 								<CardAction>
@@ -230,8 +236,12 @@ export function ShortageTables(props: { shortages: Shortages; selectable?: boole
 										<TableHead class="text-right">{t.purchasing.onOrder}</TableHead>
 										<TableHead class="text-right">{t.purchasing.net}</TableHead>
 										<TableHead class="text-right">{t.purchasing.order}</TableHead>
-										<TableHead class="text-right">{t.purchasing.price}</TableHead>
-										<TableHead class="text-right">{t.purchasing.lineTotal}</TableHead>
+										{seeCosts ? (
+											<>
+												<TableHead class="text-right">{t.purchasing.price}</TableHead>
+												<TableHead class="text-right">{t.purchasing.lineTotal}</TableHead>
+											</>
+										) : null}
 										{choosing ? <TableHead>{t.purchasing.orderFrom}</TableHead> : null}
 										<TableHead>{t.purchasing.builds}</TableHead>
 									</TableRow>
@@ -255,12 +265,16 @@ export function ShortageTables(props: { shortages: Shortages; selectable?: boole
 											<TableCell class="text-right font-semibold">
 												<Qty milli={l.orderMilli} unit={l.part.unit} />
 											</TableCell>
-											<TableCell class="text-right">
-												<Money cents={l.unitPriceCents} />
-											</TableCell>
-											<TableCell class="text-right">
-												<Money cents={lineCostCents(l.orderMilli, l.unitPriceCents)} />
-											</TableCell>
+											{seeCosts ? (
+												<>
+													<TableCell class="text-right">
+														<Money cents={l.unitPriceCents} />
+													</TableCell>
+													<TableCell class="text-right">
+														<Money cents={lineCostCents(l.orderMilli, l.unitPriceCents)} />
+													</TableCell>
+												</>
+											) : null}
 											{choosing ? (
 												<TableCell>
 													{canChoose(g, l) ? (
@@ -287,8 +301,10 @@ purchasingRoutes.get("/", async (c) => {
 	const t = c.var.t;
 	const shortages = await computeShortages(c.var.db);
 	// Lines without a preferred supplier can be ordered too, once a supplier offering them is chosen.
-	const orderable = shortages.groups.some((g) => g.supplierId !== null || g.lines.some((l) => canChoose(g, l)));
-	const choosing = shortages.groups.some((g) => g.lines.some((l) => canChoose(g, l)));
+	const canOrder = can(c.var, "purchasing.order");
+	const orderable =
+		canOrder && shortages.groups.some((g) => g.supplierId !== null || g.lines.some((l) => canChoose(g, l)));
+	const choosing = canOrder && shortages.groups.some((g) => g.lines.some((l) => canChoose(g, l)));
 	return page(
 		c,
 		t.purchasing.title,
@@ -312,7 +328,7 @@ purchasingRoutes.get("/", async (c) => {
 				<EmptyState icon={icons.circleCheck} description={t.purchasing.noShortages} />
 			) : (
 				<form id="draft-pos" method="post" action="/purchasing/draft-pos" class="flex flex-col gap-4">
-					<ShortageTables shortages={shortages} selectable />
+					<ShortageTables shortages={shortages} selectable={canOrder} />
 					{orderable ? (
 						<div class="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-muted/50 px-6 py-4">
 							<p class="text-sm text-muted-foreground">{t.purchasing.createDraftsHint}</p>
@@ -325,7 +341,7 @@ purchasingRoutes.get("/", async (c) => {
 	);
 });
 
-purchasingRoutes.post("/draft-pos", async (c) => {
+purchasingRoutes.post("/draft-pos", requirePermission("purchasing.order"), async (c) => {
 	const db = c.var.db;
 	const body = await c.req.parseBody();
 	const shortages = await computeShortages(db);
@@ -360,6 +376,7 @@ purchasingRoutes.get("/po", async (c) => {
 	const rows = await listPos(c.var.db, { q, status });
 	const today = nowIso().slice(0, 10);
 	const created = c.req.query("created");
+	const canOrder = can(c.var, "purchasing.order");
 	return page(
 		c,
 		t.purchasing.pos,
@@ -367,9 +384,11 @@ purchasingRoutes.get("/po", async (c) => {
 			<PageHeader
 				title={t.purchasing.title}
 				actions={
-					<Button href="/purchasing/po/new" icon={icons.plus}>
-						{t.purchasing.newPo}
-					</Button>
+					canOrder ? (
+						<Button href="/purchasing/po/new" icon={icons.plus}>
+							{t.purchasing.newPo}
+						</Button>
+					) : undefined
 				}
 			/>
 			<PurchasingTabs active="pos" />
@@ -390,9 +409,11 @@ purchasingRoutes.get("/po", async (c) => {
 			<div id="results">
 				{rows.length === 0 ? (
 					<EmptyState icon={icons.receipt} description={t.purchasing.noPos}>
-						<Button href="/purchasing/po/new" variant="outline" icon={icons.plus}>
-							{t.purchasing.newPo}
-						</Button>
+						{canOrder ? (
+							<Button href="/purchasing/po/new" variant="outline" icon={icons.plus}>
+								{t.purchasing.newPo}
+							</Button>
+						) : null}
 					</EmptyState>
 				) : (
 					<Card class="gap-0 overflow-hidden py-0">
@@ -406,7 +427,7 @@ purchasingRoutes.get("/po", async (c) => {
 
 /** The PO list as a bare table (or an empty state); callers put it in a card. */
 export function PoTable(props: { rows: Awaited<ReturnType<typeof listPos>>; today: string }) {
-	const { t } = useApp();
+	const { t, seeCosts } = useApp();
 	if (props.rows.length === 0) return <Empty>{t.purchasing.noPos}</Empty>;
 	return (
 		<Table>
@@ -417,7 +438,7 @@ export function PoTable(props: { rows: Awaited<ReturnType<typeof listPos>>; toda
 					<TableHead>{t.purchasing.status}</TableHead>
 					<TableHead>{t.purchasing.expectedAt}</TableHead>
 					<TableHead class="text-right">{t.purchasing.lines}</TableHead>
-					<TableHead class="text-right">{t.purchasing.total}</TableHead>
+					{seeCosts ? <TableHead class="text-right">{t.purchasing.total}</TableHead> : null}
 				</TableRow>
 			</TableHeader>
 			<TableBody>
@@ -441,9 +462,11 @@ export function PoTable(props: { rows: Awaited<ReturnType<typeof listPos>>; toda
 								) : null}
 							</TableCell>
 							<TableCell class="text-right tabular-nums">{po.lineCount}</TableCell>
-							<TableCell class="text-right">
-								<Money cents={po.totalCents} />
-							</TableCell>
+							{seeCosts ? (
+								<TableCell class="text-right">
+									<Money cents={po.totalCents} />
+								</TableCell>
+							) : null}
 						</TableRow>
 					);
 				})}
@@ -492,7 +515,7 @@ function NewPoForm(props: { values: FormValues; errors: FormErrors; suppliers: {
 	);
 }
 
-purchasingRoutes.get("/po/new", async (c) => {
+purchasingRoutes.get("/po/new", requirePermission("purchasing.order"), async (c) => {
 	const t = c.var.t;
 	return page(
 		c,
@@ -508,7 +531,7 @@ purchasingRoutes.get("/po/new", async (c) => {
 	);
 });
 
-purchasingRoutes.post("/po", async (c) => {
+purchasingRoutes.post("/po", requirePermission("purchasing.order"), async (c) => {
 	const t = c.var.t;
 	const db = c.var.db;
 	const body = await c.req.parseBody();
@@ -565,7 +588,7 @@ const linesTotal = (lines: PoLineRow[]) =>
 
 /** Key figures of a PO: line count, total, expected date and how much has arrived. */
 function PoStats(props: { po: PoData["po"]; lines: PoLineRow[]; today: string }) {
-	const { t } = useApp();
+	const { t, seeCosts } = useApp();
 	const { po, lines } = props;
 	const ordered = lines.reduce((s, l) => s + l.line.qtyMilli, 0);
 	const received = lines.reduce((s, l) => s + Math.min(l.line.receivedQtyMilli, l.line.qtyMilli), 0);
@@ -574,9 +597,11 @@ function PoStats(props: { po: PoData["po"]; lines: PoLineRow[]; today: string })
 	const complete = lines.filter((l) => l.line.receivedQtyMilli >= l.line.qtyMilli).length;
 	const overdue = isOverdue(po.expectedAt, po.status, props.today);
 	return (
-		<div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+		<div class={cn("grid gap-4 sm:grid-cols-2", seeCosts ? "xl:grid-cols-4" : "xl:grid-cols-3")}>
 			<StatCard label={t.purchasing.lines} value={lines.length} icon={icons.list} />
-			<StatCard label={t.purchasing.total} value={<Money cents={linesTotal(lines)} />} icon={icons.coins} />
+			{seeCosts ? (
+				<StatCard label={t.purchasing.total} value={<Money cents={linesTotal(lines)} />} icon={icons.coins} />
+			) : null}
 			<StatCard
 				label={t.purchasing.expectedAt}
 				value={<span class="whitespace-nowrap">{po.expectedAt ?? t.common.none}</span>}
@@ -877,7 +902,7 @@ function ReceiveForm(props: { po: PoData["po"]; lines: PoLineRow[]; values: Form
 }
 
 function ReadOnlyLines(props: { lines: PoLineRow[] }) {
-	const { t } = useApp();
+	const { t, seeCosts } = useApp();
 	return (
 		<Card class="gap-4">
 			<CardHeader>
@@ -891,8 +916,12 @@ function ReadOnlyLines(props: { lines: PoLineRow[] }) {
 							<TableHead>{t.purchasing.part}</TableHead>
 							<TableHead class="text-right">{t.purchasing.qty}</TableHead>
 							<TableHead class="text-right">{t.purchasing.received}</TableHead>
-							<TableHead class="text-right">{t.purchasing.price}</TableHead>
-							<TableHead class="text-right">{t.purchasing.lineTotal}</TableHead>
+							{seeCosts ? (
+								<>
+									<TableHead class="text-right">{t.purchasing.price}</TableHead>
+									<TableHead class="text-right">{t.purchasing.lineTotal}</TableHead>
+								</>
+							) : null}
 						</TableRow>
 					</TableHeader>
 					<TableBody>
@@ -907,23 +936,29 @@ function ReadOnlyLines(props: { lines: PoLineRow[] }) {
 								>
 									<Qty milli={l.line.receivedQtyMilli} unit={l.unit} />
 								</TableCell>
-								<TableCell class="text-right">
-									<Money cents={l.line.unitPriceCents} />
-								</TableCell>
-								<TableCell class="text-right">
-									<Money cents={lineCostCents(l.line.qtyMilli, l.line.unitPriceCents)} />
-								</TableCell>
+								{seeCosts ? (
+									<>
+										<TableCell class="text-right">
+											<Money cents={l.line.unitPriceCents} />
+										</TableCell>
+										<TableCell class="text-right">
+											<Money cents={lineCostCents(l.line.qtyMilli, l.line.unitPriceCents)} />
+										</TableCell>
+									</>
+								) : null}
 							</TableRow>
 						))}
 					</TableBody>
-					<TableFooter>
-						<TableRow>
-							<TableCell colspan={4}>{t.purchasing.total}</TableCell>
-							<TableCell class="text-right">
-								<Money cents={linesTotal(props.lines)} />
-							</TableCell>
-						</TableRow>
-					</TableFooter>
+					{seeCosts ? (
+						<TableFooter>
+							<TableRow>
+								<TableCell colspan={4}>{t.purchasing.total}</TableCell>
+								<TableCell class="text-right">
+									<Money cents={linesTotal(props.lines)} />
+								</TableCell>
+							</TableRow>
+						</TableFooter>
+					) : null}
 				</Table>
 			</CardContent>
 		</Card>
@@ -995,7 +1030,9 @@ async function renderPo(
 	const err = c.req.query("err");
 	const today = nowIso().slice(0, 10);
 	const isDraft = po.status === "draft";
-	const canReceive = RECEIVABLE_PO_STATUSES.includes(po.status) && lines.length > 0;
+	// Planners edit, send, cancel and close orders; operators only receive them.
+	const canEdit = can(c.var, "purchasing.order");
+	const canReceive = can(c.var, "purchasing.receive") && RECEIVABLE_PO_STATUSES.includes(po.status) && lines.length > 0;
 	const anyReceived = lines.some((l) => l.line.receivedQtyMilli > 0);
 	return page(
 		c,
@@ -1024,15 +1061,17 @@ async function renderPo(
 				}
 				actions={
 					<>
-						<Button
-							href={`/purchasing/po/${po.id}/export.csv`}
-							variant="outline"
-							icon={icons.fileSpreadsheet}
-							title={t.purchasing.downloadCsv}
-						>
-							{t.purchasing.exportCsv}
-						</Button>
-						{(po.status === "draft" || po.status === "sent") && !anyReceived ? (
+						{can(c.var, "costs.view") ? (
+							<Button
+								href={`/purchasing/po/${po.id}/export.csv`}
+								variant="outline"
+								icon={icons.fileSpreadsheet}
+								title={t.purchasing.downloadCsv}
+							>
+								{t.purchasing.exportCsv}
+							</Button>
+						) : null}
+						{canEdit && (po.status === "draft" || po.status === "sent") && !anyReceived ? (
 							<PostButton
 								action={`/purchasing/po/${po.id}/cancel`}
 								label={t.purchasing.cancelPo}
@@ -1040,7 +1079,7 @@ async function renderPo(
 								icon={icons.ban}
 							/>
 						) : null}
-						{po.status === "sent" || po.status === "partial" ? (
+						{canEdit && (po.status === "sent" || po.status === "partial") ? (
 							<PostButton
 								action={`/purchasing/po/${po.id}/close`}
 								label={t.purchasing.closePo}
@@ -1048,7 +1087,7 @@ async function renderPo(
 								icon={icons.circleCheck}
 							/>
 						) : null}
-						{c.var.isAdmin && isDraft ? (
+						{can(c.var, "purchasing.delete") && isDraft ? (
 							<PostButton
 								action={`/purchasing/po/${po.id}/delete`}
 								label={t.common.delete}
@@ -1062,7 +1101,7 @@ async function renderPo(
 								{t.purchasing.receive}
 							</Button>
 						) : null}
-						{isDraft ? (
+						{canEdit && isDraft ? (
 							<PostButton
 								action={`/purchasing/po/${po.id}/send`}
 								label={t.purchasing.markSent}
@@ -1077,7 +1116,7 @@ async function renderPo(
 			<Flash ok={ok} message={flash} />
 			{err ? <Alert variant="destructive">{errorText(t, err)}</Alert> : null}
 			<div class="flex flex-col gap-4">
-				{isDraft ? (
+				{isDraft && canEdit ? (
 					<DraftLines
 						po={po}
 						lines={lines}
@@ -1105,7 +1144,7 @@ async function renderPo(
 						</CardContent>
 					</Card>
 				) : null}
-				{po.status !== "cancelled" ? <EditPo po={po} /> : null}
+				{canEdit && po.status !== "cancelled" ? <EditPo po={po} /> : null}
 			</div>
 		</>,
 		status,
@@ -1118,7 +1157,7 @@ purchasingRoutes.get("/po/:id", async (c) => {
 	return renderPo(c, data);
 });
 
-purchasingRoutes.post("/po/:id", async (c) => {
+purchasingRoutes.post("/po/:id", requirePermission("purchasing.order"), async (c) => {
 	const data = await loadPo(c);
 	if (!data) return notFound(c);
 	const v = validate(poEditInput, await c.req.parseBody());
@@ -1131,7 +1170,7 @@ purchasingRoutes.post("/po/:id", async (c) => {
 	return redirectOk(c, `/purchasing/po/${data.po.id}`);
 });
 
-purchasingRoutes.post("/po/:id/lines", async (c) => {
+purchasingRoutes.post("/po/:id/lines", requirePermission("purchasing.order"), async (c) => {
 	const data = await loadPo(c);
 	if (!data) return notFound(c);
 	const db = c.var.db;
@@ -1181,7 +1220,7 @@ async function draftLine(c: Context<AppEnv>) {
 	return line ? { ...data, line } : undefined;
 }
 
-purchasingRoutes.post("/po/:id/lines/:lineId", async (c) => {
+purchasingRoutes.post("/po/:id/lines/:lineId", requirePermission("purchasing.order"), async (c) => {
 	const data = await draftLine(c);
 	if (!data) return notFound(c);
 	if (data.po.status !== "draft") return c.redirect(`/purchasing/po/${data.po.id}?err=po_not_draft`, 303);
@@ -1197,7 +1236,7 @@ purchasingRoutes.post("/po/:id/lines/:lineId", async (c) => {
 	return c.redirect(`/purchasing/po/${data.po.id}`, 303);
 });
 
-purchasingRoutes.post("/po/:id/lines/:lineId/delete", async (c) => {
+purchasingRoutes.post("/po/:id/lines/:lineId/delete", requirePermission("purchasing.order"), async (c) => {
 	const data = await draftLine(c);
 	if (!data) return notFound(c);
 	if (data.po.status !== "draft") return c.redirect(`/purchasing/po/${data.po.id}?err=po_not_draft`, 303);
@@ -1205,7 +1244,7 @@ purchasingRoutes.post("/po/:id/lines/:lineId/delete", async (c) => {
 	return c.redirect(`/purchasing/po/${data.po.id}`, 303);
 });
 
-purchasingRoutes.post("/po/:id/send", async (c) => {
+purchasingRoutes.post("/po/:id/send", requirePermission("purchasing.order"), async (c) => {
 	const data = await loadPo(c);
 	if (!data) return notFound(c);
 	const lines = await getPoLines(c.var.db, data.po.id);
@@ -1218,7 +1257,7 @@ purchasingRoutes.post("/po/:id/send", async (c) => {
 	return redirectOk(c, `/purchasing/po/${data.po.id}`, "sent");
 });
 
-purchasingRoutes.post("/po/:id/cancel", async (c) => {
+purchasingRoutes.post("/po/:id/cancel", requirePermission("purchasing.order"), async (c) => {
 	const data = await loadPo(c);
 	if (!data) return notFound(c);
 	const lines = await getPoLines(c.var.db, data.po.id);
@@ -1233,7 +1272,7 @@ purchasingRoutes.post("/po/:id/cancel", async (c) => {
 });
 
 /** Closes a short-shipped PO: the remaining quantities are no longer expected (no stock move). */
-purchasingRoutes.post("/po/:id/close", async (c) => {
+purchasingRoutes.post("/po/:id/close", requirePermission("purchasing.order"), async (c) => {
 	const data = await loadPo(c);
 	if (!data) return notFound(c);
 	await c.var.db
@@ -1243,7 +1282,7 @@ purchasingRoutes.post("/po/:id/close", async (c) => {
 	return redirectOk(c, `/purchasing/po/${data.po.id}`, "closed");
 });
 
-purchasingRoutes.post("/po/:id/delete", requireAdmin, async (c) => {
+purchasingRoutes.post("/po/:id/delete", requirePermission("purchasing.delete"), async (c) => {
 	const data = await loadPo(c);
 	if (!data) return notFound(c);
 	if (data.po.status !== "draft") return c.redirect(`/purchasing/po/${data.po.id}?err=po_not_draft`, 303);
@@ -1251,7 +1290,7 @@ purchasingRoutes.post("/po/:id/delete", requireAdmin, async (c) => {
 	return c.redirect("/purchasing/po?ok=deleted", 303);
 });
 
-purchasingRoutes.post("/po/:id/receive", async (c) => {
+purchasingRoutes.post("/po/:id/receive", requirePermission("purchasing.receive"), async (c) => {
 	const data = await loadPo(c);
 	if (!data) return notFound(c);
 	const db = c.var.db;
@@ -1303,7 +1342,7 @@ purchasingRoutes.post("/po/:id/receive", async (c) => {
 	return redirectOk(c, `/purchasing/po/${data.po.id}`, "received");
 });
 
-purchasingRoutes.get("/po/:id/export.csv", async (c) => {
+purchasingRoutes.get("/po/:id/export.csv", requirePermission("costs.view"), async (c) => {
 	const data = await loadPo(c);
 	if (!data) return notFound(c);
 	const locale = c.var.locale;

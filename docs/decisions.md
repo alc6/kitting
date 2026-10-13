@@ -308,3 +308,50 @@ Short log of choices made where the brief left room. Newest at the bottom of eac
   the images (README); an image replaced after a backup is lost to that backup. The pages' security
   middleware keeps `Cache-Control: no-store` unless a handler set its own. The parts search now matches any
   supplier's reference on the offers (it still read the deprecated `parts.supplier_ref`, D90).
+
+## Roles
+
+- **D101. Four roles, decided by the app; Cloudflare Access only says who the user is.** `viewer` <
+  `operator` < `planner` < `admin`, each able to do what the previous one can (`atLeast()` in
+  `src/domain/users.ts`). Operators run the shop floor (builds, stock adjustments and counts, receiving POs);
+  planners also edit the catalogue, BoMs, suppliers, offers, prices and POs and use Import / Export; admins
+  also confirm imports, delete, archive, restore and manage users. Roles live in a `users` table (migration
+  0004, additive, with `settings`), edited by admins at `/users`. Resolution order: `ADMIN_EMAILS` (always
+  admin, cannot be demoted from the UI, so there is no "last admin" to protect and no lock-out), then the
+  `users` row, else **viewer**: Access stays the only list of who may enter, and admins only promote people.
+  Groups from the identity provider were ruled out: one-time PIN has none, and a small team does not need
+  them. The role and the cost option are read in one query per request, after the database is set up.
+- **D102. One default-deny access policy** *(replaced by D105)* (`accessPolicy` in `src/middleware/roles.tsx`) instead of a guard
+  on each of the ~56 write routes: any write needs a planner unless its path is in `OPERATOR_WRITES`, and
+  viewers never write, so a POST route added later is closed to operators until listed. Read rules close
+  `/users` (admin), `/import/backup.json` (admin), the rest of `/import` (planner), the cost pages (D103)
+  and the form pages (`/parts/new`, `/builds/new`, `/stock/adjust`…) to roles that could not submit them.
+  `requireAdmin` stays on destructive routes. Pages hide the controls a role cannot use (`atLeast(role, …)`).
+  Uploading a part image is now a planner action (editing a part), no longer anyone's (D100).
+- **D103. Cost visibility is one admin switch, off by default.** Planners and admins always see costs (they
+  edit prices and orders). Viewers and operators see them only when an admin ticks "Viewers and operators
+  see costs" on `/users` (`settings.lower_roles_see_costs`); a per-user flag was not needed. Without it,
+  pages drop cost columns, cards and sections (the stock value card, offer prices, price history, BoM and
+  build costs, PO prices: an operator receives a PO without seeing them); `Money` and `CostView` render
+  "Hidden" as a backstop; the moves and BoM explosion CSVs lose their cost columns; margins, valuation and
+  the PO CSV are refused. `test/costs-hidden.test.ts` seeds distinctive amounts and checks every page and
+  CSV an operator or a viewer can open; it was checked to fail when costs are forced visible.
+- **D104. The JSON backup is admin-only** (it was open to any signed-in user, and is the whole database).
+  `users` and `settings` are part of it: a restore brings roles back, `ADMIN_EMAILS` still apply. As with
+  every migration, backups taken before 0004 are refused (D53).
+- **D105. Permissions are named actions, so an API can reuse them** (planned: an MCP server whose OAuth
+  scopes map to these names). `src/domain/permissions.ts` holds one table, `area.verb` → least role
+  (`parts.edit`, `stock.adjust`, `purchasing.receive`, `costs.view`, `import.commit`, `users.manage`…), and
+  `can({ role, seeCosts }, action)` works without HTTP. It replaces D102's path rules (`OPERATOR_WRITES`,
+  `READ_RULES`, `requireAdmin`) and every role comparison in pages. The URL → action mapping is declared on
+  the route (`requirePermission(action)`) rather than in a second, central path table: the declaration sits
+  next to the handler, and `createApp()` refuses to start if a write route has none (Hono lists route
+  middleware in `app.routes`), which replaces D102's role floor with a stronger net. Read-only gates are
+  router-level (`/margins`, `/import`, `/users`) or route-level (valuation, PO export, form pages); the
+  cost sweep (D103) guards them. `costs.view` keeps the admin option: its `min` is planner and lower roles
+  get it when allowed; `seeCosts` is that check, computed once per request. Redaction is shared:
+  `csvResponse` drops `MONEY_COLUMNS` from every CSV, and `redactCosts()` nulls amounts (`*Cents`,
+  `*Millicents`, `rateBp`) in structured data for a future API. Pages are not run through `redactCosts`:
+  they drop cost columns at render time, with `Money`/`CostView` as the backstop and the sweep as the proof.
+  `test/permissions.test.ts` runs one request per action: refused just below its role, allowed from it.
+  Images: the "not set up" hint now shows to whoever may edit parts, rather than to admins only (D100).

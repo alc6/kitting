@@ -1,5 +1,6 @@
 import type { Context } from "hono";
 import { createContext, useContext } from "hono/jsx";
+import type { Role } from "../db/schema";
 import { type Dict, dict, type Locale } from "../i18n";
 import type { AppEnv } from "../types";
 
@@ -15,7 +16,10 @@ export type AppView = {
 	t: Dict;
 	locale: Locale;
 	user: string;
-	isAdmin: boolean;
+	/** With seeCosts, the Access that can() checks (src/domain/permissions.ts). */
+	role: Role;
+	/** False hides every cost, price, valuation and margin (Money renders a placeholder). */
+	seeCosts: boolean;
 	currency: string;
 	/** Current path + query, used for active nav links and language switch. */
 	path: string;
@@ -29,7 +33,8 @@ export const AppViewContext = createContext<AppView>({
 	t: dict("en"),
 	locale: "en",
 	user: "",
-	isAdmin: false,
+	role: "viewer",
+	seeCosts: false,
 	currency: "EUR",
 	path: "/",
 	theme: "system",
@@ -44,7 +49,8 @@ export function viewFor(c: Context<AppEnv>): AppView {
 		t: c.var.t,
 		locale: c.var.locale,
 		user: c.var.user,
-		isAdmin: c.var.isAdmin,
+		role: c.var.role,
+		seeCosts: c.var.seeCosts,
 		currency: c.env.CURRENCY || "EUR",
 		path: url.pathname + url.search,
 		theme: c.var.theme,

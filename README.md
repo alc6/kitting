@@ -58,9 +58,7 @@ tiers cover a small workshop. Deployment is one command.
 ## Non-goals (v1)
 
 Quotes, invoicing, accounting, multiple companies, multiple warehouses or locations,
-barcode scanning, scheduling or capacity planning, per-user roles.
-All signed-in users are equal; a list of admin emails gates destructive actions
-(import commit, delete, archive).
+barcode scanning, scheduling or capacity planning.
 
 ## How it works
 
@@ -74,6 +72,25 @@ All signed-in users are equal; a list of admin emails gates destructive actions
 - Data lives in a D1 (SQLite) database. Money is stored in integer cents, quantities in
   integer thousandths: no floating-point rounding errors. Product images, if enabled, live in
   an R2 bucket.
+
+## Roles
+
+Cloudflare Access decides who can sign in; Kitting decides what each person may do.
+
+| Role | Can |
+| --- | --- |
+| Viewer | Look at everything and change nothing. Anyone not listed on the Users page is a viewer. |
+| Operator | Shop floor: run builds, adjust and count stock, receive deliveries. |
+| Planner | Office: also edit parts, BoMs, suppliers, offers, prices and purchase orders; Import / Export. |
+| Administrator | Also confirm imports, delete, archive, restore backups and manage users. |
+
+- The emails in `ADMIN_EMAILS` are always administrators. They give roles to everyone else on
+  **Users** (`/users`); a role applies on the person's next page load.
+- Costs, prices, valuations and margins are hidden from viewers and operators unless an
+  administrator ticks *Viewers and operators see costs* on the same page. Planners and
+  administrators always see them.
+- Every write is checked on the server, not only hidden in the page: a role that may not do
+  something gets a 403.
 
 ## Deploy in five steps
 
@@ -111,7 +128,7 @@ You need a Cloudflare account with a domain on it, Node.js 20+, and this reposit
    | --- | --- | --- |
    | `TEAM_DOMAIN` | `acme.cloudflareaccess.com` | Your Zero Trust team domain. |
    | `ACCESS_AUD` | `4f1c…9a` | AUD tag of the Access application. |
-   | `ADMIN_EMAILS` | `ops@example.com,boss@example.com` | Who may import, delete and archive. |
+   | `ADMIN_EMAILS` | `ops@example.com,boss@example.com` | Always administrators (see [Roles](#roles)). |
    | `DEFAULT_LOCALE` | `fr` | `en` or `fr`. Users can switch in the footer. |
    | `CURRENCY` | `EUR` | ISO code used to display money. |
    | `ENVIRONMENT` | `production` | Keep `production`. |
@@ -223,8 +240,8 @@ current data.
 
 ## Backups
 
-- **Import / Export → Backup** downloads the whole database as one JSON file. An admin can
-  restore it (same Kitting version) on the same or another deployment: a preview shows what
+- **Import / Export → Backup** (admins) downloads the whole database, roles included, as one
+  JSON file. An admin can restore it (same Kitting version) on the same or another deployment: a preview shows what
   the file contains, then everything is replaced in one transaction.
 - Product images are not in that file: it only records which image each part points to. The
   images stay in the R2 bucket (copy it with any S3-compatible tool if you need an offsite

@@ -851,8 +851,10 @@ export function CheckboxField(props: FieldProps) {
 // ---------------------------------------------------------------------------
 // Values
 
+/** An amount, or "Hidden" for users who may not see costs (pages also drop whole cost sections for them). */
 export function Money(props: { cents: number | null | undefined }) {
-	const { locale, currency, t } = useApp();
+	const { locale, currency, t, seeCosts } = useApp();
+	if (!seeCosts) return <span class="text-muted-foreground">{t.roles.hidden}</span>;
 	if (props.cents === null || props.cents === undefined)
 		return <span class="text-muted-foreground">{t.parts.costUnknown}</span>;
 	return <span class="num">{formatMoney(props.cents, locale, currency)}</span>;

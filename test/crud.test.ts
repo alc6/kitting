@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
-import { insertMove, insertPart, insertSupplier, one, postForm, request, rows } from "./helpers";
+import { beforeEach, describe, expect, it } from "vitest";
+import { insertMove, insertPart, insertSupplier, NOT_ADMIN, one, postForm, request, rows, setRole } from "./helpers";
 
-const NOT_ADMIN = { ADMIN_EMAILS: "someone-else@example.com" };
+// NOT_ADMIN requests run as a planner, so admin-only actions are refused by requireAdmin itself.
+beforeEach(() => setRole("planner"));
 
 const partForm = (over: Record<string, string> = {}) => ({
 	ref: "LED-5W",

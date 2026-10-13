@@ -11,7 +11,8 @@ export function StatusBadge(props: { status: BomStatus }) {
 
 /** Cost with an "incomplete" marker listing the parts without cost. */
 export function CostView(props: { cost: Cost; refs: Map<number, string>; long?: boolean }) {
-	const { t } = useApp();
+	const { t, seeCosts } = useApp();
+	if (!seeCosts) return <Money cents={null} />;
 	const missing = props.cost.missing.map((id) => props.refs.get(id) ?? String(id));
 	return (
 		<span class={props.cost.incomplete ? "cost incomplete" : "cost"}>

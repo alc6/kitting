@@ -82,6 +82,14 @@ After M2 the catalogue and BoMs can be loaded; after M4 real builds can run.
 - [x] One image per part in an optional R2 bucket (migration 0003 adds `parts.image_key`), shrunk in the
       browser before upload, shown on the part page and in the parts list
 
+## M9: Roles ✅
+
+- [x] Viewer, operator, planner, admin; unlisted users are viewers, `ADMIN_EMAILS` always admins
+- [x] Users page for admins (`/users`), with the option letting viewers and operators see costs
+- [x] Default-deny access policy for writes, read rules for admin, import and cost pages
+- [x] Pages hide the controls and amounts a role cannot use; additive migration 0004 (`users`, `settings`)
+- [x] JSON backup restricted to admins, and includes roles
+
 ## After v1 (ideas, not planned)
 
 - Serial inventory (which serials are in stock) enforced at build time, if the shop starts scanning receipts.

@@ -11,12 +11,13 @@ import {
 	planImport,
 	type RowIssue,
 } from "../domain/import";
+import { can, redactCsv } from "../domain/permissions";
 import { errorText, fmt } from "../i18n";
 import { cn } from "../lib/cn";
 import { toCsv } from "../lib/csv";
 import { runBatch } from "../lib/db";
 import { decodeText } from "../lib/encoding";
-import { requireAdmin } from "../middleware/auth";
+import { requirePermission } from "../middleware/roles";
 import type { AppEnv } from "../types";
 import { useApp } from "../views/context";
 import { Icon, type IconNode, icons } from "../views/icons";
@@ -47,6 +48,8 @@ import {
 } from "../views/ui";
 
 export const importRoutes = new Hono<AppEnv>();
+// Import / Export is for planners; confirming, backups and restores need more (route by route).
+importRoutes.use("*", requirePermission("import.preview"));
 
 const MAX_CSV_BYTES = 2 * 1024 * 1024;
 const MAX_JSON_BYTES = 50 * 1024 * 1024;
@@ -56,10 +59,11 @@ export function csvDelimiter(c: Context<AppEnv>): string {
 	return c.var.locale === "fr" ? ";" : ",";
 }
 
+/** Every CSV download goes through here: money columns are dropped for users who may not see costs. */
 export function csvResponse(c: Context<AppEnv>, filename: string, rows: (string | number | null)[][]) {
 	c.header("Content-Type", "text/csv; charset=utf-8");
 	c.header("Content-Disposition", `attachment; filename="${filename}"`);
-	return c.body(toCsv(rows, csvDelimiter(c)));
+	return c.body(toCsv(redactCsv(c.var, rows), csvDelimiter(c)));
 }
 
 async function readCsvInput(c: Context<AppEnv>): Promise<string> {
@@ -201,7 +205,9 @@ function IssueTable(props: { issues: RowIssue[] }) {
 }
 
 function Preview(props: { plan: ImportPlan; csv: string }) {
-	const { t, isAdmin } = useApp();
+	const view = useApp();
+	const { t } = view;
+	const canCommit = can(view, "import.commit");
 	const { plan } = props;
 	const count = (a: PlanAction) => plan.rows.filter((r) => r.action === a).length;
 	const created = count("create");
@@ -248,7 +254,7 @@ function Preview(props: { plan: ImportPlan; csv: string }) {
 				</>
 			) : null}
 			<div class="mb-6 flex flex-wrap items-center gap-2">
-				{!hasErrors && pending > 0 && isAdmin ? (
+				{!hasErrors && pending > 0 && canCommit ? (
 					<form method="post" action={`/import/${plan.type}/commit`}>
 						<textarea name="csv" hidden>
 							{props.csv}
@@ -262,7 +268,7 @@ function Preview(props: { plan: ImportPlan; csv: string }) {
 					{t.common.back}
 				</Button>
 			</div>
-			{!hasErrors && !isAdmin ? <Alert>{t.import.noAdmin}</Alert> : null}
+			{!hasErrors && !canCommit ? <Alert>{t.import.noAdmin}</Alert> : null}
 			{plan.rows.length ? (
 				<TableCard title={fmt(t.common.results, { n: plan.rows.length })}>
 					<Table>
@@ -309,7 +315,8 @@ function Preview(props: { plan: ImportPlan; csv: string }) {
 // Backup and restore
 
 function BackupCard() {
-	const { t, isAdmin } = useApp();
+	const view = useApp();
+	const { t } = view;
 	return (
 		<Card id="backup" class="scroll-mt-20">
 			<CardHeader>
@@ -320,10 +327,12 @@ function BackupCard() {
 				<CardDescription class="pt-1">{t.import.backupIntro}</CardDescription>
 			</CardHeader>
 			<CardContent class="flex flex-col gap-6">
-				<Button href="/import/backup.json" variant="outline" icon={icons.fileJson} class="self-start">
-					{t.import.backupDownload}
-				</Button>
-				{isAdmin ? (
+				{can(view, "backup.download") ? (
+					<Button href="/import/backup.json" variant="outline" icon={icons.fileJson} class="self-start">
+						{t.import.backupDownload}
+					</Button>
+				) : null}
+				{can(view, "backup.restore") ? (
 					<div class="flex flex-col gap-4 rounded-lg border border-destructive/30 bg-destructive/5 p-4">
 						<div class="flex flex-col gap-1">
 							<h3 class="flex items-center gap-2 text-sm font-semibold text-destructive">
@@ -353,7 +362,7 @@ function BackupCard() {
 	);
 }
 
-importRoutes.get("/backup.json", async (c) => {
+importRoutes.get("/backup.json", requirePermission("backup.download"), async (c) => {
 	const now = nowIso();
 	const backup = await exportBackup(c.env.DB, now);
 	c.header("Content-Type", "application/json; charset=utf-8");
@@ -449,13 +458,13 @@ function RestorePreview(props: { plan: RestorePlan; json: string }) {
 	);
 }
 
-importRoutes.post("/restore/preview", requireAdmin, async (c) => {
+importRoutes.post("/restore/preview", requirePermission("backup.restore"), async (c) => {
 	const json = await readJsonInput(c);
 	const plan = await planRestore(c.env.DB, json);
 	return page(c, c.var.t.import.restoreTitle, <RestorePreview plan={plan} json={json} />, plan.ok ? 200 : 422);
 });
 
-importRoutes.post("/restore/commit", requireAdmin, async (c) => {
+importRoutes.post("/restore/commit", requirePermission("backup.restore"), async (c) => {
 	const json = await readJsonInput(c);
 	const plan = await planRestore(c.env.DB, json);
 	if (!plan.ok) return page(c, c.var.t.import.restoreTitle, <RestorePreview plan={plan} json={json} />, 422);
@@ -513,7 +522,7 @@ importRoutes.post("/:type/preview", async (c) => {
 	return page(c, c.var.t.import.preview, <Preview plan={plan} csv={csv} />, plan.errors.length ? 422 : 200);
 });
 
-importRoutes.post("/:type/commit", requireAdmin, async (c) => {
+importRoutes.post("/:type/commit", requirePermission("import.commit"), async (c) => {
 	const importer = importerFor(c.req.param("type"));
 	if (!importer) return notFound(c);
 	const csv = await readCsvInput(c);

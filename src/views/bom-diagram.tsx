@@ -118,7 +118,7 @@ function qtyText(milli: number, unit: string, locale: Locale): string {
 }
 
 function DiagramNode(props: { node: PlacedNode<DiagramDatum>; view: DiagramView; hasChildren: boolean }) {
-	const { t, locale, currency } = useApp();
+	const { t, locale, currency, seeCosts } = useApp();
 	const { node } = props;
 	const d = node.data;
 	const look = lookOf(d);
@@ -160,9 +160,11 @@ function DiagramNode(props: { node: PlacedNode<DiagramDatum>; view: DiagramView;
 				<text x="20" y="58" class={cn(text, "text-[11.5px] font-medium tabular-nums")}>
 					{root ? `× ${formatQty(d.qtyMilli, locale)}` : qtyText(d.qtyMilli, d.part.unit, locale)}
 				</text>
-				<text x={NODE_W - 12} y="58" text-anchor="end" class={cn(text, "text-[11.5px] tabular-nums")}>
-					{cost}
-				</text>
+				{seeCosts ? (
+					<text x={NODE_W - 12} y="58" text-anchor="end" class={cn(text, "text-[11.5px] tabular-nums")}>
+						{cost}
+					</text>
+				) : null}
 			</a>
 			{opensDiagram ? (
 				<a href={`/boms/${d.bomId}/diagram`} class="group outline-none">

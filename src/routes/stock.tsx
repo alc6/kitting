@@ -5,12 +5,14 @@ import { z } from "zod";
 import { MOVE_REASONS, parts, stockMoves } from "../db/schema";
 import { centsOf } from "../domain/bom-graph";
 import { getPart, listParts, partOptions } from "../domain/parts";
+import { can } from "../domain/permissions";
 import { type CountGroup, isStocked, listMoves, moveValues, onHandAt, planCounts, valuation } from "../domain/stock";
 import { errorText, fmt } from "../i18n";
 import { cn } from "../lib/cn";
 import { runBatch } from "../lib/db";
 import { formatCentsInput, formatQtyInput, MILLI, parseMilli } from "../lib/units";
 import { type FieldErrors, field, validate } from "../lib/validation";
+import { requirePermission } from "../middleware/roles";
 import type { AppEnv } from "../types";
 import { useApp } from "../views/context";
 import { type IconNode, icons } from "../views/icons";
@@ -52,32 +54,40 @@ export const stockRoutes = new Hono<AppEnv>();
 type Tab = "onHand" | "moves" | "count" | "valuation";
 
 function StockTabs(props: { active: Tab }) {
-	const { t } = useApp();
-	const tabs: { key: Tab; href: string; icon: IconNode }[] = [
-		{ key: "onHand", href: "/stock", icon: icons.boxes },
-		{ key: "moves", href: "/stock/moves", icon: icons.history },
-		{ key: "count", href: "/stock/count", icon: icons.clipboardCheck },
-		{ key: "valuation", href: "/stock/valuation", icon: icons.coins },
+	const view = useApp();
+	const { t } = view;
+	const tabs: { key: Tab; href: string; icon: IconNode; shown: boolean }[] = [
+		{ key: "onHand", href: "/stock", icon: icons.boxes, shown: true },
+		{ key: "moves", href: "/stock/moves", icon: icons.history, shown: true },
+		{ key: "count", href: "/stock/count", icon: icons.clipboardCheck, shown: can(view, "stock.count") },
+		{ key: "valuation", href: "/stock/valuation", icon: icons.coins, shown: can(view, "costs.view") },
 	];
 	return (
 		<LinkTabs
-			items={tabs.map((tab) => ({
-				href: tab.href,
-				label: t.stock.tabs[tab.key],
-				icon: tab.icon,
-				active: tab.key === props.active,
-			}))}
+			items={tabs
+				.filter((tab) => tab.shown)
+				.map((tab) => ({
+					href: tab.href,
+					label: t.stock.tabs[tab.key],
+					icon: tab.icon,
+					active: tab.key === props.active,
+				}))}
 		/>
 	);
 }
 
 function StockHeader(props: { tab: Tab }) {
-	const { t } = useApp();
+	const view = useApp();
+	const { t } = view;
 	return (
 		<>
 			<PageHeader
 				title={t.stock.title}
-				actions={<LinkButton href="/stock/adjust" label={t.stock.adjustTitle} icon={icons.arrowUpDown} />}
+				actions={
+					can(view, "stock.adjust") ? (
+						<LinkButton href="/stock/adjust" label={t.stock.adjustTitle} icon={icons.arrowUpDown} />
+					) : undefined
+				}
 			/>
 			<StockTabs active={props.tab} />
 		</>
@@ -114,6 +124,7 @@ stockRoutes.get("/", async (c) => {
 		if (filter === "in_stock") return p.onHandMilli > 0;
 		return true;
 	});
+	const canAdjust = can(c.var, "stock.adjust");
 	return page(
 		c,
 		t.stock.title,
@@ -142,9 +153,11 @@ stockRoutes.get("/", async (c) => {
 									<TableHead>{t.parts.kind}</TableHead>
 									<TableHead class="text-right">{t.parts.moq}</TableHead>
 									<TableHead class="text-right">{t.stock.onHand}</TableHead>
-									<TableHead class="w-0">
-										<span class="sr-only">{t.common.actions}</span>
-									</TableHead>
+									{canAdjust ? (
+										<TableHead class="w-0">
+											<span class="sr-only">{t.common.actions}</span>
+										</TableHead>
+									) : null}
 								</TableRow>
 							</TableHeader>
 							<TableBody>
@@ -170,16 +183,18 @@ stockRoutes.get("/", async (c) => {
 												) : null}
 												<Qty milli={p.onHandMilli} unit={p.unit} />
 											</TableCell>
-											<TableCell class="w-0 text-right">
-												<Button
-													href={`/stock/adjust?part=${p.id}`}
-													variant="outline"
-													size="sm"
-													icon={icons.arrowUpDown}
-												>
-													{t.stock.adjust}
-												</Button>
-											</TableCell>
+											{canAdjust ? (
+												<TableCell class="w-0 text-right">
+													<Button
+														href={`/stock/adjust?part=${p.id}`}
+														variant="outline"
+														size="sm"
+														icon={icons.arrowUpDown}
+													>
+														{t.stock.adjust}
+													</Button>
+												</TableCell>
+											) : null}
 										</TableRow>
 									);
 								})}
@@ -243,7 +258,7 @@ async function stockedOptions(c: Context<AppEnv>) {
 	return (await partOptions(c.var.db)).filter((o) => isStocked(o.kind));
 }
 
-stockRoutes.get("/adjust", async (c) => {
+stockRoutes.get("/adjust", requirePermission("stock.adjust"), async (c) => {
 	const t = c.var.t;
 	const partParam = c.req.query("part") ?? "";
 	const part = /^\d+$/.test(partParam) ? await getPart(c.var.db, Number(partParam)) : undefined;
@@ -257,7 +272,7 @@ stockRoutes.get("/adjust", async (c) => {
 	);
 });
 
-stockRoutes.post("/adjust", async (c) => {
+stockRoutes.post("/adjust", requirePermission("stock.adjust"), async (c) => {
 	const t = c.var.t;
 	const db = c.var.db;
 	const body = await c.req.parseBody();
@@ -307,7 +322,7 @@ stockRoutes.post("/adjust", async (c) => {
 // ---------------------------------------------------------------------------
 // Inventory count
 
-stockRoutes.get("/count", async (c) => {
+stockRoutes.get("/count", requirePermission("stock.count"), async (c) => {
 	return renderCount(c, {}, {});
 });
 
@@ -392,7 +407,7 @@ async function renderCount(c: Context<AppEnv>, values: FormValues, errors: Field
 	);
 }
 
-stockRoutes.post("/count", async (c) => {
+stockRoutes.post("/count", requirePermission("stock.count"), async (c) => {
 	const db = c.var.db;
 	const body = await c.req.parseBody();
 	const values: FormValues = {};
@@ -582,7 +597,7 @@ function MethodHint(props: { asOf: string; missing: number }) {
 	);
 }
 
-stockRoutes.get("/valuation", async (c) => {
+stockRoutes.get("/valuation", requirePermission("costs.view"), async (c) => {
 	const t = c.var.t;
 	const at = dateParam(c.req.query("at"));
 	const v = await valuation(c.var.db, at);

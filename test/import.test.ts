@@ -1,12 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import demoBoms from "../examples/demo/boms.csv?raw";
 import demoOffers from "../examples/demo/part_suppliers.csv?raw";
 import demoParts from "../examples/demo/parts.csv?raw";
 import demoStock from "../examples/demo/stock.csv?raw";
 import demoSuppliers from "../examples/demo/suppliers.csv?raw";
-import { insertMove, insertPart, insertSupplier, one, postForm, request, rows } from "./helpers";
+import { insertMove, insertPart, insertSupplier, NOT_ADMIN, one, postForm, request, rows, setRole } from "./helpers";
 
-const NOT_ADMIN = { ADMIN_EMAILS: "someone-else@example.com" };
+// NOT_ADMIN requests run as a planner, so admin-only actions are refused by requireAdmin itself.
+beforeEach(() => setRole("planner"));
 
 const preview = (type: string, csv: string, overrides = {}) => postForm(`/import/${type}/preview`, { csv }, overrides);
 const commit = (type: string, csv: string, overrides = {}) => postForm(`/import/${type}/commit`, { csv }, overrides);

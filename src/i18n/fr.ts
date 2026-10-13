@@ -15,14 +15,13 @@ export const fr: Dict = {
 		searchAll: "Rechercher articles, nomenclatures, fabrications…",
 		theme: "Thème",
 		themes: { system: "Système", light: "Clair", dark: "Sombre" },
-		administrator: "Administrateur",
-		signedIn: "Connecté",
 	},
 	navGroups: {
 		overview: "Vue d’ensemble",
 		catalogue: "Catalogue",
 		operations: "Opérations",
 		data: "Données",
+		admin: "Administration",
 	},
 	nav: {
 		dashboard: "Tableau de bord",
@@ -34,6 +33,7 @@ export const fr: Dict = {
 		stock: "Stock",
 		import: "Import / Export",
 		margins: "Marges",
+		users: "Utilisateurs",
 	},
 	common: {
 		search: "Rechercher",
@@ -81,6 +81,7 @@ export const fr: Dict = {
 		not_positive: "Doit être supérieur à zéro.",
 		not_integer: "Doit être un nombre entier.",
 		invalid_email: "Adresse e-mail invalide.",
+		user_from_config: "Cet e-mail est dans ADMIN_EMAILS : il est toujours administrateur.",
 		invalid_kind: "Le type doit être buy, make, kit ou fee.",
 		invalid_bool: "Utilisez oui ou non.",
 		invalid_ref: "Lettres, chiffres et - _ . / uniquement (sans espace).",
@@ -767,5 +768,41 @@ export const fr: Dict = {
 			"Deux méthodes côte à côte ; aucune n’est la valeur officielle. Coût standard : stock × coût standard en vigueur à cette date (articles fabriqués au coût de leur nomenclature). Moyenne pondérée (PMP) : le journal des mouvements rejoué aux prix réellement payés.",
 		fallbackNote:
 			"Les coûts standard ne sont enregistrés que depuis le {date} : les dates antérieures utilisent le premier coût connu de chaque article.",
+	},
+	roles: {
+		forbidden: "Accès refusé",
+		forbiddenHint: "Votre rôle ne le permet pas. Demandez à un administrateur.",
+		hidden: "Masqué",
+		names: { viewer: "Lecteur", operator: "Opérateur", planner: "Gestionnaire", admin: "Administrateur" },
+		help: {
+			viewer: "Consulte tout, ne modifie rien.",
+			operator: "Atelier : lance les fabrications, ajuste et inventorie le stock, réceptionne les livraisons.",
+			planner:
+				"Bureau : modifie aussi articles, nomenclatures, fournisseurs, offres, prix et commandes, exporte et prévisualise les imports.",
+			admin: "Confirme aussi les imports, supprime, archive, restaure les sauvegardes et gère les utilisateurs.",
+		},
+	},
+	users: {
+		title: "Utilisateurs",
+		intro:
+			"Cloudflare Access décide qui peut se connecter ; cette page décide ce que chacun peut faire. Toute personne connectée qui n’est pas listée ici est lecteur.",
+		email: "E-mail",
+		role: "Rôle",
+		listed: "Utilisateurs listés",
+		add: "Attribuer un rôle",
+		addHint: "L’e-mail avec lequel la personne se connecte. S’il est déjà listé, son rôle est modifié.",
+		save: "Enregistrer le rôle",
+		fromConfig: "ADMIN_EMAILS",
+		fromConfigHint: "Toujours administrateur : à modifier dans la configuration du déploiement.",
+		remove: "Retirer",
+		confirmRemove: "Retirer cet utilisateur ? Il deviendra lecteur.",
+		empty: "Personne n’est listé : toute personne connectée est lecteur.",
+		you: "vous",
+		rolesTitle: "Ce que chaque rôle peut faire",
+		costsTitle: "Coûts et prix",
+		costsLabel: "Les lecteurs et opérateurs voient les coûts, prix et marges",
+		costsHint:
+			"Les gestionnaires et administrateurs les voient toujours. Désactivé, les autres voient « Masqué » à la place des montants et n’ont pas accès aux marges, à la valorisation ni aux exports de prix.",
+		costsSave: "Enregistrer",
 	},
 };

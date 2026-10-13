@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import type { Child } from "hono/jsx";
 import { listBuilds } from "../domain/builds";
 import { listParts } from "../domain/parts";
+import { can } from "../domain/permissions";
 import { computeShortages, listPos } from "../domain/purchasing";
 import { isStocked, valuation } from "../domain/stock";
 import { fmt } from "../i18n";
@@ -106,8 +107,9 @@ dashboardRoutes.get("/", async (c) => {
 		listPos(db, { status: "open" }),
 		listBuilds(db, { status: "open", limit: 100 }),
 		listBuilds(db, { status: "done", limit: LIMIT }),
-		valuation(db),
+		c.var.seeCosts ? valuation(db) : null,
 	]);
+	const canBuild = can(c.var, "builds.plan");
 	const today = nowIso().slice(0, 10);
 	const stocked = allParts.filter((p) => isStocked(p.kind));
 	const belowZero = stocked.filter((p) => p.onHandMilli < 0);
@@ -127,9 +129,11 @@ dashboardRoutes.get("/", async (c) => {
 			<PageHeader
 				title={t.dashboard.title}
 				actions={
-					<Button href="/builds/new" icon={icons.plus}>
-						{t.builds.new}
-					</Button>
+					canBuild ? (
+						<Button href="/builds/new" icon={icons.plus}>
+							{t.builds.new}
+						</Button>
+					) : undefined
 				}
 			/>
 			{allParts.length === 0 ? (
@@ -139,13 +143,15 @@ dashboardRoutes.get("/", async (c) => {
 					title={t.dashboard.welcome}
 					description={t.dashboard.gettingStarted}
 				>
-					<Button href="/import" icon={icons.upload}>
-						{t.nav.import}
-					</Button>
+					{can(c.var, "import.preview") ? (
+						<Button href="/import" icon={icons.upload}>
+							{t.nav.import}
+						</Button>
+					) : null}
 				</EmptyState>
 			) : null}
 
-			<div class="mb-6 grid grid-cols-2 gap-3 md:gap-4 xl:grid-cols-4">
+			<div class={cn("mb-6 grid grid-cols-2 gap-3 md:gap-4", value ? "xl:grid-cols-4" : "xl:grid-cols-3")}>
 				<StatCard
 					label={t.dashboard.openBuilds}
 					value={open.length}
@@ -169,19 +175,21 @@ dashboardRoutes.get("/", async (c) => {
 					tone={overdue ? "destructive" : "default"}
 					hint={overdue ? fmt(t.dashboard.overdue, { n: overdue }) : t.dashboard.allOnTime}
 				/>
-				<StatCard
-					label={t.dashboard.stockValueStandard}
-					value={
-						<>
-							<Money cents={value.totalCents} />
-							{value.incomplete ? <span class="text-warning"> *</span> : null}
-						</>
-					}
-					icon={icons.wallet}
-					href="/stock/valuation"
-					tone={value.incomplete || value.avgIncomplete ? "warning" : "default"}
-					hint={<StockValueHint value={value} />}
-				/>
+				{value ? (
+					<StatCard
+						label={t.dashboard.stockValueStandard}
+						value={
+							<>
+								<Money cents={value.totalCents} />
+								{value.incomplete ? <span class="text-warning"> *</span> : null}
+							</>
+						}
+						icon={icons.wallet}
+						href="/stock/valuation"
+						tone={value.incomplete || value.avgIncomplete ? "warning" : "default"}
+						hint={<StockValueHint value={value} />}
+					/>
+				) : null}
 			</div>
 
 			<div class="mb-6 grid grid-cols-1 items-start gap-4 lg:grid-cols-3">
@@ -256,9 +264,11 @@ dashboardRoutes.get("/", async (c) => {
 					href="/builds"
 					total={open.length}
 					action={
-						<Button href="/builds/new" variant="outline" size="sm" icon={icons.plus}>
-							{t.builds.new}
-						</Button>
+						canBuild ? (
+							<Button href="/builds/new" variant="outline" size="sm" icon={icons.plus}>
+								{t.builds.new}
+							</Button>
+						) : undefined
 					}
 				>
 					<BuildsTable rows={[...open].reverse().slice(0, LIMIT)} />

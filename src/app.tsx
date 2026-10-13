@@ -5,6 +5,7 @@ import { createMiddleware } from "hono/factory";
 import * as schema from "./db/schema";
 import { dict, isLocale, type Locale } from "./i18n";
 import { accessAuth } from "./middleware/auth";
+import { assertWritesHavePermissions, loadRole } from "./middleware/roles";
 import { originCheck, securityHeaders } from "./middleware/security";
 import { bomRoutes } from "./routes/boms";
 import { buildRoutes } from "./routes/builds";
@@ -17,6 +18,7 @@ import { purchasingRoutes } from "./routes/purchasing";
 import { searchRoutes } from "./routes/search";
 import { stockRoutes } from "./routes/stock";
 import { supplierRoutes } from "./routes/suppliers";
+import { userRoutes } from "./routes/users";
 import type { AppEnv } from "./types";
 import { isTheme } from "./views/context";
 import { icons } from "./views/icons";
@@ -54,6 +56,7 @@ export function createApp() {
 	app.use("*", accessAuth);
 	app.use("*", originCheck);
 	app.use("*", requestContext);
+	app.use("*", loadRole);
 
 	// Preferences: plain links that set a cookie and come back (they work without JavaScript;
 	// app.js applies theme and sidebar changes in place and calls them in the background).
@@ -86,6 +89,10 @@ export function createApp() {
 	app.route("/import", importRoutes);
 	app.route("/margins", marginRoutes);
 	app.route("/search", searchRoutes);
+	app.route("/users", userRoutes);
+
+	// Fails closed: refuse to start while a write route has no requirePermission() (D105).
+	assertWritesHavePermissions(app.routes);
 
 	app.notFound((c) => (c.var.t ? notFound(c) : c.text("Not found", 404)));
 	app.onError((err, c) => {

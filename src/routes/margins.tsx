@@ -9,6 +9,7 @@ import { historyStart } from "../domain/prices";
 import { fmt } from "../i18n";
 import { cn } from "../lib/cn";
 import { formatCentsInput, formatMoney, formatPercent, formatScaled, roundDiv } from "../lib/units";
+import { requirePermission } from "../middleware/roles";
 import type { AppEnv } from "../types";
 import { StepChart } from "../views/chart";
 import { useApp } from "../views/context";
@@ -41,6 +42,8 @@ import {
 import { csvResponse } from "./import";
 
 export const marginRoutes = new Hono<AppEnv>();
+// Every margins page and export shows costs.
+marginRoutes.use("*", requirePermission("costs.view"));
 
 /** Planned rate on the selling price under which an item is flagged as low margin: 30 %, in basis points. */
 export const LOW_MARGIN_BP = 3000;

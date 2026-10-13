@@ -33,6 +33,7 @@ import {
 	savePartStatements,
 	setStandardCostStatements,
 } from "../domain/parts";
+import { can } from "../domain/permissions";
 import { lastPaidBySupplier, paidPrices, partPriceHistory } from "../domain/prices";
 import { averageCosts } from "../domain/stock";
 import { getSupplier } from "../domain/suppliers";
@@ -42,7 +43,7 @@ import { runBatch, type Statement } from "../lib/db";
 import { isConstraintError } from "../lib/sql";
 import { formatMoney, formatPercent, lineCostCents } from "../lib/units";
 import { type FieldErrors, validate } from "../lib/validation";
-import { requireAdmin } from "../middleware/auth";
+import { requirePermission } from "../middleware/roles";
 import type { AppEnv } from "../types";
 import { CostView, StatusBadge } from "../views/bom";
 import { StepChart } from "../views/chart";
@@ -112,7 +113,8 @@ async function supplierOptions(c: Context<AppEnv>): Promise<SupplierOption[]> {
 }
 
 function PartsTable(props: { rows: PartRow[]; filtered: boolean; images: boolean }) {
-	const { t } = useApp();
+	const view = useApp();
+	const { t, seeCosts } = view;
 	// A thumbnail column only when images are set up and some listed part has one.
 	const thumbs = props.images && props.rows.some((p) => p.imageKey);
 	if (props.rows.length === 0) {
@@ -122,7 +124,7 @@ function PartsTable(props: { rows: PartRow[]; filtered: boolean; images: boolean
 				title={t.parts.empty}
 				description={props.filtered ? t.parts.emptyFiltered : t.parts.emptyHint}
 			>
-				{props.filtered ? null : (
+				{props.filtered || !can(view, "parts.edit") ? null : (
 					<Button href="/parts/new" icon={icons.plus}>
 						{t.parts.new}
 					</Button>
@@ -144,7 +146,7 @@ function PartsTable(props: { rows: PartRow[]; filtered: boolean; images: boolean
 						<TableHead>{t.parts.name}</TableHead>
 						<TableHead>{t.parts.kind}</TableHead>
 						<TableHead>{t.parts.supplier}</TableHead>
-						<TableHead class="text-right">{t.parts.cost}</TableHead>
+						{seeCosts ? <TableHead class="text-right">{t.parts.cost}</TableHead> : null}
 						<TableHead class="text-right">{t.parts.onHand}</TableHead>
 					</TableRow>
 				</TableHeader>
@@ -181,9 +183,11 @@ function PartsTable(props: { rows: PartRow[]; filtered: boolean; images: boolean
 								<KindBadge kind={p.kind} />
 							</TableCell>
 							<TableCell class="text-muted-foreground">{p.supplierName ?? ""}</TableCell>
-							<TableCell class="text-right">
-								<Money cents={p.costCents} />
-							</TableCell>
+							{seeCosts ? (
+								<TableCell class="text-right">
+									<Money cents={p.costCents} />
+								</TableCell>
+							) : null}
 							<TableCell class="text-right">
 								{p.kind === "buy" || p.kind === "make" ? <Qty milli={p.onHandMilli} unit={p.unit} /> : null}
 							</TableCell>
@@ -306,9 +310,11 @@ partRoutes.get("/", async (c) => {
 			<PageHeader
 				title={t.parts.title}
 				actions={
-					<Button href="/parts/new" icon={icons.plus}>
-						{t.parts.new}
-					</Button>
+					can(c.var, "parts.edit") ? (
+						<Button href="/parts/new" icon={icons.plus}>
+							{t.parts.new}
+						</Button>
+					) : undefined
 				}
 			/>
 			<Flash ok={c.req.query("ok")} />
@@ -352,7 +358,7 @@ partRoutes.get("/", async (c) => {
 	);
 });
 
-partRoutes.get("/new", async (c) => {
+partRoutes.get("/new", requirePermission("parts.edit"), async (c) => {
 	const t = c.var.t;
 	return page(
 		c,
@@ -371,7 +377,7 @@ partRoutes.get("/new", async (c) => {
 	);
 });
 
-partRoutes.post("/", async (c) => {
+partRoutes.post("/", requirePermission("parts.edit"), async (c) => {
 	const t = c.var.t;
 	const body = await c.req.parseBody();
 	const v = await validatePart(c, body);
@@ -416,7 +422,10 @@ function PartDetail(props: {
 	ok?: string | undefined;
 	err?: string | undefined;
 }) {
-	const { t, isAdmin } = useApp();
+	const view = useApp();
+	const { t, seeCosts } = view;
+	const canEdit = can(view, "parts.edit");
+	const canDelete = can(view, "parts.delete");
 	const p = props.part;
 	const stocked = isStocked(p.kind);
 	const { rollup, refs } = props.bomSummary;
@@ -433,15 +442,17 @@ function PartDetail(props: {
 				}
 				actions={
 					<>
-						<Button href={`/parts/${p.id}/edit`} variant="outline" icon={icons.pencil}>
-							{t.common.edit}
-						</Button>
-						{stocked ? (
+						{canEdit ? (
+							<Button href={`/parts/${p.id}/edit`} variant="outline" icon={icons.pencil}>
+								{t.common.edit}
+							</Button>
+						) : null}
+						{stocked && can(view, "stock.adjust") ? (
 							<Button href={`/stock/adjust?part=${p.id}`} variant="outline" icon={icons.arrowUpDown}>
 								{t.parts.adjustStock}
 							</Button>
 						) : null}
-						{isAdmin ? (
+						{canDelete ? (
 							p.archived ? (
 								<PostButton
 									action={`/parts/${p.id}/unarchive`}
@@ -457,7 +468,7 @@ function PartDetail(props: {
 								/>
 							)
 						) : null}
-						{isAdmin ? (
+						{canDelete ? (
 							<PostButton
 								action={`/parts/${p.id}/delete`}
 								label={t.common.delete}
@@ -480,7 +491,7 @@ function PartDetail(props: {
 							icon={icons.warehouse}
 							tone={props.onHand < 0 ? "destructive" : "default"}
 							hint={
-								p.costCents !== null ? (
+								seeCosts && p.costCents !== null ? (
 									<>
 										{t.parts.stockValue}: <Money cents={lineCostCents(props.onHand, p.costCents)} />
 									</>
@@ -488,13 +499,15 @@ function PartDetail(props: {
 							}
 						/>
 					) : null}
-					<StatCard
-						label={t.parts.cost}
-						value={<Money cents={p.costCents} />}
-						icon={icons.coins}
-						tone={p.costCents === null && !rollup ? "warning" : "default"}
-					/>
-					{rollup ? (
+					{seeCosts ? (
+						<StatCard
+							label={t.parts.cost}
+							value={<Money cents={p.costCents} />}
+							icon={icons.coins}
+							tone={p.costCents === null && !rollup ? "warning" : "default"}
+						/>
+					) : null}
+					{seeCosts && rollup ? (
 						<StatCard
 							label={t.parts.rollupCost}
 							value={<CostView cost={rollup} refs={refs} />}
@@ -506,7 +519,7 @@ function PartDetail(props: {
 				<div class="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
 					{props.imagesEnabled || p.imageKey ? (
 						<ImageCard part={p} enabled={props.imagesEnabled} />
-					) : isAdmin ? (
+					) : canEdit ? (
 						<Card>
 							<CardHeader>
 								<CardTitle icon={icons.image}>{t.parts.image}</CardTitle>
@@ -551,13 +564,15 @@ function PartDetail(props: {
 							/>
 						</CardContent>
 					</Card>
-					<PricesCard
-						part={p}
-						rollup={rollup}
-						refs={refs}
-						average={props.average}
-						preferredOffer={props.offers.find((o) => o.preferred)}
-					/>
+					{seeCosts ? (
+						<PricesCard
+							part={p}
+							rollup={rollup}
+							refs={refs}
+							average={props.average}
+							preferredOffer={props.offers.find((o) => o.preferred)}
+						/>
+					) : null}
 				</div>
 				{stocked || props.offers.length > 0 ? (
 					<OffersCard part={p} offers={props.offers} lastPaid={props.lastPaid} />
@@ -567,11 +582,13 @@ function PartDetail(props: {
 					<Card>
 						<CardHeader>
 							<CardTitle>{t.builds.recent}</CardTitle>
-							<CardAction>
-								<Button href={`/builds/new?part=${p.id}`} variant="outline" size="sm" icon={icons.plus}>
-									{t.builds.new}
-								</Button>
-							</CardAction>
+							{can(view, "builds.plan") ? (
+								<CardAction>
+									<Button href={`/builds/new?part=${p.id}`} variant="outline" size="sm" icon={icons.plus}>
+										{t.builds.new}
+									</Button>
+								</CardAction>
+							) : null}
 						</CardHeader>
 						<CardContent class="px-2">
 							<BuildsTable rows={props.builds} />
@@ -579,7 +596,7 @@ function PartDetail(props: {
 					</Card>
 				) : null}
 				<WhereUsed rows={props.usedIn} />
-				<PriceHistoryCard part={p} history={props.history} paid={props.paid} today={props.today} />
+				{seeCosts ? <PriceHistoryCard part={p} history={props.history} paid={props.paid} today={props.today} /> : null}
 				{stocked ? (
 					<Card>
 						<CardHeader>
@@ -604,14 +621,15 @@ const PART_ERRORS = new Set(["in_use", "image_missing", "image_too_large", "imag
 
 /** The product image (D100): shown, uploaded (resized in the browser when JavaScript runs), removed by admins. */
 function ImageCard(props: { part: Part; enabled: boolean }) {
-	const { t, isAdmin } = useApp();
+	const view = useApp();
+	const { t } = view;
 	const p = props.part;
 	const src = imageUrl(p);
 	return (
 		<Card id="image">
 			<CardHeader>
 				<CardTitle icon={icons.image}>{t.parts.image}</CardTitle>
-				{isAdmin && src && props.enabled ? (
+				{can(view, "parts.delete") && src && props.enabled ? (
 					<CardAction>
 						<PostButton
 							action={`/parts/${p.id}/image/delete`}
@@ -635,7 +653,7 @@ function ImageCard(props: { part: Part; enabled: boolean }) {
 						{t.parts.noImage}
 					</div>
 				)}
-				{props.enabled ? (
+				{!can(view, "parts.edit") ? null : props.enabled ? (
 					<form
 						method="post"
 						action={`/parts/${p.id}/image`}
@@ -807,9 +825,12 @@ function CostShortcut(props: { action: string; label: string; icon: IconNode }) 
 
 /** The part's supplier offers: terms, the price a PO would use, and the last price paid to each supplier. */
 function OffersCard(props: { part: Part; offers: PartOffer[]; lastPaid: LastPaid }) {
-	const { t, isAdmin } = useApp();
+	const view = useApp();
+	const { t, seeCosts } = view;
 	const p = props.part;
 	const stocked = isStocked(p.kind);
+	// Offers stay visible without costs (who supplies it, MOQ, lead time); editing them is a price change.
+	const canEdit = stocked && can(view, "prices.edit");
 	return (
 		<TableCard
 			id="suppliers"
@@ -820,7 +841,7 @@ function OffersCard(props: { part: Part; offers: PartOffer[]; lastPaid: LastPaid
 				</span>
 			}
 			action={
-				stocked ? (
+				canEdit ? (
 					<Button href={`/parts/${p.id}/offers/new`} variant="outline" size="sm" icon={icons.plus}>
 						{t.parts.addSupplier}
 					</Button>
@@ -834,11 +855,11 @@ function OffersCard(props: { part: Part; offers: PartOffer[]; lastPaid: LastPaid
 					<TableHeader>
 						<TableRow>
 							<TableHead>{t.parts.supplier}</TableHead>
-							<TableHead class="text-right">{t.parts.offerPrice}</TableHead>
+							{seeCosts ? <TableHead class="text-right">{t.parts.offerPrice}</TableHead> : null}
 							<TableHead class="text-right">{t.parts.moq}</TableHead>
 							<TableHead class="text-right">{t.parts.packSize}</TableHead>
 							<TableHead class="text-right">{t.parts.leadTime}</TableHead>
-							<TableHead class="text-right">{t.parts.lastPaid}</TableHead>
+							{seeCosts ? <TableHead class="text-right">{t.parts.lastPaid}</TableHead> : null}
 							<TableHead class="w-px">
 								<span class="sr-only">{t.common.actions}</span>
 							</TableHead>
@@ -865,16 +886,18 @@ function OffersCard(props: { part: Part; offers: PartOffer[]; lastPaid: LastPaid
 											{o.supplierRef ? <span class="text-xs text-muted-foreground">{o.supplierRef}</span> : null}
 										</span>
 									</TableCell>
-									<TableCell class="text-right whitespace-nowrap">
-										{o.priceCents === null && p.costCents !== null ? (
-											<span class="flex flex-col items-end gap-0.5">
-												<Money cents={poUnitPrice(o.priceCents, p.costCents)} />
-												<span class="text-xs text-muted-foreground">{t.parts.standardCostUsed}</span>
-											</span>
-										) : (
-											<Money cents={o.priceCents} />
-										)}
-									</TableCell>
+									{seeCosts ? (
+										<TableCell class="text-right whitespace-nowrap">
+											{o.priceCents === null && p.costCents !== null ? (
+												<span class="flex flex-col items-end gap-0.5">
+													<Money cents={poUnitPrice(o.priceCents, p.costCents)} />
+													<span class="text-xs text-muted-foreground">{t.parts.standardCostUsed}</span>
+												</span>
+											) : (
+												<Money cents={o.priceCents} />
+											)}
+										</TableCell>
+									) : null}
 									<TableCell class="text-right">
 										{o.moqMilli ? <Qty milli={o.moqMilli} unit={p.unit} /> : t.common.none}
 									</TableCell>
@@ -884,19 +907,21 @@ function OffersCard(props: { part: Part; offers: PartOffer[]; lastPaid: LastPaid
 									<TableCell class="text-right whitespace-nowrap tabular-nums">
 										{o.leadDays ? fmt(t.parts.leadDaysValue, { n: o.leadDays }) : t.common.none}
 									</TableCell>
-									<TableCell class="text-right whitespace-nowrap">
-										{last ? (
-											<span class="flex flex-col items-end gap-0.5">
-												<Money cents={last.unitCostCents} />
-												<span class="text-xs text-muted-foreground tabular-nums">{last.at.slice(0, 10)}</span>
-											</span>
-										) : (
-											<span class="text-muted-foreground">{t.common.none}</span>
-										)}
-									</TableCell>
+									{seeCosts ? (
+										<TableCell class="text-right whitespace-nowrap">
+											{last ? (
+												<span class="flex flex-col items-end gap-0.5">
+													<Money cents={last.unitCostCents} />
+													<span class="text-xs text-muted-foreground tabular-nums">{last.at.slice(0, 10)}</span>
+												</span>
+											) : (
+												<span class="text-muted-foreground">{t.common.none}</span>
+											)}
+										</TableCell>
+									) : null}
 									<TableCell class="py-1 text-right">
 										<div class="flex items-center justify-end gap-1">
-											{stocked && !o.preferred ? (
+											{canEdit && !o.preferred ? (
 												<form method="post" action={`/parts/${p.id}/offers/${o.supplierId}/prefer`} class="inline">
 													<Button
 														variant="ghost"
@@ -907,7 +932,7 @@ function OffersCard(props: { part: Part; offers: PartOffer[]; lastPaid: LastPaid
 													/>
 												</form>
 											) : null}
-											{stocked ? (
+											{canEdit ? (
 												<Button
 													href={`/parts/${p.id}/offers/${o.supplierId}`}
 													variant="ghost"
@@ -917,7 +942,7 @@ function OffersCard(props: { part: Part; offers: PartOffer[]; lastPaid: LastPaid
 													title={t.parts.editOffer}
 												/>
 											) : null}
-											{isAdmin ? (
+											{can(view, "parts.delete") ? (
 												<form
 													method="post"
 													action={`/parts/${p.id}/offers/${o.supplierId}/delete`}
@@ -1101,14 +1126,15 @@ function PriceHistoryCard(props: { part: Part; history: HistoryRow[]; paid: Paid
 }
 
 function PartBoms(props: { part: Part; summary: Awaited<ReturnType<typeof partBomSummary>> }) {
-	const { t } = useApp();
+	const view = useApp();
+	const { t, seeCosts } = view;
 	const { summary } = props;
 	const only = summary.boms.length === 1 ? summary.boms[0] : undefined;
 	return (
 		<Card>
 			<CardHeader>
 				<CardTitle>{t.parts.boms}</CardTitle>
-				{summary.rollup ? (
+				{seeCosts && summary.rollup ? (
 					<CardDescription>
 						{t.boms.totalCost}: <CostView cost={summary.rollup} refs={summary.refs} long />
 					</CardDescription>
@@ -1119,9 +1145,11 @@ function PartBoms(props: { part: Part; summary: Awaited<ReturnType<typeof partBo
 							{t.parts.openDiagram}
 						</Button>
 					) : null}
-					<Button href={`/boms/new?part=${props.part.id}`} variant="outline" size="sm" icon={icons.plus}>
-						{t.boms.new}
-					</Button>
+					{can(view, "boms.edit") ? (
+						<Button href={`/boms/new?part=${props.part.id}`} variant="outline" size="sm" icon={icons.plus}>
+							{t.boms.new}
+						</Button>
+					) : null}
 				</CardAction>
 			</CardHeader>
 			<CardContent class="px-2">
@@ -1134,7 +1162,7 @@ function PartBoms(props: { part: Part; summary: Awaited<ReturnType<typeof partBo
 								<TableHead>{t.boms.code}</TableHead>
 								<TableHead>{t.boms.revision}</TableHead>
 								<TableHead>{t.boms.status}</TableHead>
-								<TableHead class="text-right">{t.boms.totalCost}</TableHead>
+								{seeCosts ? <TableHead class="text-right">{t.boms.totalCost}</TableHead> : null}
 								<TableHead class="w-px">
 									<span class="sr-only">{t.common.actions}</span>
 								</TableHead>
@@ -1150,9 +1178,11 @@ function PartBoms(props: { part: Part; summary: Awaited<ReturnType<typeof partBo
 									<TableCell>
 										<StatusBadge status={b.status} />
 									</TableCell>
-									<TableCell class="text-right">
-										<CostView cost={b.cost} refs={summary.refs} />
-									</TableCell>
+									{seeCosts ? (
+										<TableCell class="text-right">
+											<CostView cost={b.cost} refs={summary.refs} />
+										</TableCell>
+									) : null}
 									<TableCell class="py-1 text-right">
 										<Button
 											href={`/boms/${b.id}/diagram`}
@@ -1318,7 +1348,7 @@ partRoutes.get("/:id", async (c) => {
 	);
 });
 
-partRoutes.get("/:id/edit", async (c) => {
+partRoutes.get("/:id/edit", requirePermission("parts.edit"), async (c) => {
 	const t = c.var.t;
 	const id = idParam(c);
 	const part = id ? await getPart(c.var.db, id) : undefined;
@@ -1344,7 +1374,7 @@ partRoutes.get("/:id/edit", async (c) => {
 	);
 });
 
-partRoutes.post("/:id", async (c) => {
+partRoutes.post("/:id", requirePermission("parts.edit"), async (c) => {
 	const t = c.var.t;
 	const id = idParam(c);
 	const part = id ? await getPart(c.var.db, id) : undefined;
@@ -1377,7 +1407,7 @@ partRoutes.post("/:id", async (c) => {
 // ---------------------------------------------------------------------------
 // Standard cost shortcuts (logged in the price history with a note saying where the value came from).
 
-partRoutes.post("/:id/cost/average", async (c) => {
+partRoutes.post("/:id/cost/average", requirePermission("prices.edit"), async (c) => {
 	const id = idParam(c);
 	const part = id ? await getPart(c.var.db, id) : undefined;
 	if (!part) return notFound(c);
@@ -1397,7 +1427,7 @@ partRoutes.post("/:id/cost/average", async (c) => {
 	return redirectOk(c, `/parts/${part.id}`);
 });
 
-partRoutes.post("/:id/cost/offer", async (c) => {
+partRoutes.post("/:id/cost/offer", requirePermission("prices.edit"), async (c) => {
 	const id = idParam(c);
 	const part = id ? await getPart(c.var.db, id) : undefined;
 	if (!part) return notFound(c);
@@ -1580,7 +1610,7 @@ partRoutes.get("/:id/offers", async (c) => {
 	return id ? c.redirect(`/parts/${id}#suppliers`, 303) : notFound(c);
 });
 
-partRoutes.get("/:id/offers/new", async (c) => {
+partRoutes.get("/:id/offers/new", requirePermission("prices.edit"), async (c) => {
 	const part = await partFromParam(c);
 	if (!part) return notFound(c);
 	if (!isStocked(part.kind)) return offerKindRefused(c, part);
@@ -1636,10 +1666,10 @@ async function offerStandardStatements(
 	return setStandardCostStatements(c.var.db, part, d.price, "form", c.var.user, nowIso(), note);
 }
 
-partRoutes.post("/:id/offers", createOffer);
-partRoutes.post("/:id/offers/new", createOffer);
+partRoutes.post("/:id/offers", requirePermission("prices.edit"), createOffer);
+partRoutes.post("/:id/offers/new", requirePermission("prices.edit"), createOffer);
 
-partRoutes.get("/:id/offers/:supplierId", async (c) => {
+partRoutes.get("/:id/offers/:supplierId", requirePermission("prices.edit"), async (c) => {
 	const part = await partFromParam(c);
 	if (!part) return notFound(c);
 	const found = await offerFromParam(c, part);
@@ -1653,7 +1683,7 @@ partRoutes.get("/:id/offers/:supplierId", async (c) => {
 	});
 });
 
-partRoutes.post("/:id/offers/:supplierId", async (c) => {
+partRoutes.post("/:id/offers/:supplierId", requirePermission("prices.edit"), async (c) => {
 	const part = await partFromParam(c);
 	if (!part) return notFound(c);
 	const found = await offerFromParam(c, part);
@@ -1698,7 +1728,7 @@ partRoutes.post("/:id/offers/:supplierId", async (c) => {
 	return redirectOk(c, `/parts/${part.id}`);
 });
 
-partRoutes.post("/:id/offers/:supplierId/prefer", async (c) => {
+partRoutes.post("/:id/offers/:supplierId/prefer", requirePermission("prices.edit"), async (c) => {
 	const part = await partFromParam(c);
 	if (!part) return notFound(c);
 	const found = await offerFromParam(c, part);
@@ -1710,7 +1740,7 @@ partRoutes.post("/:id/offers/:supplierId/prefer", async (c) => {
 	return redirectOk(c, `/parts/${part.id}`);
 });
 
-partRoutes.post("/:id/offers/:supplierId/delete", requireAdmin, async (c) => {
+partRoutes.post("/:id/offers/:supplierId/delete", requirePermission("parts.delete"), async (c) => {
 	const part = await partFromParam(c);
 	if (!part) return notFound(c);
 	const found = await offerFromParam(c, part);
@@ -1725,7 +1755,7 @@ for (const [action, archived] of [
 	["archive", true],
 	["unarchive", false],
 ] as const) {
-	partRoutes.post(`/:id/${action}`, requireAdmin, async (c) => {
+	partRoutes.post(`/:id/${action}`, requirePermission("parts.delete"), async (c) => {
 		const id = idParam(c);
 		if (!id) return notFound(c);
 		await c.var.db.update(parts).set({ archived, updatedAt: nowIso(), updatedBy: c.var.user }).where(eq(parts.id, id));
@@ -1733,7 +1763,7 @@ for (const [action, archived] of [
 	});
 }
 
-partRoutes.post("/:id/delete", requireAdmin, async (c) => {
+partRoutes.post("/:id/delete", requirePermission("parts.delete"), async (c) => {
 	const id = idParam(c);
 	if (!id) return notFound(c);
 	const part = await getPart(c.var.db, id);
