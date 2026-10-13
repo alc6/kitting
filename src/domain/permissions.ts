@@ -51,6 +51,27 @@ export type Action = keyof typeof PERMISSIONS;
 
 export const ACTIONS = Object.keys(PERMISSIONS) as Action[];
 
+/**
+ * The resources the actions are shown under, in display order (the Users page lists what each role may do,
+ * generated from PERMISSIONS through can()). Each action is in exactly one group: test/permissions.test.ts fails
+ * until a new action is placed. Labels: `t.roles.groups` and `t.roles.actions`.
+ */
+export const PERMISSION_GROUPS = [
+	{ key: "parts", actions: ["parts.edit", "parts.archive", "parts.delete"] },
+	{ key: "boms", actions: ["boms.edit", "boms.archive", "boms.delete"] },
+	{ key: "suppliers", actions: ["suppliers.edit", "suppliers.delete"] },
+	{ key: "costs", actions: ["costs.view", "prices.edit"] },
+	{ key: "builds", actions: ["builds.plan", "builds.complete"] },
+	{ key: "stock", actions: ["stock.adjust", "stock.count"] },
+	{ key: "purchasing", actions: ["purchasing.order", "purchasing.receive", "purchasing.delete"] },
+	{ key: "data", actions: ["import.preview", "import.commit", "backup.download", "backup.restore"] },
+	{ key: "history", actions: ["history.revert"] },
+	{ key: "apps", actions: ["apps.connect", "apps.manage"] },
+	{ key: "users", actions: ["users.manage"] },
+] as const satisfies readonly { key: string; actions: readonly Action[] }[];
+
+export type PermissionGroup = (typeof PERMISSION_GROUPS)[number]["key"];
+
 /** Who is asking: from resolveAccess() (src/domain/users.ts), once per request. */
 export type Access = { role: Role; seeCosts: boolean };
 

@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { ROLES } from "../src/db/schema";
-import { ACTIONS, type Action, atLeast, can, PERMISSIONS, redactCosts, redactCsv } from "../src/domain/permissions";
+import {
+	ACTIONS,
+	type Action,
+	atLeast,
+	can,
+	PERMISSION_GROUPS,
+	PERMISSIONS,
+	redactCosts,
+	redactCsv,
+} from "../src/domain/permissions";
 import { bomId, loadDemo, NOT_ADMIN, one, partId, postForm, request, setRole } from "./helpers";
 
 /** Demo data plus a draft PO, a sent PO and a planned build, as an admin would set them up. */
@@ -105,6 +114,15 @@ describe("permission table", () => {
 		// costs.view is the seeCosts flag computed by resolveAccess (planner and up, or the admin option).
 		expect(can({ role: "viewer", seeCosts: true }, "costs.view")).toBe(true);
 		expect(can({ role: "admin", seeCosts: false }, "costs.view")).toBe(false);
+	});
+});
+
+describe("permission groups", () => {
+	it("place every action in exactly one group", () => {
+		const placed: string[] = PERMISSION_GROUPS.flatMap((g) => [...g.actions]);
+		expect([...placed].sort()).toEqual([...ACTIONS].sort());
+		expect(new Set(placed).size).toBe(placed.length);
+		expect(new Set(PERMISSION_GROUPS.map((g) => g.key)).size).toBe(PERMISSION_GROUPS.length);
 	});
 });
 

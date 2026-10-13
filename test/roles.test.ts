@@ -1,9 +1,10 @@
 import { Hono } from "hono";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../src/app";
-import type { Role } from "../src/db/schema";
-import { atLeast } from "../src/domain/permissions";
+import { ROLES, type Role } from "../src/db/schema";
+import { atLeast, PERMISSION_GROUPS } from "../src/domain/permissions";
 import { canSeeCosts, resolveAccess } from "../src/domain/users";
+import { en } from "../src/i18n/en";
 import { assertWritesHavePermissions, requirePermission, unguardedWrites } from "../src/middleware/roles";
 import type { AppEnv } from "../src/types";
 import {
@@ -172,6 +173,34 @@ describe("users page", () => {
 		expect(await (await request("/users")).text()).toMatch(/name="lower_roles_see_costs" value="on" checked/);
 		await postForm("/users/settings", {});
 		expect(await one("SELECT value FROM settings")).toEqual({ value: "0" });
+	});
+
+	it("shows what each role can do as a matrix generated from the permission table", async () => {
+		const page = await (await request("/users")).text();
+		expect(page).toContain(en.roles.seeEverything);
+		for (const role of ROLES) expect(page).toContain(en.roles.names[role]);
+		for (const group of PERMISSION_GROUPS) {
+			expect(page).toContain(en.roles.groups[group.key]);
+			for (const action of group.actions)
+				expect(page, action).toContain(en.roles.actions[action].replace("'", "&#39;"));
+		}
+	});
+
+	it("shows costs to viewers and operators in the matrix only when the setting is on", async () => {
+		// The cells of the costs.view row, in role order: viewer, operator, planner, administrator.
+		const costsRow = async () => {
+			const html = await (await request("/users")).text();
+			const row = html.split("<tr").find((r) => r.includes("See costs, prices, valuations and margins")) ?? "";
+			return row
+				.split("<td")
+				.slice(2)
+				.map((cell) => (cell.includes(">Not allowed<") ? "no" : cell.includes(">Allowed<") ? "yes" : "?"));
+		};
+		expect(await costsRow()).toEqual(["no", "no", "yes", "yes"]);
+		await postForm("/users/settings", { lower_roles_see_costs: "on" });
+		expect(await costsRow()).toEqual(["yes", "yes", "yes", "yes"]);
+		await postForm("/users/settings", {});
+		expect(await costsRow()).toEqual(["no", "no", "yes", "yes"]);
 	});
 
 	it("is included in the JSON backup", async () => {

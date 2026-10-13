@@ -1,7 +1,9 @@
 import { type Context, Hono } from "hono";
 import { z } from "zod";
-import { ROLES } from "../db/schema";
+import { ROLES, type Role } from "../db/schema";
+import { type Action, can, PERMISSION_GROUPS } from "../domain/permissions";
 import {
+	canSeeCosts,
 	deleteUserStatement,
 	getUser,
 	listUsers,
@@ -17,7 +19,7 @@ import { parseAdminEmails } from "../middleware/auth";
 import { requirePermission } from "../middleware/roles";
 import type { AppEnv } from "../types";
 import { useApp } from "../views/context";
-import { icons } from "../views/icons";
+import { Icon, icons } from "../views/icons";
 import { idParam, nowIso, page, redirectOk, saveChanges, translateErrors } from "../views/render";
 import {
 	Badge,
@@ -28,7 +30,6 @@ import {
 	CardHeader,
 	CardTitle,
 	CheckboxField,
-	DetailList,
 	EmptyState,
 	ErrorBanner,
 	FieldGroup,
@@ -185,17 +186,70 @@ function UsersPage(props: {
 							</form>
 						</CardContent>
 					</Card>
-					<Card>
-						<CardHeader>
-							<CardTitle tag="h2">{t.users.rolesTitle}</CardTitle>
-						</CardHeader>
-						<CardContent>
-							<DetailList items={ROLES.map((r) => ({ label: t.roles.names[r], value: t.roles.help[r] }))} />
-						</CardContent>
-					</Card>
 				</div>
 			</div>
+			<RoleMatrix lowerRolesSeeCosts={props.seeCosts} />
 		</>
+	);
+}
+
+/** Whether each role may do each action, computed with can() from PERMISSIONS (it cannot drift from the rules). */
+function RoleMatrix(props: { lowerRolesSeeCosts: boolean }) {
+	const { t } = useApp();
+	const hints: Partial<Record<Action, string>> = t.roles.hints;
+	const access = (role: Role) => ({ role, seeCosts: canSeeCosts(role, props.lowerRolesSeeCosts) });
+	const cell = (allowed: boolean) => (
+		<TableCell class="text-center">
+			{allowed ? (
+				<span class="inline-flex size-6 items-center justify-center rounded-full bg-primary/10 text-primary">
+					<Icon icon={icons.check} class="size-4" />
+					<span class="sr-only">{t.roles.allowed}</span>
+				</span>
+			) : (
+				<span class="text-muted-foreground">
+					<span aria-hidden="true">–</span>
+					<span class="sr-only">{t.roles.forbidden}</span>
+				</span>
+			)}
+		</TableCell>
+	);
+	return (
+		<TableCard id="role-matrix" title={t.users.rolesTitle} class="mt-6">
+			<Table>
+				<TableHeader>
+					<TableRow>
+						<TableHead scope="col">{t.roles.action}</TableHead>
+						{ROLES.map((role) => (
+							<TableHead scope="col" class="text-center">
+								<span title={t.roles.help[role]}>{t.roles.names[role]}</span>
+							</TableHead>
+						))}
+					</TableRow>
+				</TableHeader>
+				<TableBody>
+					<TableRow>
+						<TableCell class="font-medium">{t.roles.seeEverything}</TableCell>
+						{ROLES.map(() => cell(true))}
+					</TableRow>
+					{PERMISSION_GROUPS.flatMap((group) => [
+						<TableRow class="bg-muted/50 hover:bg-muted/50">
+							<TableHead scope="rowgroup" colspan={ROLES.length + 1} class="h-9 text-foreground">
+								{t.roles.groups[group.key]}
+							</TableHead>
+						</TableRow>,
+						...group.actions.map((action: Action) => (
+							<TableRow>
+								<TableCell class="min-w-64">
+									<div class="font-medium">{t.roles.actions[action]}</div>
+									{hints[action] ? <div class="text-xs text-muted-foreground">{hints[action]}</div> : null}
+								</TableCell>
+								{ROLES.map((role) => cell(can(access(role), action)))}
+							</TableRow>
+						)),
+					])}
+				</TableBody>
+			</Table>
+		</TableCard>
 	);
 }
 

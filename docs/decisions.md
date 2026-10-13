@@ -661,3 +661,12 @@ Short log of choices made where the brief left room. Newest at the bottom of eac
   rows left a void under whichever card was shorter (an empty shortage list next to ten alerts). The rail starts at
   `xl` because at `lg` with the sidebar open it is too narrow for a part reference; alert rows stack the quantity
   above the badge for the same reason. Below `xl` the alerts come after the open POs.
+
+- **D139. The Users page shows what each role can do as a matrix generated from the permission table.** The old card
+  of four one-line role descriptions could drift from the rules. The matrix lists every action of `PERMISSIONS`,
+  grouped by resource in `PERMISSION_GROUPS` (`src/domain/permissions.ts`), and each cell is `can({ role, seeCosts },
+  action)`, where `seeCosts` follows the page's "lower roles see costs" setting through `canSeeCosts()` (so the
+  costs row changes with it). A test fails until a new action is placed in exactly one group, and `t.roles.actions`
+  (typed `Record<Action, string>`) fails to compile without its label. The one-line role descriptions stay as the
+  tooltip of each column header; a cell is a check or a dash with screen-reader text, and the table scrolls
+  sideways on a phone.

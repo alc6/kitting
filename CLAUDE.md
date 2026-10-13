@@ -161,7 +161,8 @@ was built with; `npx skills update` refreshes it.
     or `xRoutes.use("*", requirePermission("…"))` for a whole router. `createApp()` refuses to start if a
     write route has none. Pages that only some roles may open (forms, cost pages) declare one too.
   - A new kind of action goes in the table, then in the `CALLS` of `test/permissions.test.ts` (it fails
-    until it is there).
+    until it is there), in a group of `PERMISSION_GROUPS` with a label in `t.roles.actions` (both dictionaries):
+    the matrix on the Users page is generated from them (D139).
 - Costs, prices, valuations and margins are shown only when `seeCosts` (the cached `can(access,
   "costs.view")`): drop the column or card, never print an amount outside `Money`/`CostView`.
   `csvResponse` strips money columns (`MONEY_COLUMNS`) from every CSV; outside HTTP use `redactCosts()`.
