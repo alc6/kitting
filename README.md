@@ -13,14 +13,17 @@ tiers cover a small workshop. Deployment is one command.
 
 - **Parts**: `buy` (purchased, stocked), `make` (assembled in-house, stockable),
   `kit` (phantom: always exploded into its parent) and `fee` (cost only, e.g. eco-fees).
-  Units (pcs, m, kg…), standard cost, selling price, serial tracking.
+  Units (pcs, m, kg…), standard cost, selling price, serial tracking, and a **product image**
+  (photos taken on a tablet are shrunk in the browser before upload; optional, stored in R2).
 - **Suppliers** with contact details, and **several suppliers per part**: each offer has its
   reference, price, MOQ, pack size and lead time; one is preferred and drives purchasing.
 - **Prices**: an append-only history of standard costs, supplier prices and selling prices
   (who, when, from where), plus the prices actually paid on receipts, charted on each part.
 - **Margins**: selling price per product, optionally per BoM variant; planned margin against
   the cost roll-up and actual margin of completed builds, as an amount, a rate on the selling
-  price and a markup on cost.
+  price and a markup on cost. Each item has a **margin history**: a chart and a list of every
+  day a component cost or the selling price moved it, plus the actual margin of each build.
+  Planned margins follow standard costs; saving a supplier price can update the standard cost too.
 - **Bills of materials** with variants (e.g. `std`, `warm`) and revisions: line editor,
   "new revision" copies, one active BoM per variant, cycle protection, expandable tree with
   cumulative quantities and cost roll-up (flagged incomplete when a cost is missing), a
@@ -69,7 +72,8 @@ All signed-in users are equal; a list of admin emails gates destructive actions
   and component recipes, ported to server-side JSX (no React in the browser); the stylesheet
   is built at deploy time.
 - Data lives in a D1 (SQLite) database. Money is stored in integer cents, quantities in
-  integer thousandths: no floating-point rounding errors.
+  integer thousandths: no floating-point rounding errors. Product images, if enabled, live in
+  an R2 bucket.
 
 ## Deploy in five steps
 
@@ -81,12 +85,15 @@ You need a Cloudflare account with a domain on it, Node.js 20+, and this reposit
    ```bash
    npx wrangler login
    npx wrangler d1 create kitting
+   npx wrangler r2 bucket create kitting-images
    cp wrangler.example.jsonc wrangler.jsonc
    ```
 
    Put the printed `database_id` in `wrangler.jsonc`, and set the `routes` pattern to the
    hostname you will use (for example `kitting.example.com`). `wrangler.jsonc` is
-   gitignored: it never ends up in the repository.
+   gitignored: it never ends up in the repository. The R2 bucket holds product images and is
+   optional: without it, delete the `r2_buckets` block from `wrangler.jsonc` and the app runs
+   without images.
 
 2. **Apply the migrations**
 
@@ -130,10 +137,12 @@ generates `wrangler.jsonc` from repository settings, so nothing account-specific
 committed. In *Settings → Secrets and variables → Actions*, add:
 
 - secrets `CLOUDFLARE_API_TOKEN` (permissions: *Workers Scripts: Edit*, *D1: Edit*,
-  *Workers Routes: Edit*, *Zone: Read* on your zone) and `CLOUDFLARE_ACCOUNT_ID`;
+  *Workers Routes: Edit*, *Zone: Read* on your zone, plus *Workers R2 Storage: Edit* if you
+  use images) and `CLOUDFLARE_ACCOUNT_ID`;
 - variables `KITTING_DOMAIN`, `D1_DATABASE_ID`, `TEAM_DOMAIN`, `ACCESS_AUD`,
   `ADMIN_EMAILS` and, optionally, `DEFAULT_LOCALE`, `CURRENCY`, `WORKER_NAME`,
-  `D1_DATABASE_NAME`.
+  `D1_DATABASE_NAME`, `IMAGES_BUCKET` (the name of an R2 bucket created beforehand with
+  `npx wrangler r2 bucket create`; product images are off without it).
 
 Then run *Actions → Deploy → Run workflow*. It runs the checks, applies migrations and
 deploys. You can generate the same file locally with
@@ -198,9 +207,11 @@ current data.
   current values (so `ref,cost` updates prices only). `supplier` is the preferred supplier's
   name and `supplier_ref`…`lead_days` its terms. An empty `cost` means "unknown"; `sale_price`
   is the selling price excluding VAT.
-- `part_suppliers.csv`: `ref,supplier,supplier_ref,price,moq,pack_size,lead_days,preferred,notes`.
+- `part_suppliers.csv`: `ref,supplier,supplier_ref,price,moq,pack_size,lead_days,preferred,notes,set_standard_cost`.
   One row per part and supplier (upsert by both); `preferred` = `yes` makes that supplier the
-  one used for shortages and draft POs. Every price change is kept in the price history.
+  one used for shortages and draft POs, and `set_standard_cost` = `yes` also makes the row's price
+  the part's standard cost (what planned costs and margins use). Every price change is kept in the
+  price history.
 - `stock.csv`: `ref,qty,serial,unit_cost`. Sets on-hand to the counted `qty` with a
   `count` move for the difference. For serial-tracked parts that have no stock yet, use one
   row per serial with `qty` 1.
@@ -215,6 +226,10 @@ current data.
 - **Import / Export → Backup** downloads the whole database as one JSON file. An admin can
   restore it (same Kitting version) on the same or another deployment: a preview shows what
   the file contains, then everything is replaced in one transaction.
+- Product images are not in that file: it only records which image each part points to. The
+  images stay in the R2 bucket (copy it with any S3-compatible tool if you need an offsite
+  copy). An image replaced or removed after a backup was taken is gone from the bucket, so
+  restoring that backup shows those parts without an image.
 - D1 also keeps 30 days of point-in-time history (*Time Travel*), and Wrangler can dump SQL:
 
   ```bash

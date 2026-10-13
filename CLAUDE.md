@@ -35,15 +35,18 @@ Record every new non-obvious choice in `docs/decisions.md`.
   `purchasing.ts` (shortage engine, POs, receipts), `backup.ts` (JSON export/restore),
   `tree-layout.ts` (pure diagram layout), `search.ts` (global search), `offers.ts` (supplier offers),
   `prices.ts` (price history, dated standard costs), `costing.ts` (pure weighted average replay),
-  `margins.ts` (planned and actual margins).
+  `margins.ts` (planned and actual margins), `margin-history.ts` (margins over time, replayed from the
+  price history), `images.ts` (product images in R2).
   `src/domain/import/`: one importer per CSV type, all implementing `Importer`.
 - `src/routes/*.tsx`: one Hono router per area, with its page components.
 - `src/views/`: layout (sidebar, header), shadcn-style components (`ui.tsx`), icons (`icons.tsx`),
-  BoM diagram (`bom-diagram.tsx`), render helpers, view context (`useApp()`: locale, theme, sidebar…).
+  BoM diagram (`bom-diagram.tsx`), time charts (`chart.tsx`), render helpers, view context
+  (`useApp()`: locale, theme, sidebar…).
 - `src/styles/app.css`: Tailwind source: shadcn tokens (light/dark), base layer, legacy classes.
 - `src/lib/`: units (fixed-point), CSV, validation (zod field builders), SQL helpers, batch.
 - `src/i18n/`: `en.ts` defines the `Dict` type; `fr.ts` must match it (compile error otherwise).
-- `public/static/`: built CSS, `app.js` (confirm, theme/sidebar toggles, search shortcut, diagram zoom),
+- `public/static/`: built CSS, `app.js` (confirm, theme/sidebar toggles, search shortcut, diagram zoom,
+  photo shrinking before upload),
   vendored `htmx.min.js` (`npm run vendor:htmx` to update).
 
 ## Data rules
@@ -62,6 +65,9 @@ Record every new non-obvious choice in `docs/decisions.md`.
   `saveOfferStatements`, `setStandardCostStatements`, `bomSalePriceStatements`). Prices paid are the receipt moves.
 - Supplier terms live in `part_suppliers` (one offer per part and supplier); `parts.supplier_id` is the
   preferred one. `parts.supplier_ref/moq_milli/pack_size_milli/lead_days` are deprecated: never use them.
+- Product images live in the optional `IMAGES` R2 bucket: always go through `imagesBucket(c.env)` (null when
+  the deployment has none, and the UI must then hide image controls). `parts.image_key` is the
+  content-addressed object key; uploads are typed from their magic bytes (JPEG, PNG, WebP only, never SVG).
 - Schema changes must stay additive on D1 (no table rebuilds under child tables): read the generated SQL,
   and apply it to a local database with data (`wrangler d1 migrations apply DB --local`) before committing.
 - Any write touching several rows goes through `runBatch()` (one D1 batch = one transaction).

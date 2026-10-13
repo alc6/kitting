@@ -135,7 +135,7 @@ function bomPricing(part: Part, bom: Bom, calc: CostCalculator): BomPricing | nu
 }
 
 /** Selling price and planned margin, shown in the BoM header when the variant has a price. */
-function PricingSummary(props: { pricing: BomPricing }) {
+function PricingSummary(props: { pricing: BomPricing; bomId: number }) {
 	const { t, locale } = useApp();
 	const { pricing } = props;
 	const m = pricing.margin;
@@ -168,6 +168,10 @@ function PricingSummary(props: { pricing: BomPricing }) {
 					) : null}
 				</span>
 			) : null}
+			<a href={`/margins/boms/${props.bomId}`} class="inline-flex items-center gap-1 font-medium">
+				<Icon icon={icons.chartLine} class="size-3.5" />
+				{t.margins.historyTitle}
+			</a>
 		</>
 	);
 }
@@ -189,7 +193,7 @@ function BomHeader(props: { bom: Bom; part: Part; tab: BomTab; pricing?: BomPric
 							{t.boms.revision}: <strong class="font-medium text-foreground">{bom.revision}</strong>
 						</span>
 						<StatusBadge status={bom.status} />
-						{props.pricing ? <PricingSummary pricing={props.pricing} /> : null}
+						{props.pricing ? <PricingSummary pricing={props.pricing} bomId={bom.id} /> : null}
 					</span>
 				}
 				actions={

@@ -203,3 +203,21 @@ describe("i18n", () => {
 		expect(html).toContain("Tableau de bord");
 	});
 });
+
+describe("parts search", () => {
+	it("finds a part by any of its suppliers' references", async () => {
+		const id = await insertPart("RES-1K", "buy");
+		const other = await insertSupplier("Other Distributor");
+		await postForm(`/parts/${id}/offers`, {
+			supplier_id: String(other),
+			supplier_ref: "R1K-0603-X",
+			price: "",
+			moq: "",
+			pack_size: "",
+			lead_days: "",
+			notes: "",
+		});
+		expect(await (await request("/parts?q=r1k-0603")).text()).toContain(`href="/parts/${id}"`);
+		expect(await (await request("/parts?q=nothing-like-it")).text()).not.toContain(`href="/parts/${id}"`);
+	});
+});

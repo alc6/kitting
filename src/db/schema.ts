@@ -78,6 +78,8 @@ export const parts = sqliteTable(
 		archived: integer("archived", { mode: "boolean" }).notNull().default(false),
 		notes: text("notes").notNull().default(""),
 		...audit(),
+		// Product image: key of an object in the IMAGES R2 bucket, "parts/<id>/<sha256 prefix>.<ext>" (D100).
+		imageKey: text("image_key"),
 	},
 	(t) => [
 		uniqueIndex("parts_ref_unique").on(t.ref),

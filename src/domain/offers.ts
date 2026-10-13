@@ -36,6 +36,8 @@ export const offerInput = z.object({
 	lead_days: field.int(),
 	notes: field.text(),
 	preferred: field.bool(),
+	/** Also make this price the part's standard cost (D99). Not stored on the offer. */
+	set_standard_cost: field.bool(),
 });
 export type OfferInput = z.output<typeof offerInput>;
 
@@ -60,6 +62,7 @@ export function offerToForm(o: PartSupplier, preferred: boolean, locale: NumberL
 		lead_days: o.leadDays ? String(o.leadDays) : "",
 		notes: o.notes,
 		preferred: preferred ? "on" : "",
+		set_standard_cost: "",
 	};
 }
 

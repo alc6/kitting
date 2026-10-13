@@ -21,7 +21,8 @@ export const securityHeaders = createMiddleware<AppEnv>(async (c, next) => {
 	c.header("X-Frame-Options", "DENY");
 	c.header("Referrer-Policy", "same-origin");
 	c.header("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
-	c.header("Cache-Control", "no-store");
+	// Pages are never cached; a handler may opt in (product images, served at immutable URLs).
+	if (!c.res.headers.has("Cache-Control")) c.header("Cache-Control", "no-store");
 });
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);

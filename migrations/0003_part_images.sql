@@ -1,0 +1,1 @@
+ALTER TABLE `parts` ADD `image_key` text;

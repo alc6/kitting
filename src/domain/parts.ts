@@ -175,7 +175,9 @@ export async function listParts(db: Db, f: PartFilters = {}) {
 	if (f.q) {
 		const like = likePattern(f.q);
 		conds.push(
-			sql`(${parts.ref} LIKE ${like} ESCAPE '\\' OR ${parts.name} LIKE ${like} ESCAPE '\\' OR ${parts.supplierRef} LIKE ${like} ESCAPE '\\')`,
+			// Supplier references live on the offers (D90): any supplier's reference matches.
+			sql`(${parts.ref} LIKE ${like} ESCAPE '\\' OR ${parts.name} LIKE ${like} ESCAPE '\\' OR EXISTS (
+				SELECT 1 FROM part_suppliers ps WHERE ps.part_id = ${parts.id} AND ps.supplier_ref LIKE ${like} ESCAPE '\\'))`,
 		);
 	}
 	if (f.kind && (PART_KINDS as readonly string[]).includes(f.kind)) conds.push(eq(parts.kind, f.kind as PartKind));
@@ -196,6 +198,7 @@ export async function listParts(db: Db, f: PartFilters = {}) {
 			supplierId: parts.supplierId,
 			supplierName: suppliers.name,
 			onHandMilli: onHandSql,
+			imageKey: parts.imageKey,
 		})
 		.from(parts)
 		.leftJoin(suppliers, eq(parts.supplierId, suppliers.id))

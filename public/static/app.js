@@ -140,6 +140,62 @@
 		}
 	}
 
+	// <input type="file" data-image-input>: photos are shrunk in the browser before upload (longest side
+	// 1600 px, WebP, or JPEG where WebP cannot be encoded), so a tablet's camera picture weighs a few hundred
+	// KB instead of several MB. On any failure the original file is sent; the server checks it anyway.
+	const MAX_SIDE = 1600;
+	const shrink = async (file) => {
+		if (!/^image\/(jpeg|png|webp)$/.test(file.type) || typeof createImageBitmap !== "function") return null;
+		// Camera photos carry their rotation in EXIF: apply it (ignored where the option is unknown).
+		const bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
+		const scale = Math.min(1, MAX_SIDE / Math.max(bitmap.width, bitmap.height));
+		if (scale === 1 && file.size <= 1_000_000) {
+			bitmap.close();
+			return null;
+		}
+		const canvas = document.createElement("canvas");
+		canvas.width = Math.round(bitmap.width * scale);
+		canvas.height = Math.round(bitmap.height * scale);
+		const ctx = canvas.getContext("2d");
+		if (!ctx) return null;
+		ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+		bitmap.close();
+		const encode = (type) => new Promise((resolve) => canvas.toBlob(resolve, type, 0.85));
+		let blob = await encode("image/webp");
+		if (blob?.type !== "image/webp") {
+			// JPEG has no transparency: paint white behind the picture.
+			ctx.globalCompositeOperation = "destination-over";
+			ctx.fillStyle = "#fff";
+			ctx.fillRect(0, 0, canvas.width, canvas.height);
+			blob = await encode("image/jpeg");
+		}
+		if (!blob || blob.size >= file.size) return null;
+		const name = `${file.name.replace(/\.[^.]*$/, "")}.${blob.type === "image/webp" ? "webp" : "jpg"}`;
+		return new File([blob], name, { type: blob.type });
+	};
+
+	document.addEventListener("change", async (event) => {
+		const input = event.target;
+		if (!(input instanceof HTMLInputElement) || input.dataset.imageInput === undefined) return;
+		const file = input.files?.[0];
+		if (!file) return;
+		// Not sendable while the picture is being shrunk.
+		const submit = input.form?.querySelector("button:not([type]), button[type='submit']");
+		if (submit) submit.disabled = true;
+		try {
+			const smaller = await shrink(file);
+			if (smaller && typeof DataTransfer === "function") {
+				const transfer = new DataTransfer();
+				transfer.items.add(smaller);
+				input.files = transfer.files;
+			}
+		} catch {
+			// Keep the original file.
+		} finally {
+			if (submit) submit.disabled = false;
+		}
+	});
+
 	// "/" or Ctrl/Cmd+K: jump to the global search.
 	document.addEventListener("keydown", (event) => {
 		const target = event.target;

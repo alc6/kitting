@@ -1,8 +1,10 @@
 import { asc, eq } from "drizzle-orm";
 import { type PartSupplier, partSuppliers, parts, suppliers } from "../../db/schema";
+import { dict, fmt } from "../../i18n";
 import { formatCentsInput, formatQtyInput } from "../../lib/units";
 import { validate } from "../../lib/validation";
 import { offerInput, offerTerms, offerToForm, saveOfferStatements, setPreferredStatement } from "../offers";
+import { setStandardCostStatements } from "../parts";
 import { checkHeader, emptyPlan, fieldIssues, type Importer, type PlanRow, type RowIssue } from "./types";
 
 const CSV_COLUMNS = [
@@ -15,29 +17,39 @@ const CSV_COLUMNS = [
 	"lead_days",
 	"preferred",
 	"notes",
+	"set_standard_cost",
 ] as const;
 
 const fieldToColumn = (f: string): string => (f === "supplier_id" ? "supplier" : f);
 
 /**
  * part_suppliers.csv: supplier offers, one row per (part, supplier). Upsert by ref + supplier; columns left
- * out keep their current values. `preferred` = yes makes that supplier the part's preferred one (D92).
+ * out keep their current values. `preferred` = yes makes that supplier the part's preferred one (D92);
+ * `set_standard_cost` = yes also makes the row's price the part's standard cost (D99).
  */
 export const offersImporter: Importer = {
 	type: "part_suppliers",
 	required: ["ref", "supplier"],
 	optional: CSV_COLUMNS.filter((c) => c !== "ref" && c !== "supplier"),
 	example: [
-		["RES-10K", "Example Components Ltd", "RC0603-10K", "0.008", "100", "100", "7", "yes", ""],
-		["RES-10K", "Other Distributor", "R10K-0603", "0.012", "10", "", "2", "no", "faster, pricier"],
+		["RES-10K", "Example Components Ltd", "RC0603-10K", "0.008", "100", "100", "7", "yes", "", "yes"],
+		["RES-10K", "Other Distributor", "R10K-0603", "0.012", "10", "", "2", "no", "faster, pricier", ""],
 	],
 
-	async plan({ db }, table) {
+	async plan({ db, locale }, table) {
 		const { errors, warnings } = checkHeader(this, table);
 		if (errors.length) return emptyPlan("part_suppliers", errors, warnings);
 
 		const [allParts, allSuppliers, allOffers] = await Promise.all([
-			db.select({ id: parts.id, ref: parts.ref, kind: parts.kind, supplierId: parts.supplierId }).from(parts),
+			db
+				.select({
+					id: parts.id,
+					ref: parts.ref,
+					kind: parts.kind,
+					supplierId: parts.supplierId,
+					costCents: parts.costCents,
+				})
+				.from(parts),
 			db.select({ id: suppliers.id, name: suppliers.name }).from(suppliers),
 			db.select().from(partSuppliers),
 		]);
@@ -55,8 +67,13 @@ export const offersImporter: Importer = {
 			previous: PartSupplier | undefined;
 			/** Make this supplier preferred (true), stop preferring it (false), or leave as is (null). */
 			preferred: boolean | null;
+			/** New standard cost of the part (set_standard_cost), or null to leave it. */
+			standard: { part: { id: number; costCents: number | null }; cents: number; note: string } | null;
 		}[] = [];
 		const seen = new Map<string, number>();
+		/** Line that sets each part's standard cost: only one per part. */
+		const standardLine = new Map<number, number>();
+		const t = dict(locale);
 
 		for (const rec of table.records) {
 			const ref = (rec.values.ref ?? "").trim();
@@ -97,9 +114,33 @@ export const offersImporter: Importer = {
 			}
 			const data = offerTerms(v.data);
 			const preferred = present.has("preferred") ? v.data.preferred : null;
+			let standard: (typeof ops)[number]["standard"] = null;
+			if (v.data.set_standard_cost) {
+				const otherLine = standardLine.get(part.id);
+				if (data.priceCents === null) {
+					issues.push({ line: rec.line, column: "set_standard_cost", key: "standard_needs_price" });
+					continue;
+				}
+				if (otherLine !== undefined) {
+					issues.push({
+						line: rec.line,
+						column: "set_standard_cost",
+						key: "standard_twice",
+						vars: { line: otherLine },
+					});
+					continue;
+				}
+				standardLine.set(part.id, rec.line);
+				if (data.priceCents !== part.costCents)
+					standard = { part, cents: data.priceCents, note: fmt(t.parts.noteOffer, { supplier: supplier.name }) };
+			}
 			const changes = previous ? diffOffer(previous, data) : [];
 			if (preferred !== null && preferred !== wasPreferred)
 				changes.push(`preferred: ${wasPreferred ? "yes" : "no"} → ${preferred ? "yes" : "no"}`);
+			if (standard) {
+				const money = (v: number | null) => (v === null ? "∅" : formatCentsInput(v));
+				changes.push(`standard cost: ${money(part.costCents)} → ${money(standard.cents)}`);
+			}
 			rows.push({
 				line: rec.line,
 				action: previous ? (changes.length ? "update" : "unchanged") : "create",
@@ -118,6 +159,7 @@ export const offersImporter: Importer = {
 					data,
 					previous,
 					preferred: preferred === wasPreferred ? null : preferred,
+					standard,
 				});
 		}
 
@@ -133,6 +175,9 @@ export const offersImporter: Importer = {
 					...(op.preferred === null
 						? []
 						: [setPreferredStatement(db, op.partId, op.preferred ? op.supplierId : null, user, now)]),
+					...(op.standard
+						? setStandardCostStatements(db, op.standard.part, op.standard.cents, "import", user, now, op.standard.note)
+						: []),
 				]),
 		};
 	},
@@ -154,6 +199,7 @@ export const offersImporter: Importer = {
 			o.leadDays ? String(o.leadDays) : "",
 			preferredId === o.supplierId ? "yes" : "no",
 			o.notes,
+			"",
 		]);
 	},
 };

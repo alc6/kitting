@@ -3,7 +3,8 @@
 // variables. Used by the deploy workflow and for local `npm run config`.
 //
 // Required: KITTING_DOMAIN, D1_DATABASE_ID, TEAM_DOMAIN, ACCESS_AUD, ADMIN_EMAILS
-// Optional: WORKER_NAME (kitting), D1_DATABASE_NAME (kitting), DEFAULT_LOCALE (en), CURRENCY (EUR)
+// Optional: WORKER_NAME (kitting), D1_DATABASE_NAME (kitting), DEFAULT_LOCALE (en), CURRENCY (EUR),
+//           IMAGES_BUCKET (an existing R2 bucket for product images; no images without it)
 //
 // The generated config always runs in production mode: ENVIRONMENT=production and an
 // empty DEV_AUTH_EMAIL, so the development auth bypass can never reach a deployment.
@@ -60,6 +61,9 @@ export function buildConfig(template, env) {
 	config.routes = [{ pattern: domain, custom_domain: true }];
 	config.d1_databases[0].database_id = env.D1_DATABASE_ID.trim();
 	config.d1_databases[0].database_name = env.D1_DATABASE_NAME?.trim() || config.d1_databases[0].database_name;
+	const bucket = env.IMAGES_BUCKET?.trim();
+	if (bucket) config.r2_buckets = [{ binding: "IMAGES", bucket_name: bucket }];
+	else delete config.r2_buckets;
 	config.vars = {
 		...config.vars,
 		ENVIRONMENT: "production",

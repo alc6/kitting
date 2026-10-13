@@ -273,3 +273,38 @@ Short log of choices made where the brief left room. Newest at the bottom of eac
   "Use average as standard cost" (refused while the average is incomplete) and "Use preferred offer price
   as standard cost" write the history with a note in the user's language. The price chart is server-rendered
   SVG: standard cost as a step line, prices paid as dots.
+- **D98. Margin history is derived, never stored.** Each sellable item (`/margins/boms/:id`,
+  `/margins/parts/:id`) replays the price history (`src/domain/margin-history.ts`, pure core): one planned
+  point per day on which the standard cost of a component of its roll-up (buy and fee parts, make and kit
+  parts without an active BoM; a rolled-up sub-assembly's own standard cost does not count) or its selling
+  price changed, skipping days that did not move it (e.g. the part's price while a variant has its own).
+  Same limits as the dated valuation (D91, D92): today's BoM structure, and costs before the history
+  started use their first recorded value (flagged). Actual points are the completed builds at weighted
+  average cost against the selling price valid on the day each was completed: there is no sales record.
+  Snapshots were rejected: they would duplicate data the log already holds and drift from it. The chart
+  is the price chart's step-line component, moved to `src/views/chart.tsx`.
+- **D99. A supplier price can become the standard cost, on request.** Planned costs and margins follow the
+  standard cost, not offer prices (D93), so a supplier going from 2.00 to 4.00 moves nothing until someone
+  updates the standard cost. The offer form gains an unticked "Also use this price as the standard cost"
+  and `part_suppliers.csv` an optional `set_standard_cost` column (one row per part at most; it needs a
+  price). Off by default: the standard cost stays a deliberate choice (it may include freight, or be set
+  yearly), and the change is one tick away. Both write the standard cost history with the offer's
+  supplier as the note.
+
+## Product images
+
+- **D100. One image per part, in an optional R2 bucket.** D1 was ruled out on its limits: rows and BLOBs
+  are capped at 2 MB, BLOBs come back as arrays of numbers, and the JSON backup is built in memory, so
+  images would make backups fragile as the catalogue grows. The `IMAGES` binding is optional
+  (`imagesBucket(env)`): existing deployments keep working untouched, the deploy workflow adds the binding
+  only when `IMAGES_BUCKET` is set, and without it the UI hides image controls (admins see a hint).
+  `parts.image_key` (migration 0003, additive) holds a content-addressed key
+  (`parts/<id>/<sha256 prefix>.<ext>`), so `/parts/:id/image?v=<hash>` is cached privately for a year and
+  a replaced image never shows stale. The object is written before the pointer; the previous object is
+  deleted after it. Uploads are typed from their magic bytes: JPEG, PNG or WebP only (no SVG, which could
+  carry script; no HEIC, which browsers do not display), at most 10 MB. With JavaScript, `app.js` shrinks
+  photos to 1600 px (WebP, else JPEG on white) before upload; without it the server limit applies. Anyone
+  can upload or replace (like editing a part); removing is admin-only. The JSON backup holds the keys, not
+  the images (README); an image replaced after a backup is lost to that backup. The pages' security
+  middleware keeps `Cache-Control: no-store` unless a handler set its own. The parts search now matches any
+  supplier's reference on the offers (it still read the deprecated `parts.supplier_ref`, D90).

@@ -9,6 +9,7 @@ import { originCheck, securityHeaders } from "./middleware/security";
 import { bomRoutes } from "./routes/boms";
 import { buildRoutes } from "./routes/builds";
 import { dashboardRoutes } from "./routes/dashboard";
+import { imageRoutes } from "./routes/images";
 import { importRoutes } from "./routes/import";
 import { marginRoutes } from "./routes/margins";
 import { partRoutes } from "./routes/parts";
@@ -76,6 +77,7 @@ export function createApp() {
 
 	app.route("/", dashboardRoutes);
 	app.route("/suppliers", supplierRoutes);
+	app.route("/parts", imageRoutes);
 	app.route("/parts", partRoutes);
 	app.route("/builds", buildRoutes);
 	app.route("/boms", bomRoutes);

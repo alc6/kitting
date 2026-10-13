@@ -75,11 +75,19 @@ After M2 the catalogue and BoMs can be loaded; after M4 real builds can run.
 - [x] Valuation by standard cost (dated from the history) and weighted average cost, side by side
 - [x] Additive migration 0002 (no table rebuild), tested on data; demo dataset with a second supplier and prices
 
+## M8: Margin history and product images ✅
+
+- [x] Margin history per sellable item, derived from the price history: chart, changes and completed builds
+- [x] "Also use this price as the standard cost" on the offer form and in `part_suppliers.csv`
+- [x] One image per part in an optional R2 bucket (migration 0003 adds `parts.image_key`), shrunk in the
+      browser before upload, shown on the part page and in the parts list
+
 ## After v1 (ideas, not planned)
 
 - Serial inventory (which serials are in stock) enforced at build time, if the shop starts scanning receipts.
 - Reservations of stock for planned builds; build scheduling.
-- PDF purchase orders; supplier price history.
+- PDF purchase orders.
+- Product images in the BoM diagram and on build pick lists; a purge of images orphaned by a restore.
 - Multi-level "build all missing sub-assemblies" helper from the shortage list.
 - Where-used diagram (the BoM diagram reversed) on the part page; SVG/PDF export of diagrams.
 - Choose one valuation method once the accountant decides (D91), and drop the deprecated `parts` supplier columns

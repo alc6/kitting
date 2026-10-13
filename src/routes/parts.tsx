@@ -6,6 +6,7 @@ import { type Cost, centsOf } from "../domain/bom-graph";
 import { partBomSummary, type WhereUsedRow, whereUsed } from "../domain/boms";
 import { listBuilds } from "../domain/builds";
 import { type AverageCost, averageUnitCents } from "../domain/costing";
+import { imagesBucket, imageUrl } from "../domain/images";
 import { marginOf } from "../domain/margins";
 import {
 	deleteOfferStatements,
@@ -35,7 +36,7 @@ import {
 import { lastPaidBySupplier, paidPrices, partPriceHistory } from "../domain/prices";
 import { averageCosts } from "../domain/stock";
 import { getSupplier } from "../domain/suppliers";
-import { fmt } from "../i18n";
+import { errorText, fmt } from "../i18n";
 import { cn } from "../lib/cn";
 import { runBatch, type Statement } from "../lib/db";
 import { isConstraintError } from "../lib/sql";
@@ -44,6 +45,7 @@ import { type FieldErrors, validate } from "../lib/validation";
 import { requireAdmin } from "../middleware/auth";
 import type { AppEnv } from "../types";
 import { CostView, StatusBadge } from "../views/bom";
+import { StepChart } from "../views/chart";
 import { useApp } from "../views/context";
 import { Icon, type IconNode, icons } from "../views/icons";
 import { idParam, notFound, nowIso, page, redirectOk, translateErrors } from "../views/render";
@@ -109,8 +111,10 @@ async function supplierOptions(c: Context<AppEnv>): Promise<SupplierOption[]> {
 	return c.var.db.select({ id: suppliers.id, name: suppliers.name }).from(suppliers).orderBy(asc(suppliers.name));
 }
 
-function PartsTable(props: { rows: PartRow[]; filtered: boolean }) {
+function PartsTable(props: { rows: PartRow[]; filtered: boolean; images: boolean }) {
 	const { t } = useApp();
+	// A thumbnail column only when images are set up and some listed part has one.
+	const thumbs = props.images && props.rows.some((p) => p.imageKey);
 	if (props.rows.length === 0) {
 		return (
 			<EmptyState
@@ -131,6 +135,11 @@ function PartsTable(props: { rows: PartRow[]; filtered: boolean }) {
 			<Table>
 				<TableHeader>
 					<TableRow>
+						{thumbs ? (
+							<TableHead class="w-0">
+								<span class="sr-only">{t.parts.image}</span>
+							</TableHead>
+						) : null}
 						<TableHead>{t.parts.ref}</TableHead>
 						<TableHead>{t.parts.name}</TableHead>
 						<TableHead>{t.parts.kind}</TableHead>
@@ -142,6 +151,18 @@ function PartsTable(props: { rows: PartRow[]; filtered: boolean }) {
 				<TableBody>
 					{props.rows.map((p) => (
 						<TableRow class={cn(p.archived && "opacity-60")}>
+							{thumbs ? (
+								<TableCell class="py-1.5">
+									{p.imageKey ? (
+										<img
+											src={imageUrl(p) ?? ""}
+											alt=""
+											loading="lazy"
+											class="size-9 max-w-none rounded-md border bg-muted object-cover"
+										/>
+									) : null}
+								</TableCell>
+							) : null}
 							<TableCell class="font-medium whitespace-nowrap">
 								<a href={`/parts/${p.id}`}>{p.ref}</a>
 							</TableCell>
@@ -321,7 +342,11 @@ partRoutes.get("/", async (c) => {
 				{rows.length > 0 ? (
 					<p class="mb-2 text-sm text-muted-foreground">{fmt(t.common.results, { n: rows.length })}</p>
 				) : null}
-				<PartsTable rows={rows} filtered={q !== "" || kind !== "" || supplierId !== null} />
+				<PartsTable
+					rows={rows}
+					filtered={q !== "" || kind !== "" || supplierId !== null}
+					images={imagesBucket(c.env) !== null}
+				/>
 			</div>
 		</>,
 	);
@@ -387,6 +412,7 @@ function PartDetail(props: {
 	bomSummary: Awaited<ReturnType<typeof partBomSummary>>;
 	usedIn: WhereUsedRow[];
 	builds: Awaited<ReturnType<typeof listBuilds>>;
+	imagesEnabled: boolean;
 	ok?: string | undefined;
 	err?: string | undefined;
 }) {
@@ -444,7 +470,7 @@ function PartDetail(props: {
 				}
 			/>
 			<Flash ok={props.ok} message={props.ok === "adjusted" ? t.stock.adjusted : undefined} />
-			{props.err === "in_use" ? <Alert variant="destructive">{t.errors.in_use}</Alert> : null}
+			{props.err && PART_ERRORS.has(props.err) ? <Alert variant="destructive">{errorText(t, props.err)}</Alert> : null}
 			<div class="flex flex-col gap-4">
 				<div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
 					{stocked ? (
@@ -477,7 +503,17 @@ function PartDetail(props: {
 						/>
 					) : null}
 				</div>
-				<div class="grid gap-4 lg:grid-cols-2">
+				<div class="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
+					{props.imagesEnabled || p.imageKey ? (
+						<ImageCard part={p} enabled={props.imagesEnabled} />
+					) : isAdmin ? (
+						<Card>
+							<CardHeader>
+								<CardTitle icon={icons.image}>{t.parts.image}</CardTitle>
+								<CardDescription>{t.parts.imagesDisabled}</CardDescription>
+							</CardHeader>
+						</Card>
+					) : null}
 					<Card>
 						<CardHeader>
 							<CardTitle>{t.parts.info}</CardTitle>
@@ -563,6 +599,77 @@ function PartDetail(props: {
 	);
 }
 
+/** Error keys a redirect may show on the part page (?err=…). */
+const PART_ERRORS = new Set(["in_use", "image_missing", "image_too_large", "image_type", "images_disabled"]);
+
+/** The product image (D100): shown, uploaded (resized in the browser when JavaScript runs), removed by admins. */
+function ImageCard(props: { part: Part; enabled: boolean }) {
+	const { t, isAdmin } = useApp();
+	const p = props.part;
+	const src = imageUrl(p);
+	return (
+		<Card id="image">
+			<CardHeader>
+				<CardTitle icon={icons.image}>{t.parts.image}</CardTitle>
+				{isAdmin && src && props.enabled ? (
+					<CardAction>
+						<PostButton
+							action={`/parts/${p.id}/image/delete`}
+							label={t.parts.removeImage}
+							confirm={t.parts.confirmRemoveImage}
+							variant="ghost"
+							size="sm"
+							icon={icons.trash}
+						/>
+					</CardAction>
+				) : null}
+			</CardHeader>
+			<CardContent class="flex flex-col gap-4">
+				{src ? (
+					<a href={src} class="block overflow-hidden rounded-lg border bg-muted" title={t.parts.openImage}>
+						<img src={src} alt={p.name} class="aspect-4/3 max-h-80 w-full object-contain" />
+					</a>
+				) : (
+					<div class="flex aspect-4/3 max-h-80 w-full flex-col items-center justify-center gap-2 rounded-lg border border-dashed bg-muted/40 text-sm text-muted-foreground">
+						<Icon icon={icons.imageOff} class="size-8" />
+						{t.parts.noImage}
+					</div>
+				)}
+				{props.enabled ? (
+					<form
+						method="post"
+						action={`/parts/${p.id}/image`}
+						enctype="multipart/form-data"
+						class="flex flex-col gap-2"
+						data-image-form=""
+					>
+						<label for="image-file" class="text-sm font-medium">
+							{t.parts.imageFile}
+						</label>
+						<div class="flex flex-wrap items-center gap-2">
+							<input
+								id="image-file"
+								type="file"
+								name="image"
+								accept="image/jpeg,image/png,image/webp"
+								required
+								data-image-input=""
+								class="flex-1"
+							/>
+							<Button variant="outline" icon={icons.imageUp}>
+								{src ? t.parts.replaceImage : t.parts.uploadImage}
+							</Button>
+						</div>
+						<p class="text-xs text-muted-foreground">{t.parts.imageHint}</p>
+					</form>
+				) : (
+					<p class="text-xs text-muted-foreground">{t.parts.imagesDisabled}</p>
+				)}
+			</CardContent>
+		</Card>
+	);
+}
+
 /**
  * Standard cost, weighted average, selling price and planned margin (D93: on the BoM roll-up for a part
  * with a BoM, else on the standard cost), with shortcuts that copy a known price into the standard cost.
@@ -634,8 +741,14 @@ function PricesCard(props: {
 						label: t.parts.plannedMargin,
 						value: margin ? (
 							<span class="flex flex-col items-start gap-0.5">
-								<span class={cn("font-medium", margin.marginCents < 0 && "text-destructive")}>
-									<Money cents={margin.marginCents} />
+								<span class="inline-flex flex-wrap items-baseline gap-x-2">
+									<span class={cn("font-medium", margin.marginCents < 0 && "text-destructive")}>
+										<Money cents={margin.marginCents} />
+									</span>
+									<a href={`/margins/parts/${p.id}`} class="inline-flex items-center gap-1 text-xs font-medium">
+										<Icon icon={icons.chartLine} class="size-3.5" />
+										{t.margins.history}
+									</a>
 								</span>
 								<span class="text-xs text-muted-foreground tabular-nums">
 									{margin.rateBp === null
@@ -833,15 +946,9 @@ function OffersCard(props: { part: Part; offers: PartOffer[]; lastPaid: LastPaid
 }
 
 // ---------------------------------------------------------------------------
-// Price history chart: a server-rendered SVG (strict CSP: attributes and classes only, no style=).
+// Price history chart
 
-const CHART = { w: 720, h: 220, left: 76, right: 16, top: 14, bottom: 30, pad: 12 } as const;
-const DAY_MS = 86_400_000;
-
-const dayOf = (iso: string) => Math.floor(Date.parse(`${iso.slice(0, 10)}T00:00:00Z`) / DAY_MS);
-const dateOfDay = (day: number) => new Date(day * DAY_MS).toISOString().slice(0, 10);
-
-/** Standard cost as a step line (a gap where it was unknown), prices paid as dots, min/max labels. */
+/** Standard cost as a step line (a gap where it was unknown), prices paid as dots. */
 function PriceChart(props: { history: HistoryRow[]; paid: PaidRow[]; today: string }) {
 	const { t, locale, currency } = useApp();
 	const money = (cents: number) => formatMoney(cents, locale, currency);
@@ -849,139 +956,33 @@ function PriceChart(props: { history: HistoryRow[]; paid: PaidRow[]; today: stri
 	const steps = props.history
 		.filter((h) => h.kind === "standard")
 		.reverse()
-		.map((h) => ({ day: dayOf(h.validFrom), date: h.validFrom, cents: h.priceCents }));
+		.map((h) => ({
+			date: h.validFrom,
+			value: h.priceCents,
+			title: h.priceCents === null ? "" : `${h.validFrom} · ${t.parts.priceKinds.standard} · ${money(h.priceCents)}`,
+		}));
 	const dots = props.paid.flatMap((r) =>
-		r.unitCostCents === null ? [] : [{ day: dayOf(r.at), cents: r.unitCostCents, row: r }],
+		r.unitCostCents === null
+			? []
+			: [
+					{
+						date: r.at.slice(0, 10),
+						value: r.unitCostCents,
+						title: `${r.at.slice(0, 10)} · ${r.poNumber} · ${r.supplierName} · ${money(r.unitCostCents)}`,
+					},
+				],
 	);
-	const values = [...steps.flatMap((s) => (s.cents === null ? [] : [s.cents])), ...dots.map((d) => d.cents)];
-	if (values.length === 0) return null;
-	const days = [...steps.map((s) => s.day), ...dots.map((d) => d.day)];
-	const d0 = Math.min(...days);
-	const d1 = Math.max(dayOf(props.today), ...days);
-	const v0 = Math.min(...values);
-	const v1 = Math.max(...values);
-	const innerW = CHART.w - CHART.left - CHART.right;
-	const innerH = CHART.h - CHART.top - CHART.bottom;
-	const baseline = CHART.top + innerH;
-	const x = (day: number) =>
-		d1 === d0 ? CHART.left + Math.round(innerW / 2) : CHART.left + Math.round(((day - d0) * innerW) / (d1 - d0));
-	const y = (cents: number) =>
-		v1 === v0
-			? CHART.top + Math.round(innerH / 2)
-			: CHART.top + CHART.pad + Math.round(((v1 - cents) * (innerH - 2 * CHART.pad)) / (v1 - v0));
-
-	let path = "";
-	steps.forEach((s, i) => {
-		if (s.cents === null) return;
-		const next = steps[i + 1];
-		const end = next ? x(next.day) : x(d1);
-		const prev = steps[i - 1];
-		path += prev && prev.cents !== null ? ` V ${y(s.cents)} H ${end}` : ` M ${x(s.day)} ${y(s.cents)} H ${end}`;
-	});
-	const known = steps.filter((s): s is { day: number; date: string; cents: number } => s.cents !== null);
-
 	return (
-		<div class="flex flex-col gap-3">
-			<div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-				{known.length > 0 ? (
-					<span class="inline-flex items-center gap-1.5">
-						<span class="h-0.5 w-4 rounded-full bg-chart-1" aria-hidden="true" />
-						{t.parts.priceKinds.standard}
-					</span>
-				) : null}
-				{dots.length > 0 ? (
-					<span class="inline-flex items-center gap-1.5">
-						<span class="size-2.5 rounded-full bg-chart-2" aria-hidden="true" />
-						{t.parts.pricePaid}
-					</span>
-				) : null}
-			</div>
-			<svg
-				viewBox={`0 0 ${CHART.w} ${CHART.h}`}
-				role="img"
-				aria-labelledby="price-chart-title"
-				class="h-auto w-full max-w-4xl"
-			>
-				<title id="price-chart-title">{t.parts.chartLabel}</title>
-				<line
-					x1={CHART.left}
-					x2={CHART.w - CHART.right}
-					y1={baseline}
-					y2={baseline}
-					stroke-width="1"
-					class="stroke-border"
-				/>
-				{[...new Set([v1, v0])].map((v) => (
-					<>
-						<line
-							x1={CHART.left}
-							x2={CHART.w - CHART.right}
-							y1={y(v)}
-							y2={y(v)}
-							stroke-width="1"
-							class="stroke-border"
-						/>
-						<text
-							x={CHART.left - 8}
-							y={y(v)}
-							text-anchor="end"
-							dominant-baseline="middle"
-							class="fill-muted-foreground text-[12px] tabular-nums"
-						>
-							{money(v)}
-						</text>
-					</>
-				))}
-				{d1 === d0 ? (
-					<text x={x(d0)} y={CHART.h - 8} text-anchor="middle" class="fill-muted-foreground text-[12px] tabular-nums">
-						{dateOfDay(d0)}
-					</text>
-				) : (
-					<>
-						<text
-							x={CHART.left}
-							y={CHART.h - 8}
-							text-anchor="start"
-							class="fill-muted-foreground text-[12px] tabular-nums"
-						>
-							{dateOfDay(d0)}
-						</text>
-						<text
-							x={CHART.w - CHART.right}
-							y={CHART.h - 8}
-							text-anchor="end"
-							class="fill-muted-foreground text-[12px] tabular-nums"
-						>
-							{dateOfDay(d1)}
-						</text>
-					</>
-				)}
-				{path ? (
-					<path
-						d={path.trim()}
-						fill="none"
-						stroke-width="2"
-						stroke-linejoin="round"
-						stroke-linecap="round"
-						class="stroke-chart-1"
-					/>
-				) : null}
-				{known.map((s) => (
-					<g>
-						<title>{`${s.date} · ${t.parts.priceKinds.standard} · ${money(s.cents)}`}</title>
-						<circle cx={x(s.day)} cy={y(s.cents)} r="10" class="fill-transparent" />
-						<circle cx={x(s.day)} cy={y(s.cents)} r="3" stroke-width="2" class="fill-chart-1 stroke-card" />
-					</g>
-				))}
-				{dots.map((d) => (
-					<g>
-						<title>{`${d.row.at.slice(0, 10)} · ${d.row.poNumber} · ${d.row.supplierName} · ${money(d.cents)}`}</title>
-						<circle cx={x(d.day)} cy={y(d.cents)} r="10" class="fill-transparent" />
-						<circle cx={x(d.day)} cy={y(d.cents)} r="4" stroke-width="2" class="fill-chart-2 stroke-card" />
-					</g>
-				))}
-			</svg>
-		</div>
+		<StepChart
+			id="price-chart"
+			label={t.parts.chartLabel}
+			steps={steps}
+			dots={dots}
+			stepLabel={t.parts.priceKinds.standard}
+			dotLabel={t.parts.pricePaid}
+			format={money}
+			today={props.today}
+		/>
 	);
 }
 
@@ -1310,6 +1311,7 @@ partRoutes.get("/:id", async (c) => {
 			bomSummary={bomSummary}
 			usedIn={usedIn}
 			builds={recent}
+			imagesEnabled={imagesBucket(c.env) !== null}
 			ok={c.req.query("ok")}
 			err={c.req.query("err")}
 		/>,
@@ -1424,8 +1426,9 @@ function OfferForm(props: {
 	alreadyPreferred: boolean;
 	submit: string;
 }) {
-	const { t } = useApp();
+	const { t, locale, currency } = useApp();
 	const p = { values: props.values, errors: props.errors };
+	const cost = props.part.costCents;
 	return (
 		<>
 			<ErrorBanner show={Object.keys(props.errors).length > 0} />
@@ -1473,6 +1476,14 @@ function OfferForm(props: {
 							) : (
 								<CheckboxField name="preferred" label={t.parts.preferredCheckbox} {...p} />
 							)}
+							<CheckboxField
+								name="set_standard_cost"
+								label={t.parts.setStandardCheckbox}
+								hint={fmt(t.parts.setStandardHint, {
+									cost: cost === null ? t.parts.costUnknown : formatMoney(cost, locale, currency),
+								})}
+								{...p}
+							/>
 						</FieldGroup>
 						<div class="flex flex-wrap items-center gap-2">
 							<Button icon={icons.save}>{props.submit}</Button>
@@ -1593,6 +1604,8 @@ async function createOffer(c: Context<AppEnv>) {
 		if (supplierId === null) errors = translateErrors(c, { supplier_id: "required" });
 		else if (!(await getSupplier(c.var.db, supplierId))) errors = translateErrors(c, { supplier_id: "invalid" });
 		else if (await getOffer(c.var.db, part.id, supplierId)) errors = { supplier_id: t.parts.offerExists };
+		if (result.data.set_standard_cost && result.data.price === null)
+			errors = { ...errors, ...translateErrors(c, { set_standard_cost: "standard_needs_price" }) };
 	}
 	if (!result.ok || result.data.supplier_id === null || Object.keys(errors).length > 0) {
 		return offerPage(c, part, { values: body as FormValues, errors, suppliers: await supplierOptions(c) }, 422);
@@ -1605,8 +1618,22 @@ async function createOffer(c: Context<AppEnv>) {
 		...saveOfferStatements(c.var.db, { partId: part.id }, supplierId, offerTerms(d), undefined, "form", user, now),
 	];
 	if (d.preferred) stmts.push(setPreferredStatement(c.var.db, part.id, supplierId, user, now));
+	stmts.push(...(await offerStandardStatements(c, part, supplierId, d)));
 	await runBatch(c.var.db, stmts);
 	return redirectOk(c, `/parts/${part.id}`);
+}
+
+/** "Also use this price as the standard cost" (D99): the part's standard cost, with its history row. */
+async function offerStandardStatements(
+	c: Context<AppEnv>,
+	part: Part,
+	supplierId: number,
+	d: { price: number | null; set_standard_cost: boolean },
+): Promise<Statement[]> {
+	if (!d.set_standard_cost || d.price === null) return [];
+	const supplier = await getSupplier(c.var.db, supplierId);
+	const note = fmt(c.var.t.parts.noteOffer, { supplier: supplier?.name ?? String(supplierId) });
+	return setStandardCostStatements(c.var.db, part, d.price, "form", c.var.user, nowIso(), note);
 }
 
 partRoutes.post("/:id/offers", createOffer);
@@ -1636,13 +1663,13 @@ partRoutes.post("/:id/offers/:supplierId", async (c) => {
 	// The supplier comes from the URL: an offer cannot move to another supplier.
 	const result = validate(offerInput, { ...body, supplier_id: String(found.supplier.id) });
 	const preferred = part.supplierId === found.supplier.id;
-	if (!result.ok) {
+	if (!result.ok || (result.data.set_standard_cost && result.data.price === null)) {
 		return offerPage(
 			c,
 			part,
 			{
 				values: body as FormValues,
-				errors: translateErrors(c, result.errors),
+				errors: translateErrors(c, result.ok ? { set_standard_cost: "standard_needs_price" } : result.errors),
 				supplier: found.supplier,
 				alreadyPreferred: preferred,
 			},
@@ -1666,6 +1693,7 @@ partRoutes.post("/:id/offers/:supplierId", async (c) => {
 	];
 	// Unticking never clears the preferred supplier: another offer is made preferred instead.
 	if (d.preferred && !preferred) stmts.push(setPreferredStatement(c.var.db, part.id, found.supplier.id, user, now));
+	stmts.push(...(await offerStandardStatements(c, part, found.supplier.id, d)));
 	await runBatch(c.var.db, stmts);
 	return redirectOk(c, `/parts/${part.id}`);
 });
@@ -1708,11 +1736,14 @@ for (const [action, archived] of [
 partRoutes.post("/:id/delete", requireAdmin, async (c) => {
 	const id = idParam(c);
 	if (!id) return notFound(c);
+	const part = await getPart(c.var.db, id);
 	try {
 		await c.var.db.delete(parts).where(eq(parts.id, id));
 	} catch (err) {
 		if (isConstraintError(err, "FOREIGN KEY")) return c.redirect(`/parts/${id}?err=in_use`, 303);
 		throw err;
 	}
+	const bucket = imagesBucket(c.env);
+	if (bucket && part?.imageKey) await bucket.delete(part.imageKey);
 	return redirectOk(c, "/parts", "deleted");
 });
