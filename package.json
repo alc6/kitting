@@ -31,6 +31,7 @@
 		"dev": "npm run css && wrangler dev",
 		"deploy": "npm run css && wrangler d1 migrations apply DB --remote && wrangler deploy",
 		"config": "node scripts/gen-wrangler-config.mjs",
+		"release:bundle": "node scripts/build-release.mjs",
 		"db:generate": "drizzle-kit generate",
 		"db:triggers": "node scripts/history-triggers.mjs",
 		"db:migrate:local": "wrangler d1 migrations apply DB --local",
@@ -44,7 +45,8 @@
 		"lint": "biome check .",
 		"format": "biome check --write .",
 		"test": "vitest run",
-		"check": "npm run css && npm run typecheck && npm run lint && npm run test"
+		"test:scripts": "node --test scripts/tests/*.node.mjs",
+		"check": "npm run css && npm run typecheck && npm run lint && npm run test && npm run test:scripts"
 	},
 	"engines": {
 		"node": ">=20"
