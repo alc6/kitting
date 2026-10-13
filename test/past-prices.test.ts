@@ -166,6 +166,7 @@ describe("adding a past price from the part page", () => {
 		expect(at("2025-06-15")).toBeLessThan(at("2024-03-01"));
 		expect(at("2024-03-01")).toBeLessThan(at("2022-01-10"));
 		expect(html).toContain("price-chart-title");
+		expect(html).toContain("2022-01-10 · Standard cost");
 		const list = await rows<{ valid_from: string }>("SELECT valid_from FROM price_history ORDER BY valid_from, id");
 		expect(list.map((r) => r.valid_from)).toEqual(["2022-01-10", "2024-03-01", "2025-06-15", "2026-01-01"]);
 	});

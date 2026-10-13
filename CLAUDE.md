@@ -54,8 +54,7 @@ was built with; `npx skills update` refreshes it.
   `stock.ts` (ledger, counts, valuation), `builds.ts` (pick list, completion batch),
   `purchasing.ts` (shortage engine, POs, receipts), `backup.ts` (JSON export/restore),
   `tree-layout.ts` (pure diagram layout), `search.ts` (global search), `offers.ts` (supplier offers),
-  `prices.ts` (price history, dated standard costs), `past-prices.ts` (past prices entered as history, D142),
-  `costing.ts` (pure weighted average replay),
+  `prices.ts` (price history, dated standard costs), `costing.ts` (pure weighted average replay),
   `margins.ts` (planned and actual margins), `margin-history.ts` (margins over time, replayed from the
   price history), `images.ts` (product images in R2), `users.ts` (who has which role, cost visibility option),
   `permissions.ts` (what each role may do: the permission table, `can()`, cost redaction),
