@@ -9,6 +9,7 @@ import {
 	type ChangeSetSummary,
 	changeSetSummaries,
 	changeSetUsers,
+	columnActionsOf,
 	entryView,
 	getChangeSetSummary,
 	type HistoryTarget,
@@ -71,7 +72,7 @@ const PAGE_SIZE = 50;
 const accessOf = (c: Context<AppEnv>): Access => ({ role: c.var.role, seeCosts: c.var.seeCosts });
 
 function undoable(c: Context<AppEnv>, s: ChangeSetSummary): boolean {
-	return canPressUndo(c.var, s, missingActions(accessOf(c), tablesOf(s)).length);
+	return canPressUndo(c.var, s, missingActions(accessOf(c), tablesOf(s), columnActionsOf(s)).length);
 }
 
 const dateParam = (v: string | undefined) => (v && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null);
@@ -219,7 +220,7 @@ async function renderChangeSet(
 	const views = entries.map((e) => entryView(access, e));
 	const labels = await referenceLabels(c.var.db, [...views, ...conflictViews(problem?.conflicts)]);
 	const set = summary.set;
-	const missing = missingActions(access, tablesOf(summary));
+	const missing = missingActions(access, tablesOf(summary), columnActionsOf(summary));
 	return page(
 		c,
 		fmt(t.history.change, { id: set.id }),
@@ -248,7 +249,7 @@ async function renderChangeSet(
 						/>
 						{set.revertible && !summary.undoneBy && missing.length > 0 && summary.entries > 0 ? (
 							<p class="mt-4 mb-0 text-sm text-muted-foreground">
-								{fmt(t.history.noRights, { areas: missingAreas(c, tablesOf(summary)) })}
+								{fmt(t.history.noRights, { areas: missingAreas(c, summary) })}
 							</p>
 						) : null}
 					</CardContent>
@@ -285,14 +286,18 @@ function conflictViews(conflicts: RevertConflict[] | undefined) {
 }
 
 /** Names of the record kinds a user may not edit, for "Undoing it needs rights you do not have". */
-function missingAreas(c: Context<AppEnv>, tables: string[]): string {
-	const lacking = missingActions(accessOf(c), tables);
+function missingAreas(c: Context<AppEnv>, summary: ChangeSetSummary): string {
+	const tables = tablesOf(summary);
+	const gated = columnActionsOf(summary);
+	const lacking = missingActions(accessOf(c), tables, gated);
 	const names = tables
 		.filter((t) => {
 			const action = TABLE_ACTIONS[t];
 			return action ? lacking.includes(action) : false;
 		})
 		.map((t) => (c.var.t.history.tables as Record<string, string>)[t] ?? t);
+	const rights = c.var.t.history.rights as Record<string, string>;
+	names.push(...gated.filter((a) => lacking.includes(a)).map((a) => rights[a] ?? a));
 	return [...new Set(names)].join(", ");
 }
 
@@ -316,8 +321,7 @@ historyRoutes.post("/:id/revert", requirePermission("history.revert"), async (c)
 	if (outcome.reason === "not_found") return notFound(c);
 	const summary = await getChangeSetSummary(c.var.db, id);
 	if (!summary) return notFound(c);
-	if (outcome.reason === "forbidden")
-		return forbidden(c, fmt(t.history.noRights, { areas: missingAreas(c, tablesOf(summary)) }));
+	if (outcome.reason === "forbidden") return forbidden(c, fmt(t.history.noRights, { areas: missingAreas(c, summary) }));
 	const entries = await changeSetEntries(c.var.db, id);
 	if (outcome.reason === "conflict") return renderChangeSet(c, summary, entries, { conflicts: outcome.conflicts }, 409);
 	return renderChangeSet(c, summary, entries, { notRevertible: true }, 409);

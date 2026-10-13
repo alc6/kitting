@@ -889,6 +889,7 @@ export const en = {
 			duplicate: "{row} would take back a value another record uses now (a reference, number or email).",
 			concurrent: "Something changed while undoing. Try again.",
 		},
+		rights: { "parts.archive": "Archiving parts" },
 		tables: {
 			parts: "Part",
 			suppliers: "Supplier",

@@ -127,6 +127,49 @@ describe("history pages", () => {
 		expect(await rows("SELECT name FROM suppliers WHERE id = ?", s.acme)).toEqual([{ name: "Acme" }]);
 	});
 
+	it("offers Undo of an archive or unarchive only to those who may archive parts (D136)", async () => {
+		await loadDemo({ stock: false });
+		const box = await partId("BOX-LAMP");
+		await postForm(`/parts/${box}/archive`, {});
+		const archive = await lastSet();
+		await postForm(`/parts/${box}/unarchive`, {});
+		const unarchive = await lastSet();
+		await postForm(`/parts/${box}/archive`, {});
+		const rearchive = await lastSet();
+
+		await setRole("planner");
+		for (const id of [archive, unarchive, rearchive]) {
+			const detail = await html(`/history/${id}`, NOT_ADMIN);
+			expect(detail).not.toContain(`action="/history/${id}/revert"`);
+			expect(detail).toContain("Undoing it needs rights you do not have: Archiving parts.");
+			const denied = await postForm(`/history/${id}/revert`, {}, NOT_ADMIN);
+			expect(denied.status).toBe(403);
+			expect(await denied.text()).toContain("Archiving parts");
+		}
+		expect(await html("/history", NOT_ADMIN)).not.toContain(`action="/history/${rearchive}/revert"`);
+		expect(await html(`/parts/${box}/history`, NOT_ADMIN)).not.toContain(`action="/history/${rearchive}/revert"`);
+		expect(await one("SELECT archived FROM parts WHERE id = ?", box)).toEqual({ archived: 1 });
+
+		// An admin sees the button and can undo.
+		expect(await html(`/history/${rearchive}`)).toContain(`action="/history/${rearchive}/revert"`);
+		expect((await postForm(`/history/${rearchive}/revert`, {})).status).toBe(303);
+		expect(await one("SELECT archived FROM parts WHERE id = ?", box)).toEqual({ archived: 0 });
+
+		// A planner still undoes another edit of the part.
+		await postForm(`/parts/${box}`, {
+			ref: "BOX-LAMP",
+			name: "Renamed",
+			kind: "buy",
+			unit: "pcs",
+			cost: "1.00",
+			sale_price: "",
+			supplier_id: "",
+			notes: "",
+		});
+		const rename = await lastSet();
+		expect(await html(`/history/${rename}`, NOT_ADMIN)).toContain(`action="/history/${rename}/revert"`);
+	});
+
 	it("offers Undo only to those who may edit what the change touched", async () => {
 		const s = await seed();
 		await postForm("/stock/adjust", { part: "BOX-LAMP", qty: "1", serial: "", note: "found" });

@@ -290,7 +290,7 @@ describe("undo", () => {
 		expect(await revert(archived, { role: "operator", seeCosts: false })).toEqual({
 			ok: false,
 			reason: "forbidden",
-			actions: ["parts.edit"],
+			actions: ["parts.edit", "parts.archive"],
 		});
 		const lamp = await partId("LAMP-DESK");
 		await postForm("/builds", {
@@ -304,6 +304,64 @@ describe("undo", () => {
 		const planned = await lastSetId();
 		expect((await revert(planned, { role: "operator", seeCosts: false })).ok).toBe(true);
 		expect(await rows("SELECT id FROM builds")).toEqual([]);
-		expect((await revert(archived, { role: "planner", seeCosts: true })).ok).toBe(true);
+		expect(await revert(archived, { role: "operator", seeCosts: false })).toMatchObject({ ok: false });
+		expect((await revert(archived, ADMIN)).ok).toBe(true);
+	});
+
+	describe("archiving a part (D136)", () => {
+		const PLANNER: Access = { role: "planner", seeCosts: true };
+		const archivedOf = async (id: number) =>
+			(await one<{ archived: number }>("SELECT archived FROM parts WHERE id = ?", id)).archived;
+
+		it("needs parts.archive to undo an archive or an unarchive, and refuses a planner without changing anything", async () => {
+			await loadDemo({ stock: false });
+			const box = await partId("BOX-LAMP");
+			await postForm(`/parts/${box}/archive`, {});
+			const archive = await lastSetId();
+			const state = await snapshot();
+			expect(await revert(archive, PLANNER)).toEqual({ ok: false, reason: "forbidden", actions: ["parts.archive"] });
+			expect(await snapshot()).toEqual(state);
+			expect(await archivedOf(box)).toBe(1);
+
+			// An admin can; the unarchive that results is refused to a planner in turn.
+			const undone = await revert(archive, ADMIN);
+			expect(undone.ok).toBe(true);
+			expect(await archivedOf(box)).toBe(0);
+			await postForm(`/parts/${box}/archive`, {});
+			const again = await lastSetId();
+			await postForm(`/parts/${box}/unarchive`, {});
+			const unarchive = await lastSetId();
+			const afterUnarchive = await snapshot();
+			expect(await revert(unarchive, PLANNER)).toEqual({ ok: false, reason: "forbidden", actions: ["parts.archive"] });
+			expect(await snapshot()).toEqual(afterUnarchive);
+			expect(await archivedOf(box)).toBe(0);
+			expect((await revert(unarchive, ADMIN)).ok).toBe(true);
+			expect(await archivedOf(box)).toBe(1);
+			expect(again).toBeLessThan(unarchive);
+		});
+
+		it("still lets a planner undo other part edits, and changes that leave archived as it was", async () => {
+			await loadDemo({ stock: false });
+			const box = await partId("BOX-LAMP");
+			const before = await one<{ supplier_id: number | null }>("SELECT supplier_id FROM parts WHERE id = ?", box);
+			await postForm(`/parts/${box}`, {
+				ref: "BOX-LAMP",
+				name: "Renamed box",
+				kind: "buy",
+				unit: "pcs",
+				cost: "1.00",
+				sale_price: "",
+				supplier_id: String(before.supplier_id ?? ""),
+				notes: "",
+			});
+			expect((await revert(await lastSetId(), PLANNER)).ok).toBe(true);
+			expect(await one("SELECT name FROM parts WHERE id = ?", box)).not.toEqual({ name: "Renamed box" });
+
+			// A change set that updates an archived part without changing the flag needs parts.edit only.
+			await changeSql("Archive", stmt("UPDATE parts SET archived = 1 WHERE id = ?", box));
+			await changeSql("Note", stmt("UPDATE parts SET notes = 'kept' WHERE id = ?", box));
+			expect((await revert(await lastSetId(), PLANNER)).ok).toBe(true);
+			expect(await archivedOf(box)).toBe(1);
+		});
 	});
 });

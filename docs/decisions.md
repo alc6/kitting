@@ -428,7 +428,8 @@ Short log of choices made where the brief left room. Newest at the bottom of eac
   table touched (`TABLE_ACTIONS`: parts → `parts.edit`, offers → `prices.edit`, BoM lines → `boms.edit`, PO
   lines → `purchasing.order`, builds → `builds.plan`, users and settings → `users.manage`…). So an operator
   can undo the planning of a build but not a part edit. Undoing a creation deletes the row with the edit
-  right, not the admin-only delete right: the deletion is logged and can itself be undone.
+  right, not the admin-only delete right: the deletion is logged and can itself be undone. D136 adds
+  `parts.archive` when the undo changes a part's archived flag.
 - **D113. Backups carry the history; a restore does not log its rows.** `change_sets` and `change_log` are in
   the JSON backup (`change_context` is not: it only exists inside a batch). A restore inserts a `suppress`
   context row first, so the triggers stay silent while every table is replaced, then appends one
@@ -537,7 +538,8 @@ Short log of choices made where the brief left room. Newest at the bottom of eac
   POs). That lets `NEVER_OVER_MCP` list every `*.delete` action while `catalog:archive` offers archiving.
   `TABLE_ACTIONS` is unchanged: archiving is an UPDATE of `parts` or `boms`, undone with `parts.edit` or
   `boms.edit` like any edit (as D112 lets the edit right undo a creation); a planner could already bring a BoM
-  back with "Set back to draft" or "Activate" (`boms.edit`).
+  back with "Set back to draft" or "Activate" (`boms.edit`). Amended by D136: undoing a change of a part's
+  `archived` flag needs `parts.archive`; BoMs stay as described here.
 - **D126. Write scopes are table rows with their actions.** `catalog:write` → `parts.edit`, `suppliers.edit`,
   `boms.edit`; `prices:write` → `prices.edit`; `catalog:archive` → `parts.archive`, `boms.archive`;
   `stock:write` → `stock.adjust`, `stock.count`; `builds:write` → `builds.plan`, `builds.complete`;
@@ -640,3 +642,17 @@ Short log of choices made where the brief left room. Newest at the bottom of eac
   (Windows has no `zip`). Rejected: shelling out to `zip` (not everywhere), an archiving package (a dependency for
   forty lines). The README gives a manual fallback. The server instructions now end with a sentence pointing to
   the plugin and the skill zip, generic (no URL), so a client that only has the connector learns the skill exists.
+- **D136. Undo cannot change a part's archived state without `parts.archive`.** D125 left `TABLE_ACTIONS` alone, so
+  a planner (`parts.edit`) could open Recent changes and undo an admin's archive or unarchive, which flips the
+  part's `archived` flag without the admin-only `parts.archive`. Rule: whoever may not archive may not change the
+  archived state, including by undo. `COLUMN_ACTIONS` (in `src/domain/history.ts`: table → column → action,
+  today `parts.archived` → `parts.archive`) lists columns that need an action on top of the table's. An undo of a
+  change set that has an update entry whose old and new snapshots differ on such a column requires that action
+  too: `revertChangeSet()` refuses with `forbidden` and `actions` naming it (`["parts.archive"]`), and nothing is
+  written. The Undo button follows the same rule: `ChangeSetSummary.columnActions` (computed in SQL from the same
+  map, with `json_extract` on the snapshots) feeds `missingActions()` in `canPressUndo`, so the list, the detail
+  page and the History tabs hide it, and the refusal page says "Archiving parts". A change set that touches a
+  part without changing `archived` still needs only `parts.edit`. Out of scope on purpose: BoMs. Planners can
+  already restore an archived BoM ("Set back to draft", "Activate", `boms.edit`) and activating a revision
+  archives the previous one, so BoM status changes keep using `boms.edit` through `TABLE_ACTIONS`. Adding another
+  gated column is one line in `COLUMN_ACTIONS` (plus an `history.rights` label in both dictionaries).

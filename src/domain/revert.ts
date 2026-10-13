@@ -21,7 +21,7 @@ import {
 import type { Statement } from "../lib/db";
 import { chunks, isConstraintError } from "../lib/sql";
 import type { Db } from "../types";
-import { runChangeSet } from "./history";
+import { COLUMN_ACTIONS, runChangeSet } from "./history";
 import { type Access, type Action, can } from "./permissions";
 
 /** The permission needed to undo a change to each tracked table: the one that edits it (D112). */
@@ -88,10 +88,26 @@ export function revertBlocker(set: Pick<ChangeSet, "revertible">, entries: Pick<
 	return null;
 }
 
-/** The permissions needed to undo changes to these tables that `access` lacks. */
-export function missingActions(access: Access, tables: string[]): Action[] {
-	const needed = [...new Set(tables.map((t) => TABLE_ACTIONS[t]).filter((a): a is Action => !!a))];
-	return needed.filter((a) => !can(access, a));
+/**
+ * The permissions needed to undo changes to these tables that `access` lacks, plus those of `columnActions`
+ * (see columnActionsNeeded): archiving a part needs `parts.archive` also when undone (D136).
+ */
+export function missingActions(access: Access, tables: string[], columnActions: Action[] = []): Action[] {
+	const needed = new Set([...tables.map((t) => TABLE_ACTIONS[t]).filter((a): a is Action => !!a), ...columnActions]);
+	return [...needed].filter((a) => !can(access, a));
+}
+
+/** The COLUMN_ACTIONS actions needed to undo these entries: an update that changed a gated column. */
+export function columnActionsNeeded(entries: Pick<ChangeLogRow, "tableName" | "op" | "oldRow" | "newRow">[]): Action[] {
+	const needed = new Set<Action>();
+	for (const e of entries) {
+		const gated = COLUMN_ACTIONS[e.tableName];
+		const [before, after] = [parse(e.oldRow), parse(e.newRow)];
+		if (!gated || e.op !== "update" || !before || !after) continue;
+		for (const [column, action] of Object.entries(gated))
+			if ((before[column] ?? null) !== (after[column] ?? null)) needed.add(action);
+	}
+	return [...needed];
 }
 
 const parse = (json: string | null): Row | null => (json === null ? null : (JSON.parse(json) as Row));
@@ -414,7 +430,7 @@ export async function changeSetEntries(db: Db, id: number) {
 }
 
 /**
- * Undoes change set `id` as `by.user` (who must be allowed to edit every area it touched), in one batch.
+ * Undoes change set `id` as `by.user` (who must be allowed to edit every area it touched, and to change the gated columns it changed), in one batch.
  * `by.summary` names the undo in the history; `by.source` is "revert" unless an API client says otherwise.
  */
 export async function revertChangeSet(
@@ -431,6 +447,7 @@ export async function revertChangeSet(
 	const actions = missingActions(
 		access,
 		entries.map((e) => e.tableName),
+		columnActionsNeeded(entries),
 	);
 	if (actions.length) return { ok: false, reason: "forbidden", actions };
 	const rows = touchedRows(entries);

@@ -22,7 +22,7 @@ import {
 import { runBatch, type Statement } from "../lib/db";
 import { chunks, likePattern } from "../lib/sql";
 import type { Db } from "../types";
-import { type Access, redactCosts } from "./permissions";
+import { type Access, type Action, redactCosts } from "./permissions";
 
 /** Who changes what, and how to describe it in the history. */
 export type ChangeMeta = {
@@ -123,6 +123,28 @@ export type ChangeSetFilters = {
 	limit?: number;
 };
 
+/**
+ * Columns whose change needs an action of its own on top of the edit action of the table, also when undone
+ * (D136): table → column → action. Only the archived flag of a part now; BoM statuses stay with `boms.edit`.
+ */
+export const COLUMN_ACTIONS: Record<string, Record<string, Action>> = {
+	parts: { archived: "parts.archive" },
+};
+
+/** Per (table, column): the action when the change set changed that column of a row, else ''. Literals only. */
+const columnActionsSql = sql.join(
+	Object.entries(COLUMN_ACTIONS).flatMap(([table, columns]) =>
+		Object.entries(columns).map(([column, action]) => {
+			if (![table, column, action].every((v) => /^[a-z_.]+$/.test(v))) throw new Error(`unexpected name ${action}`);
+			return sql`coalesce((SELECT '${sql.raw(action)}' FROM change_log l WHERE l.change_set_id = change_sets.id
+				AND l.table_name = '${sql.raw(table)}' AND l.op = 'update'
+				AND json_extract(l.old_row, '$.${sql.raw(column)}') IS NOT json_extract(l.new_row, '$.${sql.raw(column)}')
+				LIMIT 1), '')`;
+		}),
+	),
+	sql` || ',' || `,
+);
+
 // Correlated subqueries name the outer table explicitly: Drizzle renders ${changeSets.id} unqualified here,
 // which inside the subquery would mean change_log.id.
 const changeSetSummaryColumns = {
@@ -131,6 +153,8 @@ const changeSetSummaryColumns = {
 	tables: sql<
 		string | null
 	>`(SELECT group_concat(DISTINCT l.table_name) FROM change_log l WHERE l.change_set_id = change_sets.id)`,
+	// Actions of COLUMN_ACTIONS whose column a row of the change set changed, comma-separated (see columnActionsOf).
+	columnActions: sql<string>`(${columnActionsSql})`,
 	// The undo currently in effect, if any: an undo that was not itself undone.
 	undoneBy: sql<number | null>`(SELECT max(r.id) FROM change_sets r WHERE r.reverts_change_set_id = change_sets.id
 		AND NOT EXISTS (SELECT 1 FROM change_sets r2 WHERE r2.reverts_change_set_id = r.id))`,
@@ -172,6 +196,10 @@ export async function changeSetSummaries(db: Db, ids: number[]): Promise<Map<num
 
 /** The tables a change set touched (from ChangeSetSummary.tables). */
 export const tablesOf = (s: Pick<ChangeSetSummary, "tables">): string[] => (s.tables ? s.tables.split(",") : []);
+
+/** The column-level actions an undo of this change set needs (from ChangeSetSummary.columnActions). */
+export const columnActionsOf = (s: Pick<ChangeSetSummary, "columnActions">): Action[] =>
+	s.columnActions.split(",").filter((a): a is Action => a !== "");
 
 /** Emails that made changes, for the user filter. */
 export async function changeSetUsers(db: Db): Promise<string[]> {

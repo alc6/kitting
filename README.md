@@ -116,7 +116,8 @@ over MCP) and every row it touched, before and after.
   correct them with a new movement, as before. Neither can replacing or removing a product image, whose old
   file is deleted.
 - Undoing needs the right to edit everything the change touched (an operator can undo a planned build, not a
-  part edit). Viewers and operators who may not see costs see "Hidden" instead of amounts in the history.
+  part edit), and undoing an archive or unarchive of a part is an admin right, like doing it. Viewers and
+  operators who may not see costs see "Hidden" instead of amounts in the history.
 - The database refuses any write to these tables made outside a change. To fix data by hand with
   `wrangler d1 execute --file`, open a change in the same file:
 

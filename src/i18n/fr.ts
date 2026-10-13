@@ -917,6 +917,7 @@ export const fr: Dict = {
 				"{row} reprendrait une valeur utilisée maintenant par une autre fiche (une référence, un numéro ou un e-mail).",
 			concurrent: "Quelque chose a changé pendant l’annulation. Réessayez.",
 		},
+		rights: { "parts.archive": "Archivage des pièces" },
 		tables: {
 			parts: "Article",
 			suppliers: "Fournisseur",
