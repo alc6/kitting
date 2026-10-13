@@ -7,6 +7,8 @@ people who have outgrown spreadsheets but don't need an ERP.
 It runs on Cloudflare: a Worker, a D1 database, and Cloudflare Access for sign-in. There is no server to
 maintain, and a small workshop fits in the free plans.
 
+![The tree of a desk lamp assembly, with its sub-assemblies, kits, quantities and costs](docs/images/assembly-tree.png)
+
 ## Features
 
 - Parts you buy, make or sell as kits, with units, standard costs, selling prices and photos.
