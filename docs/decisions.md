@@ -656,3 +656,8 @@ Short log of choices made where the brief left room. Newest at the bottom of eac
   already restore an archived BoM ("Set back to draft", "Activate", `boms.edit`) and activating a revision
   archives the previous one, so BoM status changes keep using `boms.edit` through `TABLE_ACTIONS`. Adding another
   gated column is one line in `COLUMN_ACTIONS` (plus an `history.rights` label in both dictionaries).
+- **D137. The dashboard is a main column and an alerts rail.** Shortages, upcoming builds and open POs stack in a
+  two-thirds column; stock alerts sit in a one-third rail beside them (from `xl`, single column below). Side-by-side
+  rows left a void under whichever card was shorter (an empty shortage list next to ten alerts). The rail starts at
+  `xl` because at `lg` with the sidebar open it is too narrow for a part reference; alert rows stack the quantity
+  above the badge for the same reason. Below `xl` the alerts come after the open POs.

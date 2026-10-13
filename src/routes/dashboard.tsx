@@ -192,47 +192,67 @@ dashboardRoutes.get("/", async (c) => {
 				) : null}
 			</div>
 
-			<div class="mb-6 grid grid-cols-1 items-start gap-4 lg:grid-cols-3">
-				<Section title={t.dashboard.shortages} href="/purchasing" total={shortageLines.length} class="lg:col-span-2">
-					{shortages.missingBoms.map((m) => (
-						<Alert variant="warning" class="mb-0">
-							{fmt(t.boms.missingBom, { ref: m.ref })}
-						</Alert>
-					))}
-					{shortageLines.length === 0 ? (
-						<EmptyState icon={icons.circleCheck} description={t.dashboard.noShortages} class="md:p-6" />
-					) : (
-						<Table>
-							<TableHeader>
-								<TableRow>
-									<TableHead class="pl-0">{t.purchasing.part}</TableHead>
-									<TableHead>{t.purchasing.supplier}</TableHead>
-									<TableHead class="text-right">{t.purchasing.net}</TableHead>
-									<TableHead class="pr-0 text-right">{t.purchasing.order}</TableHead>
-								</TableRow>
-							</TableHeader>
-							<TableBody>
-								{shortageLines.slice(0, LIMIT).map((l) => (
+			{/* A main column and an alerts rail (D137): no void under a short card, whatever the lists hold. */}
+			<div class="mb-6 grid grid-cols-1 items-start gap-4 xl:grid-cols-3">
+				<div class="flex min-w-0 flex-col gap-4 xl:col-span-2">
+					<Section title={t.dashboard.shortages} href="/purchasing" total={shortageLines.length}>
+						{shortages.missingBoms.map((m) => (
+							<Alert variant="warning" class="mb-0">
+								{fmt(t.boms.missingBom, { ref: m.ref })}
+							</Alert>
+						))}
+						{shortageLines.length === 0 ? (
+							<EmptyState icon={icons.circleCheck} description={t.dashboard.noShortages} class="md:p-6" />
+						) : (
+							<Table>
+								<TableHeader>
 									<TableRow>
-										<TableCell class="pl-0">
-											<a href={`/parts/${l.part.id}`} class="font-mono text-[0.8125rem] font-medium">
-												{l.part.ref}
-											</a>{" "}
-											<span class="text-muted-foreground">{l.part.name}</span>
-										</TableCell>
-										<TableCell>{l.supplierName || <span class="text-warning">—</span>}</TableCell>
-										<TableCell class="text-right text-warning">
-											<Qty milli={l.netMilli} unit={l.part.unit} />
-										</TableCell>
-										<TableCell class="pr-0 text-right font-medium">
-											<Qty milli={l.orderMilli} unit={l.part.unit} />
-										</TableCell>
+										<TableHead class="pl-0">{t.purchasing.part}</TableHead>
+										<TableHead>{t.purchasing.supplier}</TableHead>
+										<TableHead class="text-right">{t.purchasing.net}</TableHead>
+										<TableHead class="pr-0 text-right">{t.purchasing.order}</TableHead>
 									</TableRow>
-								))}
-							</TableBody>
-						</Table>
-					)}
-				</Section>
+								</TableHeader>
+								<TableBody>
+									{shortageLines.slice(0, LIMIT).map((l) => (
+										<TableRow>
+											<TableCell class="pl-0">
+												<a href={`/parts/${l.part.id}`} class="font-mono text-[0.8125rem] font-medium">
+													{l.part.ref}
+												</a>{" "}
+												<span class="text-muted-foreground">{l.part.name}</span>
+											</TableCell>
+											<TableCell>{l.supplierName || <span class="text-warning">—</span>}</TableCell>
+											<TableCell class="text-right text-warning">
+												<Qty milli={l.netMilli} unit={l.part.unit} />
+											</TableCell>
+											<TableCell class="pr-0 text-right font-medium">
+												<Qty milli={l.orderMilli} unit={l.part.unit} />
+											</TableCell>
+										</TableRow>
+									))}
+								</TableBody>
+							</Table>
+						)}
+					</Section>
+					<Section
+						title={t.dashboard.upcoming}
+						href="/builds"
+						total={open.length}
+						action={
+							canBuild ? (
+								<Button href="/builds/new" variant="outline" size="sm" icon={icons.plus}>
+									{t.builds.new}
+								</Button>
+							) : undefined
+						}
+					>
+						<BuildsTable rows={[...open].reverse().slice(0, LIMIT)} />
+					</Section>
+					<Section title={t.dashboard.openPos} href="/purchasing/po" total={openPos.length}>
+						<PoTable rows={openPos.slice(0, LIMIT)} today={today} />
+					</Section>
+				</div>
 
 				<Section title={t.dashboard.alerts} href="/stock" total={alerts.length}>
 					{alerts.length === 0 ? (
@@ -240,41 +260,21 @@ dashboardRoutes.get("/", async (c) => {
 					) : (
 						<ul class="m-0 flex list-none flex-col divide-y p-0">
 							{alerts.slice(0, LIMIT).map(({ p, label, negative }) => (
-								<li class="flex items-center gap-3 py-2.5 text-sm">
+								<li class="flex items-start gap-3 py-2.5 text-sm">
 									<div class="flex min-w-0 flex-1 flex-col">
-										<a href={`/parts/${p.id}`} class="w-fit font-mono text-[0.8125rem] font-medium">
+										<a href={`/parts/${p.id}`} class="w-fit max-w-full truncate font-mono text-[0.8125rem] font-medium">
 											{p.ref}
 										</a>
 										<span class="truncate text-muted-foreground">{p.name}</span>
 									</div>
-									<Badge variant={negative ? "destructive" : "warning"}>{label}</Badge>
-									<span class="w-16 text-right">
+									<div class="flex shrink-0 flex-col items-end gap-1">
 										<Qty milli={p.onHandMilli} unit={p.unit} />
-									</span>
+										<Badge variant={negative ? "destructive" : "warning"}>{label}</Badge>
+									</div>
 								</li>
 							))}
 						</ul>
 					)}
-				</Section>
-			</div>
-
-			<div class="mb-6 grid grid-cols-1 items-start gap-4 xl:grid-cols-2">
-				<Section
-					title={t.dashboard.upcoming}
-					href="/builds"
-					total={open.length}
-					action={
-						canBuild ? (
-							<Button href="/builds/new" variant="outline" size="sm" icon={icons.plus}>
-								{t.builds.new}
-							</Button>
-						) : undefined
-					}
-				>
-					<BuildsTable rows={[...open].reverse().slice(0, LIMIT)} />
-				</Section>
-				<Section title={t.dashboard.openPos} href="/purchasing/po" total={openPos.length}>
-					<PoTable rows={openPos.slice(0, LIMIT)} today={today} />
 				</Section>
 			</div>
 
