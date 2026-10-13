@@ -126,10 +126,23 @@ AI assistants (Claude, ChatGPT or any MCP client) connect to `/mcp` with OAuth; 
 - [x] Never over MCP, tested: permanent deletes, undo, users, backups, imports, image uploads
 - [x] Offboarding: only listed users connect and call `/mcp`; removing a user revokes their connections
 
+## M12: Skill and plugin ✅
+
+The know-how for assistants, installable with the tools (D132–D135).
+
+- [x] Skill `plugins/kitting/skills/kitting`: domain primer, safety rules, workflows by tool name; references for
+      every tool (scope, permission, inputs, outputs, example), an English/French glossary, worked examples
+- [x] Claude plugin (`plugin.json`, connector `.mcp.json` reading `KITTING_MCP_URL`) and repository marketplace
+      (`.claude-plugin/marketplace.json`), validated with `claude plugin validate`
+- [x] `npm run skill:zip`: the skill as a zip for claude.ai, no dependency
+- [x] Server instructions mention the skill and how to get it
+- [x] Tests: every tool documented, no invented tool or field name, versions in sync (`test/plugin.test.ts`)
+- [x] Evaluation prompts with expected tool sequences (`plugins/kitting/evals/`, run by hand)
+- [x] README "Use Kitting from Claude": Claude Code and Cowork, claude.ai, other clients, a company's private copy
+
 ## After v1 (ideas, not planned)
 
-- MCP: Client ID Metadata Documents (needs the `global_fetch_strictly_public` compatibility flag, D123); a skill or
-  plugin documenting the tools for assistants.
+- MCP: Client ID Metadata Documents (needs the `global_fetch_strictly_public` compatibility flag, D123).
 - Serial inventory (which serials are in stock) enforced at build time, if the shop starts scanning receipts.
 - Reservations of stock for planned builds; build scheduling.
 - PDF purchase orders.

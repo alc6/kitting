@@ -603,3 +603,40 @@ Short log of choices made where the brief left room. Newest at the bottom of eac
   separately, and that every change can be undone from Recent changes except stock and build ledger operations
   (corrected with reverse movements), which the assistant itself cannot undo. Tool descriptions repeat what
   matters for each tool.
+- **D132. The know-how ships with the tools: a skill, in a plugin, in this repository.** `plugins/kitting` is a
+  Claude plugin (`.claude-plugin/plugin.json`, the skill `skills/kitting/`, the connector `.mcp.json`), listed by
+  `.claude-plugin/marketplace.json` (marketplace `kitting-plugins`, entry `kitting`, a relative source, no version
+  of its own since `plugin.json`'s wins). The skill is a concise `SKILL.md` (domain primer, safety rules,
+  workflows by tool name) with `references/` for what is only needed sometimes: `tools.md` (every tool: scope,
+  permission, inputs, outputs, an example), `glossary.md` (English/French) and `examples.md` (conversations on the
+  demo dataset only). Its frontmatter has only `name` and `description` (at most 1,024 characters, claude.ai's
+  limit), so the same folder loads in Claude Code, Cowork, claude.ai and any Agent Skills client. The skill states
+  what the code does, not what the tool descriptions hope: history links only when `revertible`, the several
+  shapes of a refusal (a write's "Refused, nothing was changed", a failed lookup, a role or scope refusal answered
+  before the tool runs), `set_bom_lines` not copying lines into the new revision. Rejected: a skill without a
+  plugin (no connector bundled, two installs); documenting the tools only in the README (not loaded when needed).
+- **D133. Keeping the skill honest: tests, not review.** `test/plugin.test.ts` (Vitest, `?raw` imports, so it runs
+  in workerd like the rest) fails when a registered tool is missing from `references/tools.md` (one section each,
+  with its scope, permission action, every input field, an example call), when the skill or a reference uses a
+  snake_case name that is neither a tool, an input field (read from the zod schemas) nor a listed result field,
+  when `plugin.json`'s version or the server's reported version differs from `package.json`'s, when the
+  marketplace entry drifts, or when the server instructions no longer point to the skill or exceed Claude Code's
+  2,048 character cut. `plugins/kitting/evals/` holds three prompts with expected tool sequences in the
+  `claude plugin eval` layout; they need a throwaway deployment with OAuth, so they are run by hand, not in CI.
+  CLAUDE.md asks for `tools.md` and the workflows that use a tool to change with the tool.
+- **D134. The plugin's connector URL comes from `KITTING_MCP_URL`.** `.mcp.json` declares
+  `{ "type": "http", "url": "${KITTING_MCP_URL}" }`: no real domain in a public repository. Claude Code expands
+  `${VAR}` in a plugin server's `url` (documented, and checked against a local server: it connects to the
+  variable's URL, then starts the OAuth sign-in), and `claude plugin validate` passes. claude.ai and Cowork list a
+  bundled remote server on the plugin's Connectors tab only for a fixed URL and do not expand variables, so
+  there a company keeps a private copy of the plugin with its URL written in (the README explains it), or adds
+  the connector by hand and uploads the skill zip. Rejected: `userConfig` with `${user_config.KEY}` (Claude Code
+  would prompt for the URL, but chat ignores a server whose URL contains the reference and Cowork does not prompt);
+  a placeholder host in the file (it would connect to the wrong place). The file holds no secret: access is
+  decided by OAuth and the user's role.
+- **D135. `npm run skill:zip` packs the skill with a small Node script, no dependency.** claude.ai wants a zip
+  whose top level is the skill folder. `scripts/pack-skill.mjs` writes `dist/kitting-skill.zip` (gitignored) with
+  `node:zlib` and fixed timestamps, so the same files give the same bytes, and it works wherever Node runs
+  (Windows has no `zip`). Rejected: shelling out to `zip` (not everywhere), an archiving package (a dependency for
+  forty lines). The README gives a manual fallback. The server instructions now end with a sentence pointing to
+  the plugin and the skill zip, generic (no URL), so a client that only has the connector learns the skill exists.

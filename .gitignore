@@ -13,3 +13,6 @@ dist/
 .claude/
 # Built by `npm run css` from src/styles/app.css.
 public/static/app.css
+
+# Local results of `claude plugin eval`.
+plugins/kitting/evals/results/

@@ -34,6 +34,7 @@ was built with; `npx skills update` refreshes it.
   `migrations/meta/`. CI fails if the schema and migrations disagree.
 - `npm run -s db:triggers >> migrations/<new migration>.sql`: after adding or removing a column of a tracked
   table (`HISTORY_TABLES`), re-creates the history triggers (Node 22.18+). `test/history.test.ts` fails until you do.
+- `npm run skill:zip`: packs the Kitting skill as `dist/kitting-skill.zip` for claude.ai (no dependency, D135).
 - `npm run format`: Biome formatting + safe fixes (tabs, double quotes, 120 columns).
 
 ## Layout
@@ -64,6 +65,9 @@ was built with; `npx skills update` refreshes it.
 - `src/styles/app.css`: Tailwind source: shadcn tokens (light/dark), base layer, legacy classes.
 - `src/lib/`: units (fixed-point), CSV, validation (zod field builders), SQL helpers, batch.
 - `src/i18n/`: `en.ts` defines the `Dict` type; `fr.ts` must match it (compile error otherwise).
+- `plugins/kitting/`: the Claude plugin (D132): `.claude-plugin/plugin.json`, `.mcp.json` (connector URL from
+  `KITTING_MCP_URL`), the skill in `skills/kitting/` (`SKILL.md` + `references/`) and `evals/`. The repository's
+  `.claude-plugin/marketplace.json` lists it.
 - `public/static/`: built CSS, `app.js` (confirm, theme/sidebar toggles, search shortcut, diagram zoom,
   photo shrinking before upload),
   vendored `htmx.min.js` (`npm run vendor:htmx` to update).
@@ -186,6 +190,12 @@ was built with; `npx skills update` refreshes it.
   `history-tools.ts` does). Test it: a read tool in `test/mcp-tools.test.ts` (and the cost sweep's `calls()`), a
   write tool in `test/mcp-write.test.ts` (its `CASES` row checks the change set, undo, scope and role refusals;
   plus its own happy path and refusals).
+- **Adding or changing an MCP tool = update `plugins/kitting/skills/kitting/references/tools.md` and the workflows
+  that use it** (`SKILL.md`, `references/examples.md`, the evals' expected sequences). `test/plugin.test.ts` fails
+  when a tool is missing from `tools.md`, when the skill names a tool or field that does not exist (add a new
+  result field to its list), or when `plugins/kitting/.claude-plugin/plugin.json`'s version differs from
+  `package.json`'s, or when `SERVER_INFO.version` (`src/mcp/server.ts`) does: bump the three together. The skill's folder layout, the connector URL (`KITTING_MCP_URL`, never a
+  real domain) and `npm run skill:zip` are described in D132–D135.
 - Never over MCP: permanent deletes, undo, user management, backups, imports, image uploads (`NEVER_OVER_MCP` and
   the tool-name check in `test/mcp-scopes.test.ts`). BoMs change only through draft revisions (D128).
 
@@ -205,7 +215,7 @@ Small, focused commits following [Conventional Commits](https://www.conventional
 
 - Types: `feat`, `fix`, `docs`, `refactor`, `test`, `perf`, `style`, `build`, `ci`, `chore`.
 - Scopes are app areas, optional: `parts`, `suppliers`, `boms`, `stock`, `builds`, `purchasing`,
-  `pricing`, `import`, `auth`, `ui`, `db`.
+  `pricing`, `import`, `auth`, `ui`, `db`, `mcp`, `plugin`.
 - Examples: `feat(builds): allow cancelling a planned build`, `fix(import): accept semicolon CSVs`,
   `docs: explain the Access setup`, `chore: bump wrangler`.
 - Breaking changes (e.g. a migration that needs manual steps): `feat(db)!: …` plus a `BREAKING CHANGE:` line.

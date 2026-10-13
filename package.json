@@ -38,6 +38,7 @@
 		"cf-typegen": "wrangler types --config wrangler.example.jsonc --include-runtime=false --strict-vars=false",
 		"css": "tailwindcss -i src/styles/app.css -o public/static/app.css --minify",
 		"css:watch": "tailwindcss -i src/styles/app.css -o public/static/app.css --watch",
+		"skill:zip": "node scripts/pack-skill.mjs",
 		"vendor:htmx": "cp node_modules/htmx.org/dist/htmx.min.js public/static/htmx.min.js",
 		"typecheck": "tsc -p .",
 		"lint": "biome check .",

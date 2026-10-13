@@ -1,0 +1,14 @@
+{
+	"name": "kitting-plugins",
+	"description": "Claude plugins for Kitting, a mini-MRP for small hardware makers.",
+	"owner": { "name": "Kitting contributors" },
+	"plugins": [
+		{
+			"name": "kitting",
+			"source": "./plugins/kitting",
+			"description": "The Kitting skill (parts, BoMs, stock, builds, purchase orders) and the MCP connector to your deployment.",
+			"category": "productivity",
+			"tags": ["mrp", "bom", "inventory", "mcp"]
+		}
+	]
+}

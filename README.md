@@ -311,6 +311,76 @@ npm run css && npx wrangler dev --local-upstream localhost:8787 --upstream-proto
 npx @modelcontextprotocol/inspector   # Streamable HTTP, URL http://localhost:8787/mcp, then connect
 ```
 
+## Use Kitting from Claude
+
+An assistant needs two things: the **tools** (the MCP connector above) and the **know-how** (the Kitting skill: what
+a kit or a revision is, which tools to chain to plan a build or change a BoM, when to ask before writing). This
+repository ships both as a Claude plugin, `plugins/kitting`, listed in a plugin marketplace
+(`.claude-plugin/marketplace.json`). Pick the path that matches your client; the connector is the same everywhere
+and still needs the setup above (`https://<your-domain>/mcp`).
+
+**Claude Code and Cowork (plugin: connector and skill together).**
+
+1. Add this repository as a marketplace and install the plugin (use your fork or clone's GitHub path):
+
+   ```
+   /plugin marketplace add <owner>/kitting
+   /plugin install kitting@kitting-plugins
+   ```
+
+   or in one step, `/plugin install kitting --marketplace <owner>/kitting` (Claude Code 2.1.275+); from a shell:
+   `claude plugin marketplace add <owner>/kitting`, then `claude plugin install kitting@kitting-plugins`. In Cowork or on claude.ai: *Customize > Plugins > Add >
+   Add marketplace*, with the repository URL.
+2. Tell the plugin where your deployment is: it reads the environment variable `KITTING_MCP_URL` (in
+   `plugins/kitting/.mcp.json`), so set it before starting Claude Code:
+
+   ```bash
+   export KITTING_MCP_URL=https://kitting.example.com/mcp
+   ```
+
+3. Run `/mcp`, pick `plugin:kitting:kitting` and sign in: the browser opens Kitting's consent page, where you tick
+   what the assistant may do. The skill is `kitting:kitting` and loads on its own when you talk about parts, BoMs,
+   stock, builds or purchase orders.
+
+Claude Code expands `${KITTING_MCP_URL}` in the plugin's `.mcp.json` (checked against a local server: it connects to
+that URL, then starts the OAuth sign-in). claude.ai and Cowork list a bundled remote
+server on the plugin's *Connectors* tab only when its URL is fixed, and do not expand variables: there, use a
+private copy of the plugin with your URL written in (below), or add the connector by hand as in the next path.
+
+**claude.ai and Claude desktop chat (connector, plus the skill as a zip).**
+
+1. In the client's connector settings add a custom connector (remote MCP server) with the URL
+   `https://<your-domain>/mcp`, then sign in as above.
+2. `npm run skill:zip` builds `dist/kitting-skill.zip` (gitignored; no dependency, Node only). Upload it in
+   *Customize > Skills*, and turn it on. Without Node: zip the folder `plugins/kitting/skills/kitting` itself (so
+   the archive's top level is `kitting/` containing `SKILL.md`), for example
+   `cd plugins/kitting/skills && zip -r kitting-skill.zip kitting`, or *Compress* in Finder / *Send to > Compressed
+   folder* in Explorer on that folder.
+
+Alternatively, zip the whole `plugins/kitting` folder and upload it with *Customize > Plugins > Add > Upload
+plugin*: you get the skill and the connector entry in one step (with the URL fixed in your private copy).
+
+**Other MCP clients (ChatGPT, Inspector, your own).** Add the connector only. The server sends instructions when a
+client connects (read before write, confirm before changing anything, BoMs through draft revisions, costs can be
+hidden) and mentions the skill. To give such a client the full know-how, paste `plugins/kitting/skills/kitting/SKILL.md`
+and its `references/` into its project instructions.
+
+**A private copy of the plugin for your company.** Fork or copy this repository (or only the `plugins/kitting`
+folder and a marketplace file) into your own git host, then:
+
+- in `plugins/kitting/.mcp.json`, replace `"${KITTING_MCP_URL}"` by your fixed URL, e.g.
+  `"https://kitting.mycompany.example/mcp"` (a real URL is what claude.ai and Cowork need; Claude Code accepts it
+  too), and nobody has to set a variable;
+- rename `name` in `plugins/kitting/.claude-plugin/plugin.json` and the marketplace entry if you want your own
+  identity, add your company's rules to the skill (supplier habits, naming conventions, who approves what) in
+  `SKILL.md`, and keep `version` equal to `package.json`'s (a test checks it);
+- give your people `/plugin marketplace add <your-org>/<your-repo>` (an organization administrator can also
+  require the marketplace and plugin on every machine, see Anthropic's "Manage plugins for your organization").
+
+The file holds no secret, only the public URL of your deployment: access is decided by the OAuth sign-in and the
+user's role, never by the plugin. When you change a tool (see `CLAUDE.md`), update `references/tools.md`: the test
+suite fails when the skill and the tools disagree.
+
 ## Local development
 
 ```bash

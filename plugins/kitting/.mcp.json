@@ -1,0 +1,8 @@
+{
+	"mcpServers": {
+		"kitting": {
+			"type": "http",
+			"url": "${KITTING_MCP_URL}"
+		}
+	}
+}
