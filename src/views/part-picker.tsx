@@ -117,7 +117,9 @@ const TARGET = {
 	"hx-include": "closest dialog",
 	"hx-target": "#picker-results",
 	"hx-select": "#picker-results",
-	"hx-swap": "outerHTML",
+	"hx-swap": "outerHTML ignoreTitle:true",
+	// The latest search wins: a slower earlier response never overwrites it.
+	"hx-sync": "closest dialog:replace",
 };
 
 /** The dialog for the field `name`. `scope` is what the form accepts. */
@@ -253,7 +255,13 @@ export function PickerResults(props: { data: PickerPage; query: PickerQuery; ima
 
 function PagerButton(props: { label: string; icon: IconNode; url: string | null }) {
 	const attrs = props.url
-		? { "hx-get": props.url, "hx-target": "#picker-results", "hx-select": "#picker-results", "hx-swap": "outerHTML" }
+		? {
+				"hx-get": props.url,
+				"hx-target": "#picker-results",
+				"hx-select": "#picker-results",
+				"hx-swap": "outerHTML ignoreTitle:true",
+				"hx-sync": "closest dialog:replace",
+			}
 		: {};
 	return (
 		<button
