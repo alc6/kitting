@@ -36,3 +36,26 @@ jobs:
             git status --porcelain -- migrations
             exit 1
           fi
+
+  terraform:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.16.5
+      - name: Format
+        run: terraform fmt -check -recursive -diff infra/terraform
+      - name: Validate the module
+        working-directory: infra/terraform
+        run: |
+          terraform init -backend=false -input=false
+          terraform validate
+      - name: Validate the example against this version of the module
+        run: |
+          # The example points at a published tag; check it against the module in this checkout.
+          cp -r infra/terraform/examples/basic infra/terraform/examples/validate
+          cd infra/terraform/examples/validate
+          sed -i '/github.com/s|"[^"]*"|"../.."|' main.tf
+          terraform init -backend=false -input=false
+          terraform validate
