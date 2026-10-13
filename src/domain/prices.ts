@@ -21,9 +21,11 @@ export type PriceRecord = {
 	supplierId?: number | null;
 	assemblyId?: number | null;
 	note?: string;
+	/** Date the price applies from (YYYY-MM-DD). Default: today. Only past prices entered as history set it (D142). */
+	validFrom?: string;
 };
 
-/** Insert statement for one history row, dated today (UTC). Add it to the batch that changes the price. */
+/** Insert statement for one history row, dated today (UTC) unless `validFrom` is given. Add it to the batch that changes the price. */
 export function priceRecordStatement(db: Db, r: PriceRecord, user: string, now: string) {
 	return db.insert(priceHistory).values({
 		partId: r.partId,
@@ -31,7 +33,7 @@ export function priceRecordStatement(db: Db, r: PriceRecord, user: string, now: 
 		priceCents: r.priceCents,
 		supplierId: r.supplierId ?? null,
 		assemblyId: r.assemblyId ?? null,
-		validFrom: now.slice(0, 10),
+		validFrom: r.validFrom ?? now.slice(0, 10),
 		source: r.source,
 		note: r.note ?? "",
 		createdBy: user,

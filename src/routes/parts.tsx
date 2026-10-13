@@ -30,6 +30,7 @@ import {
 	savePartStatements,
 	setStandardCostStatements,
 } from "../domain/parts";
+import { loadSeries, pastPriceInput, pastPriceRuleErrors, pastPriceStatement, seriesKey } from "../domain/past-prices";
 import { can } from "../domain/permissions";
 import { lastPaidBySupplier, paidPrices, partPriceHistory } from "../domain/prices";
 import { averageCosts } from "../domain/stock";
@@ -38,7 +39,7 @@ import { errorText, fmt } from "../i18n";
 import { cn } from "../lib/cn";
 import { isConstraintError } from "../lib/sql";
 import { formatMoney, formatPercent, lineCostCents } from "../lib/units";
-import { validate } from "../lib/validation";
+import { type FieldErrors, validate } from "../lib/validation";
 import { requirePermission } from "../middleware/roles";
 import type { AppEnv } from "../types";
 import { CostView, StatusBadge } from "../views/assembly";
@@ -60,6 +61,7 @@ import {
 	CardHeader,
 	CardTitle,
 	CheckboxField,
+	CollapsibleCard,
 	DecimalField,
 	DetailList,
 	EmptyState,
@@ -407,6 +409,8 @@ function PartDetail(props: {
 	usedIn: WhereUsedRow[];
 	builds: Awaited<ReturnType<typeof listBuilds>>;
 	imagesEnabled: boolean;
+	/** The "Add a past price" form, for those who may edit prices and see costs. */
+	pastPrice?: PastPriceFormProps | undefined;
 	ok?: string | undefined;
 	err?: string | undefined;
 }) {
@@ -470,7 +474,12 @@ function PartDetail(props: {
 				}
 			/>
 			<RecordTabs base={`/parts/${p.id}`} active="overview" />
-			<Flash ok={props.ok} message={props.ok === "adjusted" ? t.stock.adjusted : undefined} />
+			<Flash
+				ok={props.ok}
+				message={
+					props.ok === "adjusted" ? t.stock.adjusted : props.ok === "pastprice" ? t.parts.pastPriceAdded : undefined
+				}
+			/>
 			{props.err && PART_ERRORS.has(props.err) ? <Alert variant="destructive">{errorText(t, props.err)}</Alert> : null}
 			<div class="flex flex-col gap-4">
 				<div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -586,7 +595,15 @@ function PartDetail(props: {
 					</Card>
 				) : null}
 				<WhereUsed rows={props.usedIn} />
-				{seeCosts ? <PriceHistoryCard part={p} history={props.history} paid={props.paid} today={props.today} /> : null}
+				{seeCosts ? (
+					<PriceHistoryCard
+						part={p}
+						history={props.history}
+						paid={props.paid}
+						today={props.today}
+						pastPrice={props.pastPrice}
+					/>
+				) : null}
 				{stocked ? (
 					<Card>
 						<CardHeader>
@@ -1001,14 +1018,58 @@ function PriceChart(props: { history: HistoryRow[]; paid: PaidRow[]; today: stri
 	);
 }
 
-function PriceHistoryCard(props: { part: Part; history: HistoryRow[]; paid: PaidRow[]; today: string }) {
+type PastPriceFormProps = { values: FormValues; errors: FormErrors; suppliers: SupplierOption[] };
+
+/** Adds a price the part had before Kitting (D142): dated in the past, never the current price. */
+function PastPriceForm(props: { part: Part; form: PastPriceFormProps }) {
+	const { t } = useApp();
+	const { part, form } = props;
+	const p = { values: form.values, errors: form.errors };
+	return (
+		<CardContent>
+			<CollapsibleCard title={t.parts.addPastPrice} icon={icons.plus} open={Object.keys(form.errors).length > 0}>
+				<form method="post" action={`/parts/${part.id}/prices/past#price-history`} class="flex flex-col gap-6">
+					<p class="text-sm text-muted-foreground">{t.parts.pastPriceHint}</p>
+					<ErrorBanner show={Object.keys(form.errors).length > 0} />
+					<FieldGroup>
+						<div class="grid gap-4 md:grid-cols-3">
+							<TextField name="date" label={t.parts.pastPriceDate} type="date" required {...p} />
+							<DecimalField name="price" label={t.parts.price} required {...p} />
+							<SelectField
+								name="supplier_id"
+								label={t.parts.pastPriceSupplier}
+								options={[
+									{ value: "", label: t.parts.pastPriceStandard },
+									...(isStocked(part.kind) ? form.suppliers.map((s) => ({ value: String(s.id), label: s.name })) : []),
+								]}
+								{...p}
+							/>
+						</div>
+						<TextField name="note" label={t.common.notes} {...p} />
+					</FieldGroup>
+					<div>
+						<Button icon={icons.plus}>{t.parts.pastPriceSubmit}</Button>
+					</div>
+				</form>
+			</CollapsibleCard>
+		</CardContent>
+	);
+}
+
+function PriceHistoryCard(props: {
+	part: Part;
+	history: HistoryRow[];
+	paid: PaidRow[];
+	today: string;
+	pastPrice?: PastPriceFormProps | undefined;
+}) {
 	const { t } = useApp();
 	const { history, paid } = props;
 	// The chart plots known standard costs and paid prices only (not offer or selling prices).
 	const plottable =
 		history.some((h) => h.kind === "standard" && h.priceCents !== null) || paid.some((r) => r.unitCostCents !== null);
 	return (
-		<Card>
+		<Card id="price-history" class="scroll-mt-20">
 			<CardHeader>
 				<CardTitle icon={icons.history}>{t.parts.priceHistory}</CardTitle>
 				<CardDescription>{t.parts.priceHistoryHint}</CardDescription>
@@ -1111,6 +1172,7 @@ function PriceHistoryCard(props: { part: Part; history: HistoryRow[]; paid: Paid
 					</CardContent>
 				</>
 			)}
+			{props.pastPrice ? <PastPriceForm part={props.part} form={props.pastPrice} /> : null}
 		</Card>
 	);
 }
@@ -1285,35 +1347,52 @@ export function MovesTable(props: { moves: (typeof stockMoves.$inferSelect)[]; u
 	);
 }
 
-partRoutes.get("/:id", async (c) => {
-	const id = idParam(c);
-	const part = id ? await getPart(c.var.db, id) : undefined;
-	if (!part) return notFound(c);
+/** The part page; `pastPrice` carries the submitted values and errors of a refused past price (422). */
+async function partPage(
+	c: Context<AppEnv>,
+	part: Part,
+	pastPrice?: { values: FormValues; errors: FormErrors },
+	status: 200 | 422 = 200,
+) {
 	const db = c.var.db;
-	const [supplierRows, onHand, moves, assemblySummary, usedIn, recent, offers, lastPaid, average, history, paid] =
-		await Promise.all([
-			part.supplierId
-				? db
-						.select({ id: suppliers.id, name: suppliers.name, email: suppliers.email, phone: suppliers.phone })
-						.from(suppliers)
-						.where(eq(suppliers.id, part.supplierId))
-				: Promise.resolve([]),
-			onHandOf(db, part.id),
-			db
-				.select()
-				.from(stockMoves)
-				.where(eq(stockMoves.partId, part.id))
-				.orderBy(desc(stockMoves.at), desc(stockMoves.id))
-				.limit(100),
-			partAssemblySummary(db, part.id),
-			whereUsed(db, part.id),
-			part.kind === "make" ? listBuilds(db, { status: "all", partId: part.id, limit: 10 }) : Promise.resolve([]),
-			partOffers(db, part.id),
-			lastPaidBySupplier(db, part.id),
-			isStocked(part.kind) ? averageCosts(db).then((a) => a.costs.get(part.id)) : Promise.resolve(undefined),
-			partPriceHistory(db, part.id),
-			paidPrices(db, part.id),
-		]);
+	const showPastPrice = c.var.seeCosts && can(c.var, "prices.edit");
+	const [
+		supplierRows,
+		onHand,
+		moves,
+		assemblySummary,
+		usedIn,
+		recent,
+		offers,
+		lastPaid,
+		average,
+		history,
+		paid,
+		allSuppliers,
+	] = await Promise.all([
+		part.supplierId
+			? db
+					.select({ id: suppliers.id, name: suppliers.name, email: suppliers.email, phone: suppliers.phone })
+					.from(suppliers)
+					.where(eq(suppliers.id, part.supplierId))
+			: Promise.resolve([]),
+		onHandOf(db, part.id),
+		db
+			.select()
+			.from(stockMoves)
+			.where(eq(stockMoves.partId, part.id))
+			.orderBy(desc(stockMoves.at), desc(stockMoves.id))
+			.limit(100),
+		partAssemblySummary(db, part.id),
+		whereUsed(db, part.id),
+		part.kind === "make" ? listBuilds(db, { status: "all", partId: part.id, limit: 10 }) : Promise.resolve([]),
+		partOffers(db, part.id),
+		lastPaidBySupplier(db, part.id),
+		isStocked(part.kind) ? averageCosts(db).then((a) => a.costs.get(part.id)) : Promise.resolve(undefined),
+		partPriceHistory(db, part.id),
+		paidPrices(db, part.id),
+		showPastPrice ? supplierOptions(c) : Promise.resolve([]),
+	]);
 	return page(
 		c,
 		part.ref,
@@ -1332,10 +1411,21 @@ partRoutes.get("/:id", async (c) => {
 			usedIn={usedIn}
 			builds={recent}
 			imagesEnabled={imagesBucket(c.env) !== null}
+			pastPrice={
+				showPastPrice
+					? { values: pastPrice?.values ?? {}, errors: pastPrice?.errors ?? {}, suppliers: allSuppliers }
+					: undefined
+			}
 			ok={c.req.query("ok")}
 			err={c.req.query("err")}
 		/>,
+		status,
 	);
+}
+
+partRoutes.get("/:id", async (c) => {
+	const part = await partFromParam(c);
+	return part ? partPage(c, part) : notFound(c);
 });
 
 partRoutes.get("/:id/history", async (c) => {
@@ -1449,6 +1539,50 @@ partRoutes.post("/:id/cost/offer", requirePermission("prices.edit"), async (c) =
 		setStandardCostStatements(c.var.db, part, offer.priceCents, "form", c.var.user, nowIso(), note),
 	);
 	return redirectOk(c, `/parts/${part.id}`);
+});
+
+// ---------------------------------------------------------------------------
+// Past prices (D142): history from before Kitting. Only a price_history row; no current value changes.
+
+partRoutes.post("/:id/prices/past", requirePermission("prices.edit"), async (c) => {
+	const part = await partFromParam(c);
+	if (!part) return notFound(c);
+	const t = c.var.t;
+	const body = await c.req.parseBody();
+	const refuse = (errors: FieldErrors) =>
+		partPage(c, part, { values: body as FormValues, errors: translateErrors(c, errors, { kind: part.kind }) }, 422);
+	const v = validate(pastPriceInput, body);
+	if (!v.ok) return refuse(v.errors);
+	const d = v.data;
+	if (d.supplier_id !== null && !(await getSupplier(c.var.db, d.supplier_id)))
+		return refuse({ supplier_id: "invalid" });
+	const series = (await loadSeries(c.var.db, part.id)).get(seriesKey(part.id, d.supplier_id));
+	const broken = pastPriceRuleErrors({
+		date: d.date,
+		supplierId: d.supplier_id,
+		partKind: part.kind,
+		series,
+		today: nowIso().slice(0, 10),
+	});
+	if (Object.keys(broken).length > 0) return refuse(broken);
+	const now = nowIso();
+	await saveChanges(
+		c,
+		fmt(t.history.summaries.pastPrice, { ref: part.ref }),
+		[
+			pastPriceStatement(
+				c.var.db,
+				part.id,
+				{ date: d.date, priceCents: d.price, supplierId: d.supplier_id, note: d.note },
+				"form",
+				c.var.user,
+				now,
+			),
+		],
+		// The history is not tracked row by row and never loses a row (D92): there is nothing to undo (D142).
+		{ revertible: false },
+	);
+	return c.redirect(`/parts/${part.id}?ok=pastprice#price-history`, 303);
 });
 
 // ---------------------------------------------------------------------------

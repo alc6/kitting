@@ -732,3 +732,32 @@ Short log of choices made where the brief left room. Newest at the bottom of eac
     custom domain and Access application cannot come out of it, and the deployment would be unusable until Access
     is set up: the Worker answers 403 to every request without an Access token. Terraform plus a release does
     what the button cannot.
+- **D142. Past prices can be entered as history, only before the current price of their series (amends D92).** A
+  company starting on Kitting has prices from before it. Two ways write the same thing, a `price_history` row dated in
+  the past: the "Add a past price" form on the part page (planners and admins, `prices.edit`) and `price_history.csv`
+  (`ref,price,valid_from,supplier,note`, after `part_suppliers` in the import order, committed by admins like any
+  import). Rules, shared by both in `src/domain/past-prices.ts`:
+  - *Series.* A row is the standard cost (no supplier, kind `standard`) or one supplier's offer price (kind
+    `purchase`; the supplier must exist but needs no offer for the part, since a past supplier may be gone; stocked
+    parts only, like offers). A past price of the selling price is not covered.
+  - *Date.* A real `YYYY-MM-DD` date strictly before today and strictly before the latest row of the same series, so a
+    past price can never become the current one: the "current price" stays what the part and its offers say, and
+    `parts.cost_cents`, offers and `parts.sale_price_cents` are never touched. A series without a row accepts any past
+    date. A date already in the series is refused (two changes on the same day can exist from normal edits; entered
+    history is not allowed to add to that). In a file, rows may come in any order and are compared with the database
+    only, plus the duplicate check inside the file. The price is required, zero allowed; one wrong row refuses the file.
+  - *Source.* `form` and `import`, like any entry from those places. A new source value ("backfill") was rejected: the
+    source column has a CHECK constraint, so a new value means rebuilding `price_history` (done once, in migration
+    0005) for a label that the dates already give: a row whose `valid_from` precedes the day it was created is a past
+    price. No schema change.
+  - *Readers already cope.* The part page, the dated valuation (D91) and margin history (D98) all order by
+    `valid_from`, then `id`; a past row therefore lands before the existing ones whatever its id, and gives dates
+    before the first recorded value their true cost instead of the fallback.
+  - *No undo.* `price_history` is not a tracked table (D92: append-only, never deleted), so the change set holds no
+    log entry to walk backwards, and undoing would mean deleting a row. These change sets are therefore saved with
+    `revertible: false` (otherwise `runChangeSet()` drops a change set that logged nothing) and show "Cannot be
+    undone"; their summary names the part, never an amount. The cost: a mistyped past price stays, and its date is
+    taken. Fixing it takes a manual `DELETE` with `wrangler d1 execute` (untracked table, no change set needed); the preview of the CSV
+    and the form's refusal messages are the guard. Tracking `price_history` and allowing deletes was left out: it
+    would change D92 for the whole log.
+  - Not available over MCP (no tool; adding one would need `prices.edit` and the same rules).

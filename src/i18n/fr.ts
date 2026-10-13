@@ -103,6 +103,10 @@ export const fr: Dict = {
 		duplicate_ref: "Cette référence existe déjà.",
 		duplicate_name: "Ce nom existe déjà.",
 		duplicate_in_file: "Doublon de la ligne {line}.",
+		past_price_not_past: "La date doit être antérieure à aujourd’hui.",
+		past_price_not_older:
+			"Seuls les prix plus anciens que le prix actuel peuvent être ajoutés ; modifiez le prix actuel dans le formulaire de l’article.",
+		duplicate_date: "Cette série a déjà un prix à cette date.",
 		ref_case: "Ne diffère que par la casse de la référence existante {ref}.",
 		unknown_supplier: "Fournisseur inconnu « {name} ». Importez d’abord les fournisseurs.",
 		unknown_part: "Référence article inconnue « {ref} ».",
@@ -405,6 +409,14 @@ export const fr: Dict = {
 			migration: "Migration",
 			revert: "Annulation",
 		},
+		addPastPrice: "Ajouter un ancien prix",
+		pastPriceHint:
+			"Enregistrez un prix de cet article antérieur à Kitting. Seules les dates passées et antérieures au prix actuel de la même série (coût standard, ou un fournisseur) sont acceptées ; les prix actuels ne changent pas.",
+		pastPriceDate: "En vigueur depuis",
+		pastPriceSupplier: "Prix de",
+		pastPriceStandard: "Coût standard",
+		pastPriceAdded: "Ancien prix ajouté.",
+		pastPriceSubmit: "Ajouter à l’historique",
 	},
 	assemblies: {
 		title: "Assemblages",
@@ -666,7 +678,7 @@ export const fr: Dict = {
 		title: "Import / Export",
 		intro:
 			"Envoyez un fichier CSV (séparateur virgule ou point-virgule, UTF-8). Un aperçu s’affiche toujours d’abord ; rien n’est écrit avant votre confirmation.",
-		order: "Importez dans cet ordre : fournisseurs, articles, offres fournisseurs, assemblages, stock.",
+		order: "Importez dans cet ordre : fournisseurs, articles, offres fournisseurs, anciens prix, assemblages, stock.",
 		file: "Fichier CSV",
 		orPaste: "…ou collez le texte CSV",
 		preview: "Aperçu",
@@ -689,6 +701,7 @@ export const fr: Dict = {
 			suppliers: "Fournisseurs",
 			parts: "Articles",
 			part_suppliers: "Offres fournisseurs",
+			price_history: "Anciens prix",
 			assemblies: "Assemblages",
 			stock: "Stock (inventaire initial)",
 		},
@@ -698,6 +711,8 @@ export const fr: Dict = {
 				"Mise à jour ou création par ref. Les colonnes absentes du fichier gardent leur valeur actuelle. Les fournisseurs sont reconnus par leur nom.",
 			part_suppliers:
 				"Une ligne par article et fournisseur : sa référence, son prix et ses conditions. Mise à jour par réf. + fournisseur ; preferred = oui en fait le fournisseur utilisé pour les manquants.",
+			price_history:
+				"Prix d’avant Kitting, une ligne par prix : ref, price, valid_from (AAAA-MM-JJ) et en option le fournisseur (vide : le coût standard). Seules les dates passées et antérieures au prix actuel sont acceptées ; les prix actuels ne changent jamais. Les lignes ajoutées ne peuvent pas être annulées.",
 			assemblies:
 				"Une ligne par composant. Les lignes sont regroupées par parent_ref + code + revision ; les composants de chaque assemblage sont remplacés.",
 			stock:
@@ -1044,6 +1059,7 @@ export const fr: Dict = {
 			partCostAverage: "Coût standard de {ref} pris sur son coût moyen",
 			partCostOffer: "Coût standard de {ref} pris sur son offre préférée",
 			partCost: "Coût standard de {ref}",
+			pastPrice: "Ajout d’un ancien prix à {ref}",
 			partSalePrice: "Prix de vente de {ref}",
 			partArchive: "Archivage de l’article {ref}",
 			partUnarchive: "Désarchivage de l’article {ref}",

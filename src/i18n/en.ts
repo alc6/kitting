@@ -104,6 +104,10 @@ export const en = {
 		duplicate_ref: "This reference is already used.",
 		duplicate_name: "This name is already used.",
 		duplicate_in_file: "Duplicate of line {line}.",
+		past_price_not_past: "The date must be before today.",
+		past_price_not_older:
+			"Only prices older than the current one can be added; change the current price on the part's form.",
+		duplicate_date: "This series already has a price on this date.",
 		ref_case: "Differs only by upper/lower case from existing reference {ref}.",
 		unknown_supplier: "Unknown supplier “{name}”. Import suppliers first.",
 		unknown_part: "Unknown part reference “{ref}”.",
@@ -392,6 +396,14 @@ export const en = {
 		unitPrice: "Unit price",
 		priceKinds: { standard: "Standard cost", purchase: "Supplier price", sale: "Selling price" },
 		priceSources: { form: "Form", import: "Import", po: "Purchase order", migration: "Migration", revert: "Undo" },
+		addPastPrice: "Add a past price",
+		pastPriceHint:
+			"Record a price this part had before Kitting. Only dates before today and before the current price of the same series (standard cost, or one supplier) are accepted; the current prices do not change.",
+		pastPriceDate: "In force since",
+		pastPriceSupplier: "Price of",
+		pastPriceStandard: "Standard cost",
+		pastPriceAdded: "Past price added.",
+		pastPriceSubmit: "Add to the history",
 	},
 	assemblies: {
 		title: "Assemblies",
@@ -651,7 +663,7 @@ export const en = {
 		title: "Import / Export",
 		intro:
 			"Upload a CSV file (comma or semicolon separated, UTF-8). You always get a preview first; nothing is written until you confirm.",
-		order: "Import in this order: suppliers, parts, supplier offers, assemblies, stock.",
+		order: "Import in this order: suppliers, parts, supplier offers, past prices, assemblies, stock.",
 		file: "CSV file",
 		orPaste: "…or paste CSV text",
 		preview: "Preview",
@@ -674,6 +686,7 @@ export const en = {
 			suppliers: "Suppliers",
 			parts: "Parts",
 			part_suppliers: "Supplier offers",
+			price_history: "Past prices",
 			assemblies: "Assemblies",
 			stock: "Stock (initial counts)",
 		},
@@ -682,6 +695,8 @@ export const en = {
 			parts: "Upsert by ref. Columns left out of the file keep their current values. Suppliers are matched by name.",
 			part_suppliers:
 				"One row per part and supplier: their reference, price and ordering terms. Upsert by ref + supplier; preferred = yes makes it the supplier used for shortages.",
+			price_history:
+				"Prices from before Kitting, one row per price: ref, price, valid_from (YYYY-MM-DD) and optionally the supplier (empty: the standard cost). Only dates before today and before the current price are accepted; current prices never change. Added rows cannot be undone.",
 			assemblies:
 				"One row per component of an assembly. Rows are grouped by parent_ref + code + revision; the components of each assembly are replaced.",
 			stock:
@@ -1018,6 +1033,7 @@ export const en = {
 			partCostAverage: "Set the standard cost of {ref} from its average cost",
 			partCostOffer: "Set the standard cost of {ref} from its preferred offer",
 			partCost: "Set the standard cost of {ref}",
+			pastPrice: "Add a past price to {ref}",
 			partSalePrice: "Set the selling price of {ref}",
 			partArchive: "Archive part {ref}",
 			partUnarchive: "Unarchive part {ref}",

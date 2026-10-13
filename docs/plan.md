@@ -74,6 +74,8 @@ After M2 the catalogue and assemblies can be loaded; after M4 real builds can ru
 - [x] Selling prices per product, overridable per assembly variant; planned and actual margins, margins page
 - [x] Valuation by standard cost (dated from the history) and weighted average cost, side by side
 - [x] Additive migration 0002 (no table rebuild), tested on data; demo dataset with a second supplier and prices
+- [x] Past prices: standard costs and supplier prices from before Kitting, added to the history from the part page
+      or `price_history.csv`, only before the current price of their series (D142)
 
 ## M8: Margin history and product images ✅
 
