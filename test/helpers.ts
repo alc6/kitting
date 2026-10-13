@@ -8,15 +8,17 @@ import demoStock from "../examples/demo/stock.csv?raw";
 import demoSuppliers from "../examples/demo/suppliers.csv?raw";
 import type { Role } from "../src/db/schema";
 import * as schema from "../src/db/schema";
+import { runChangeSet } from "../src/domain/history";
 import { planImport } from "../src/domain/import";
 import app from "../src/index";
-import { runBatch } from "../src/lib/db";
 import type { Db } from "../src/types";
 
 export const ORIGIN = "https://kitting.example.com";
 export const TESTER = "tester@example.com";
 
 const TABLES = [
+	"change_log",
+	"change_sets",
 	"users",
 	"settings",
 	"build_lines",
@@ -33,7 +35,38 @@ const TABLES = [
 ];
 
 export async function resetDb(): Promise<void> {
-	await env.DB.batch(TABLES.map((t) => env.DB.prepare(`DELETE FROM ${t}`)));
+	await seedSql(...TABLES.map((t) => env.DB.prepare(`DELETE FROM ${t}`)));
+}
+
+/**
+ * Runs SQL fixtures in one batch without recording them in the history (the triggers are suppressed, as during
+ * a restore). Returns each statement's result.
+ */
+export async function seedSql(...stmts: D1PreparedStatement[]): Promise<D1Result[]> {
+	const results = await env.DB.batch([
+		env.DB.prepare("INSERT INTO change_context (id, suppress) VALUES (1, 1)"),
+		...stmts,
+		env.DB.prepare("DELETE FROM change_context"),
+	]);
+	return results.slice(1, 1 + stmts.length);
+}
+
+/** Runs SQL statements as one change set by `seed@example.com`, as a page would: they are in the history. */
+export async function changeSql(summary: string, ...stmts: D1PreparedStatement[]): Promise<D1Result[]> {
+	const results = await env.DB.batch([
+		env.DB.prepare("INSERT INTO change_sets (user_email, source, summary) VALUES ('seed@example.com', 'ui', ?)").bind(
+			summary,
+		),
+		env.DB.prepare("INSERT INTO change_context (id, change_set_id) VALUES (1, (SELECT max(id) FROM change_sets))"),
+		...stmts,
+		env.DB.prepare("DELETE FROM change_context"),
+	]);
+	return results.slice(2, 2 + stmts.length);
+}
+
+/** A prepared statement, for seedSql() and changeSql(). */
+export function stmt(sql: string, ...params: unknown[]): D1PreparedStatement {
+	return env.DB.prepare(sql).bind(...params);
 }
 
 export type EnvOverrides = Partial<Record<keyof Env, unknown>>;
@@ -70,13 +103,18 @@ export async function one<T = Record<string, unknown>>(sql: string, ...params: u
 	return r[0];
 }
 
+/** The id returned by an INSERT … RETURNING id run with seedSql() or changeSql(). */
+export function returnedId(result: D1Result | undefined): number {
+	const id = (result?.results[0] as { id?: number } | undefined)?.id;
+	if (typeof id !== "number") throw new Error("no id returned");
+	return id;
+}
+
 export async function insertSupplier(name: string): Promise<number> {
-	const r = await env.DB.prepare(
-		"INSERT INTO suppliers (name, created_by, updated_by) VALUES (?, 'seed', 'seed') RETURNING id",
-	)
-		.bind(name)
-		.first<{ id: number }>();
-	return r!.id;
+	const [r] = await seedSql(
+		stmt("INSERT INTO suppliers (name, created_by, updated_by) VALUES (?, 'seed', 'seed') RETURNING id", name),
+	);
+	return returnedId(r);
 }
 
 /**
@@ -98,11 +136,10 @@ export async function insertPart(
 ): Promise<number> {
 	const needsOffer = opts.moqMilli !== undefined || opts.packSizeMilli !== undefined || opts.offerPriceCents != null;
 	const supplierId = opts.supplierId ?? (needsOffer ? await insertSupplier(`Supplier of ${ref}`) : null);
-	const r = await env.DB.prepare(
-		`INSERT INTO parts (ref, name, kind, unit, cost_cents, supplier_id, track_serial, created_by, updated_by)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, 'seed', 'seed') RETURNING id`,
-	)
-		.bind(
+	const [r] = await seedSql(
+		stmt(
+			`INSERT INTO parts (ref, name, kind, unit, cost_cents, supplier_id, track_serial, created_by, updated_by)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, 'seed', 'seed') RETURNING id`,
 			ref,
 			`Part ${ref}`,
 			kind,
@@ -110,27 +147,35 @@ export async function insertPart(
 			opts.costCents === undefined ? null : opts.costCents,
 			supplierId,
 			opts.trackSerial ? 1 : 0,
-		)
-		.first<{ id: number }>();
+		),
+	);
+	const id = returnedId(r);
 	if (supplierId !== null) {
-		await env.DB.prepare(
-			`INSERT INTO part_suppliers (part_id, supplier_id, price_cents, moq_milli, pack_size_milli, created_by, updated_by)
-			 VALUES (?, ?, ?, ?, ?, 'seed', 'seed')`,
-		)
-			.bind(r!.id, supplierId, opts.offerPriceCents ?? null, opts.moqMilli ?? 0, opts.packSizeMilli ?? 0)
-			.run();
+		await seedSql(
+			stmt(
+				`INSERT INTO part_suppliers (part_id, supplier_id, price_cents, moq_milli, pack_size_milli, created_by, updated_by)
+				 VALUES (?, ?, ?, ?, ?, 'seed', 'seed')`,
+				id,
+				supplierId,
+				opts.offerPriceCents ?? null,
+				opts.moqMilli ?? 0,
+				opts.packSizeMilli ?? 0,
+			),
+		);
 	}
-	return r!.id;
+	return id;
 }
 
 /** Lists `email` in the users table with this role (TESTER by default). */
 export async function setRole(role: Role, email = TESTER): Promise<void> {
-	await env.DB.prepare(
-		`INSERT INTO users (email, role, created_by, updated_by) VALUES (?, ?, 'seed', 'seed')
-		 ON CONFLICT (email) DO UPDATE SET role = excluded.role`,
-	)
-		.bind(email, role)
-		.run();
+	await seedSql(
+		stmt(
+			`INSERT INTO users (email, role, created_by, updated_by) VALUES (?, ?, 'seed', 'seed')
+			 ON CONFLICT (email) DO UPDATE SET role = excluded.role`,
+			email,
+			role,
+		),
+	);
 }
 
 /** Env override under which TESTER is not in ADMIN_EMAILS: their role then comes from the users table. */
@@ -138,9 +183,11 @@ export const NOT_ADMIN = { ADMIN_EMAILS: "someone-else@example.com" };
 
 /** Lets viewers and operators see costs (the admin option on the users page). */
 export async function letLowerRolesSeeCosts(): Promise<void> {
-	await env.DB.prepare(
-		"INSERT INTO settings (key, value, created_by, updated_by) VALUES ('lower_roles_see_costs', '1', 'seed', 'seed')",
-	).run();
+	await seedSql(
+		stmt(
+			"INSERT INTO settings (key, value, created_by, updated_by) VALUES ('lower_roles_see_costs', '1', 'seed', 'seed')",
+		),
+	);
 }
 
 export async function insertMove(partId: number, qtyMilli: number, reason = "adjust", serial: string | null = null) {
@@ -175,7 +222,11 @@ export async function importCsv(
 	const plan = await planImport({ db, locale: "en" }, type, csv);
 	if (!plan) throw new Error(`no importer ${type}`);
 	if (plan.errors.length) throw new Error(`${type} import errors: ${JSON.stringify(plan.errors)}`);
-	await runBatch(db, plan.statements("seed@example.com", new Date().toISOString()));
+	await runChangeSet(
+		db,
+		{ user: "seed@example.com", source: "import", summary: `Import ${type}.csv` },
+		plan.statements("seed@example.com", new Date().toISOString()),
+	);
 }
 
 /** Loads the fictional demo dataset. Pass `stock: false` to skip initial stock. */

@@ -49,15 +49,15 @@ export async function getUser(db: Db, id: number) {
 }
 
 /** Adds a user, or changes the role of the one with this email. */
-export async function saveUser(db: Db, input: UserInput, user: string, now: string): Promise<void> {
-	await db
+export function saveUserStatement(db: Db, input: UserInput, user: string, now: string) {
+	return db
 		.insert(users)
 		.values({ ...input, createdAt: now, createdBy: user, updatedAt: now, updatedBy: user })
 		.onConflictDoUpdate({ target: users.email, set: { role: input.role, updatedAt: now, updatedBy: user } });
 }
 
-export async function deleteUser(db: Db, id: number): Promise<void> {
-	await db.delete(users).where(eq(users.id, id));
+export function deleteUserStatement(db: Db, id: number) {
+	return db.delete(users).where(eq(users.id, id));
 }
 
 export async function lowerRolesSeeCosts(db: Db): Promise<boolean> {
@@ -65,9 +65,9 @@ export async function lowerRolesSeeCosts(db: Db): Promise<boolean> {
 	return rows[0]?.value === "1";
 }
 
-export async function setLowerRolesSeeCosts(db: Db, on: boolean, user: string, now: string): Promise<void> {
+export function setLowerRolesSeeCostsStatement(db: Db, on: boolean, user: string, now: string) {
 	const value = on ? "1" : "0";
-	await db
+	return db
 		.insert(settings)
 		.values({
 			key: SETTINGS.lowerRolesSeeCosts,

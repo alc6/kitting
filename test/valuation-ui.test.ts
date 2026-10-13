@@ -2,7 +2,20 @@ import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { valuation } from "../src/domain/stock";
 import { formatCentsInput, formatMoney } from "../src/lib/units";
-import { bomId, insertPart, insertSupplier, loadDemo, one, partId, postForm, request, rows, testDb } from "./helpers";
+import {
+	bomId,
+	insertPart,
+	insertSupplier,
+	loadDemo,
+	one,
+	partId,
+	postForm,
+	request,
+	rows,
+	seedSql,
+	stmt,
+	testDb,
+} from "./helpers";
 
 const supplierId = async (name: string) =>
 	(await one<{ id: number }>("SELECT id FROM suppliers WHERE name = ?", name)).id;
@@ -163,11 +176,13 @@ describe("shortages: ordering from another supplier", () => {
 	it("lets a line without preferred supplier be ordered once a supplier is chosen", async () => {
 		const acme = await insertSupplier("Acme");
 		const loose = await insertPart("LOOSE", "buy", { costCents: 100 });
-		await env.DB.prepare(
-			"INSERT INTO part_suppliers (part_id, supplier_id, price_cents, moq_milli, pack_size_milli, lead_days, created_by, updated_by) VALUES (?, ?, 120, 10000, 0, 4, 'seed', 'seed')",
-		)
-			.bind(loose, acme)
-			.run();
+		await seedSql(
+			stmt(
+				"INSERT INTO part_suppliers (part_id, supplier_id, price_cents, moq_milli, pack_size_milli, lead_days, created_by, updated_by) VALUES (?, ?, 120, 10000, 0, 4, 'seed', 'seed')",
+				loose,
+				acme,
+			),
+		);
 		await insertPart("BARE", "buy", { costCents: 50 });
 		const top = await insertPart("TOP", "make");
 		await postForm("/boms", { parent_part_id: String(top), code: "std", revision: "Rev1", notes: "", copy_from: "" });

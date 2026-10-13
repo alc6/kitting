@@ -1,11 +1,17 @@
 import { and, asc, eq, inArray } from "drizzle-orm";
 import type { Context } from "hono";
 import { Hono } from "hono";
-import { PO_STATUSES, type PoStatus, parts, poLines, purchaseOrders, suppliers } from "../db/schema";
+import { PO_STATUSES, type PoStatus, parts, poLines, suppliers } from "../db/schema";
 import { getOffer, poUnitPrice } from "../domain/offers";
 import { can } from "../domain/permissions";
 import {
+	addPoLineStatement,
+	cancelPoStatement,
+	closePoStatement,
 	computeShortages,
+	createPoStatement,
+	deletePoLineStatement,
+	deletePoStatement,
 	draftPoStatements,
 	getPo,
 	getPoLines,
@@ -23,10 +29,12 @@ import {
 	type ShortageOffer,
 	type Shortages,
 	type SupplierGroup,
+	sendPoStatement,
+	updatePoLineStatement,
+	updatePoStatement,
 } from "../domain/purchasing";
 import { errorText, fmt } from "../i18n";
 import { cn } from "../lib/cn";
-import { runBatch } from "../lib/db";
 import { isConstraintError } from "../lib/sql";
 import {
 	formatCentsInput,
@@ -42,8 +50,9 @@ import { type FieldErrors, validate } from "../lib/validation";
 import { requirePermission } from "../middleware/roles";
 import type { AppEnv } from "../types";
 import { type AppView, useApp } from "../views/context";
+import { RecordTabs } from "../views/history";
 import { Icon, icons } from "../views/icons";
-import { idParam, notFound, nowIso, page, redirectOk, translateErrors } from "../views/render";
+import { idParam, notFound, nowIso, page, redirectOk, saveChanges, translateErrors } from "../views/render";
 import {
 	Alert,
 	Badge,
@@ -81,7 +90,7 @@ import {
 	TextArea,
 	TextField,
 } from "../views/ui";
-
+import { recordHistoryPage } from "./history";
 import { csvResponse } from "./import";
 
 export const purchasingRoutes = new Hono<AppEnv>();
@@ -357,7 +366,11 @@ purchasingRoutes.post("/draft-pos", requirePermission("purchasing.order"), async
 	for (let attempt = 0; ; attempt++) {
 		const numbers = await nextPoNumbers(db, orders.length);
 		try {
-			await runBatch(db, draftPoStatements(db, orders, numbers, c.var.user, nowIso()));
+			await saveChanges(
+				c,
+				fmt(c.var.t.history.summaries.draftPos, { n: orders.length }),
+				draftPoStatements(db, orders, numbers, c.var.user, nowIso()),
+			);
 			break;
 		} catch (err) {
 			if (attempt > 0 || !isConstraintError(err, "UNIQUE")) throw err;
@@ -554,18 +567,20 @@ purchasingRoutes.post("/po", requirePermission("purchasing.order"), async (c) =>
 	for (let attempt = 0; ; attempt++) {
 		try {
 			const [number] = await nextPoNumbers(db, 1);
-			const [row] = await db
-				.insert(purchaseOrders)
-				.values({
-					number: number as string,
-					supplierId: v.data.supplier_id as number,
-					expectedAt: v.data.expected_at,
-					notes: v.data.notes,
-					createdBy: user,
-					updatedBy: user,
-				})
-				.returning({ id: purchaseOrders.id });
-			return redirectOk(c, `/purchasing/po/${row?.id}`, "created");
+			const { results } = await saveChanges(c, fmt(t.history.summaries.poCreate, { number: number as string }), [
+				createPoStatement(
+					db,
+					{
+						number: number as string,
+						supplierId: v.data.supplier_id as number,
+						expectedAt: v.data.expected_at,
+						notes: v.data.notes,
+					},
+					user,
+					nowIso(),
+				),
+			]);
+			return redirectOk(c, `/purchasing/po/${results[0][0]?.id}`, "created");
 		} catch (err) {
 			if (attempt > 0 || !isConstraintError(err, "UNIQUE")) throw err;
 		}
@@ -1113,6 +1128,7 @@ async function renderPo(
 				}
 			/>
 			<PurchasingTabs active="pos" />
+			<RecordTabs base={`/purchasing/po/${po.id}`} active="overview" />
 			<Flash ok={ok} message={flash} />
 			{err ? <Alert variant="destructive">{errorText(t, err)}</Alert> : null}
 			<div class="flex flex-col gap-4">
@@ -1157,15 +1173,34 @@ purchasingRoutes.get("/po/:id", async (c) => {
 	return renderPo(c, data);
 });
 
+purchasingRoutes.get("/po/:id/history", async (c) => {
+	const data = await loadPo(c);
+	if (!data) return notFound(c);
+	const title = `${data.po.number} · ${data.supplier.name}`;
+	const header = (
+		<>
+			<PageHeader title={title} subtitle={<PoStatusBadge status={data.po.status} />} />
+			<PurchasingTabs active="pos" />
+			<RecordTabs base={`/purchasing/po/${data.po.id}`} active="history" />
+		</>
+	);
+	return recordHistoryPage(c, title, header, { kind: "po", id: data.po.id });
+});
+
 purchasingRoutes.post("/po/:id", requirePermission("purchasing.order"), async (c) => {
 	const data = await loadPo(c);
 	if (!data) return notFound(c);
 	const v = validate(poEditInput, await c.req.parseBody());
 	if (v.ok) {
-		await c.var.db
-			.update(purchaseOrders)
-			.set({ expectedAt: v.data.expected_at, notes: v.data.notes, updatedAt: nowIso(), updatedBy: c.var.user })
-			.where(eq(purchaseOrders.id, data.po.id));
+		await saveChanges(c, fmt(c.var.t.history.summaries.poEdit, { number: data.po.number }), [
+			updatePoStatement(
+				c.var.db,
+				data.po.id,
+				{ expectedAt: v.data.expected_at, notes: v.data.notes },
+				c.var.user,
+				nowIso(),
+			),
+		]);
 	}
 	return redirectOk(c, `/purchasing/po/${data.po.id}`);
 });
@@ -1193,18 +1228,18 @@ purchasingRoutes.post("/po/:id/lines", requirePermission("purchasing.order"), as
 	if (!v.ok || !part || Object.keys(errors).length) {
 		return renderPo(c, data, { lineValues: body as FormValues, lineErrors: errors, lineVars: vars }, 422);
 	}
-	const user = c.var.user;
-	await db.insert(poLines).values({
-		poId: data.po.id,
-		partId: part.id,
-		qtyMilli: v.data.qty,
-		unitPriceCents:
-			v.data.price ?? poUnitPrice((await getOffer(db, part.id, data.po.supplierId))?.priceCents, part.costCents),
-		createdBy: user,
-		updatedBy: user,
-	});
+	const unitPriceCents =
+		v.data.price ?? poUnitPrice((await getOffer(db, part.id, data.po.supplierId))?.priceCents, part.costCents);
+	await saveChanges(c, fmt(c.var.t.history.summaries.poLineAdd, { ref: part.ref, number: data.po.number }), [
+		addPoLineStatement(db, data.po.id, { partId: part.id, qtyMilli: v.data.qty, unitPriceCents }, c.var.user, nowIso()),
+	]);
 	return c.redirect(`/purchasing/po/${data.po.id}`, 303);
 });
+
+async function partRef(c: Context<AppEnv>, partId: number): Promise<string> {
+	const rows = await c.var.db.select({ ref: parts.ref }).from(parts).where(eq(parts.id, partId)).limit(1);
+	return rows[0]?.ref ?? `#${partId}`;
+}
 
 async function draftLine(c: Context<AppEnv>) {
 	const data = await loadPo(c);
@@ -1229,10 +1264,20 @@ purchasingRoutes.post("/po/:id/lines/:lineId", requirePermission("purchasing.ord
 	const price = parseCents(typeof body.price === "string" ? body.price : "");
 	if (qty === null || qty <= 0) return c.redirect(`/purchasing/po/${data.po.id}?err=invalid_quantity`, 303);
 	if (price === null || price < 0) return c.redirect(`/purchasing/po/${data.po.id}?err=invalid_money`, 303);
-	await c.var.db
-		.update(poLines)
-		.set({ qtyMilli: qty, unitPriceCents: price, updatedAt: nowIso(), updatedBy: c.var.user })
-		.where(eq(poLines.id, data.line.id));
+	await saveChanges(
+		c,
+		fmt(c.var.t.history.summaries.poLineEdit, { ref: await partRef(c, data.line.partId), number: data.po.number }),
+		[
+			updatePoLineStatement(
+				c.var.db,
+				data.po.id,
+				data.line.id,
+				{ qtyMilli: qty, unitPriceCents: price },
+				c.var.user,
+				nowIso(),
+			),
+		],
+	);
 	return c.redirect(`/purchasing/po/${data.po.id}`, 303);
 });
 
@@ -1240,7 +1285,11 @@ purchasingRoutes.post("/po/:id/lines/:lineId/delete", requirePermission("purchas
 	const data = await draftLine(c);
 	if (!data) return notFound(c);
 	if (data.po.status !== "draft") return c.redirect(`/purchasing/po/${data.po.id}?err=po_not_draft`, 303);
-	await c.var.db.delete(poLines).where(eq(poLines.id, data.line.id));
+	await saveChanges(
+		c,
+		fmt(c.var.t.history.summaries.poLineDelete, { ref: await partRef(c, data.line.partId), number: data.po.number }),
+		[deletePoLineStatement(c.var.db, data.po.id, data.line.id)],
+	);
 	return c.redirect(`/purchasing/po/${data.po.id}`, 303);
 });
 
@@ -1249,11 +1298,9 @@ purchasingRoutes.post("/po/:id/send", requirePermission("purchasing.order"), asy
 	if (!data) return notFound(c);
 	const lines = await getPoLines(c.var.db, data.po.id);
 	if (lines.length === 0) return c.redirect(`/purchasing/po/${data.po.id}?err=po_empty`, 303);
-	const now = nowIso();
-	await c.var.db
-		.update(purchaseOrders)
-		.set({ status: "sent", sentAt: now, updatedAt: now, updatedBy: c.var.user })
-		.where(and(eq(purchaseOrders.id, data.po.id), eq(purchaseOrders.status, "draft")));
+	await saveChanges(c, fmt(c.var.t.history.summaries.poSend, { number: data.po.number }), [
+		sendPoStatement(c.var.db, data.po.id, c.var.user, nowIso()),
+	]);
 	return redirectOk(c, `/purchasing/po/${data.po.id}`, "sent");
 });
 
@@ -1264,10 +1311,9 @@ purchasingRoutes.post("/po/:id/cancel", requirePermission("purchasing.order"), a
 	if (lines.some((l) => l.line.receivedQtyMilli > 0)) {
 		return c.redirect(`/purchasing/po/${data.po.id}?err=po_has_receipts`, 303);
 	}
-	await c.var.db
-		.update(purchaseOrders)
-		.set({ status: "cancelled", updatedAt: nowIso(), updatedBy: c.var.user })
-		.where(and(eq(purchaseOrders.id, data.po.id), inArray(purchaseOrders.status, ["draft", "sent"])));
+	await saveChanges(c, fmt(c.var.t.history.summaries.poCancel, { number: data.po.number }), [
+		cancelPoStatement(c.var.db, data.po.id, c.var.user, nowIso()),
+	]);
 	return redirectOk(c, `/purchasing/po/${data.po.id}`, "cancelled");
 });
 
@@ -1275,10 +1321,9 @@ purchasingRoutes.post("/po/:id/cancel", requirePermission("purchasing.order"), a
 purchasingRoutes.post("/po/:id/close", requirePermission("purchasing.order"), async (c) => {
 	const data = await loadPo(c);
 	if (!data) return notFound(c);
-	await c.var.db
-		.update(purchaseOrders)
-		.set({ status: "received", updatedAt: nowIso(), updatedBy: c.var.user })
-		.where(and(eq(purchaseOrders.id, data.po.id), inArray(purchaseOrders.status, ["sent", "partial"])));
+	await saveChanges(c, fmt(c.var.t.history.summaries.poClose, { number: data.po.number }), [
+		closePoStatement(c.var.db, data.po.id, c.var.user, nowIso()),
+	]);
 	return redirectOk(c, `/purchasing/po/${data.po.id}`, "closed");
 });
 
@@ -1286,7 +1331,9 @@ purchasingRoutes.post("/po/:id/delete", requirePermission("purchasing.delete"), 
 	const data = await loadPo(c);
 	if (!data) return notFound(c);
 	if (data.po.status !== "draft") return c.redirect(`/purchasing/po/${data.po.id}?err=po_not_draft`, 303);
-	await c.var.db.delete(purchaseOrders).where(eq(purchaseOrders.id, data.po.id));
+	await saveChanges(c, fmt(c.var.t.history.summaries.poDelete, { number: data.po.number }), [
+		deletePoStatement(c.var.db, data.po.id),
+	]);
 	return c.redirect("/purchasing/po?ok=deleted", 303);
 });
 
@@ -1338,7 +1385,11 @@ purchasingRoutes.post("/po/:id/receive", requirePermission("purchasing.receive")
 	if (Object.keys(errors).length > 0) {
 		return renderPo(c, data, { receiveValues: values, receiveErrors: errors }, 422);
 	}
-	await runBatch(db, receiptStatements(db, data.po, receipts, c.var.user, nowIso()));
+	await saveChanges(
+		c,
+		fmt(c.var.t.history.summaries.poReceive, { number: data.po.number }),
+		receiptStatements(db, data.po, receipts, c.var.user, nowIso()),
+	);
 	return redirectOk(c, `/purchasing/po/${data.po.id}`, "received");
 });
 

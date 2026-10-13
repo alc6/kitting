@@ -54,6 +54,58 @@ export async function getBuild(db: Db, id: number) {
 	return rows[0];
 }
 
+// ---------------------------------------------------------------------------
+// Planning: statements to run in one batch (completion is completionStatements below).
+
+export function createBuildStatement(
+	db: Db,
+	b: {
+		number: string;
+		partId: number;
+		bomId: number;
+		qtyMilli: number;
+		serial: string | null;
+		plannedFor: string | null;
+		notes: string;
+	},
+	user: string,
+	now: string,
+) {
+	return db
+		.insert(builds)
+		.values({ ...b, createdBy: user, updatedBy: user, createdAt: now, updatedAt: now })
+		.returning({ id: builds.id });
+}
+
+export function updateBuildStatement(
+	db: Db,
+	buildId: number,
+	d: { serial: string | null; plannedFor: string | null; notes: string },
+	user: string,
+	now: string,
+) {
+	return db
+		.update(builds)
+		.set({ ...d, updatedAt: now, updatedBy: user })
+		.where(eq(builds.id, buildId));
+}
+
+/** Planned → in progress (another status is left alone). */
+export function startBuildStatement(db: Db, buildId: number, user: string, now: string) {
+	return db
+		.update(builds)
+		.set({ status: "in_progress", updatedAt: now, updatedBy: user })
+		.where(and(eq(builds.id, buildId), eq(builds.status, "planned")));
+}
+
+/** Planned or in progress → cancelled (frees its serial). */
+export function cancelBuildStatement(db: Db, buildId: number, user: string, now: string) {
+	return db
+		.update(builds)
+		.set({ status: "cancelled", updatedAt: now, updatedBy: user })
+		.where(and(eq(builds.id, buildId), inArray(builds.status, OPEN_STATUSES)));
+}
+
 export type BuildFilters = { q?: string; status?: string; partId?: number | null; limit?: number };
 
 export async function listBuilds(db: Db, f: BuildFilters = {}) {

@@ -30,6 +30,7 @@
 		"deploy": "npm run css && wrangler d1 migrations apply DB --remote && wrangler deploy",
 		"config": "node scripts/gen-wrangler-config.mjs",
 		"db:generate": "drizzle-kit generate",
+		"db:triggers": "node scripts/history-triggers.mjs",
 		"db:migrate:local": "wrangler d1 migrations apply DB --local",
 		"db:migrate:remote": "wrangler d1 migrations apply DB --remote",
 		"cf-typegen": "wrangler types --config wrangler.example.jsonc --include-runtime=false --strict-vars=false",

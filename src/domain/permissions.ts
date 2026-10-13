@@ -36,6 +36,9 @@ export const PERMISSIONS = {
 	"backup.download": { min: "admin" },
 	"backup.restore": { min: "admin" },
 	"users.manage": { min: "admin" },
+	// History: anyone may read it (amounts redacted); undoing a change also needs the edit permission of every
+	// area it touched (TABLE_ACTIONS in src/domain/revert.ts), so this is only the floor.
+	"history.revert": { min: "operator" },
 } as const satisfies Record<string, Rule>;
 
 export type Action = keyof typeof PERMISSIONS;
@@ -60,8 +63,8 @@ export function can(access: Access, action: Action): boolean {
 // ---------------------------------------------------------------------------
 // Cost redaction, for users who may not see costs (!can(access, "costs.view")).
 
-/** Fields holding an amount or a margin rate. */
-const MONEY_KEY = /(Cents|Millicents)$|^rateBp$/;
+/** Fields holding an amount or a margin rate: camelCase in code, snake_case in database rows (history snapshots). */
+const MONEY_KEY = /(Cents|Millicents|_cents|_millicents)$|^(rateBp|rate_bp)$/;
 
 /** A copy of `value` with every amount set to null (nested objects and arrays included). */
 export function redactCosts<T>(access: Access, value: T): T {

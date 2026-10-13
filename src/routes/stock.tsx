@@ -2,21 +2,29 @@ import { eq } from "drizzle-orm";
 import type { Context } from "hono";
 import { Hono } from "hono";
 import { z } from "zod";
-import { MOVE_REASONS, parts, stockMoves } from "../db/schema";
+import { MOVE_REASONS, parts } from "../db/schema";
 import { centsOf } from "../domain/bom-graph";
 import { getPart, listParts, partOptions } from "../domain/parts";
 import { can } from "../domain/permissions";
-import { type CountGroup, isStocked, listMoves, moveValues, onHandAt, planCounts, valuation } from "../domain/stock";
+import {
+	adjustmentStatement,
+	type CountGroup,
+	countStatements,
+	isStocked,
+	listMoves,
+	onHandAt,
+	planCounts,
+	valuation,
+} from "../domain/stock";
 import { errorText, fmt } from "../i18n";
 import { cn } from "../lib/cn";
-import { runBatch } from "../lib/db";
 import { formatCentsInput, formatQtyInput, MILLI, parseMilli } from "../lib/units";
 import { type FieldErrors, field, validate } from "../lib/validation";
 import { requirePermission } from "../middleware/roles";
 import type { AppEnv } from "../types";
 import { useApp } from "../views/context";
 import { type IconNode, icons } from "../views/icons";
-import { nowIso, page, translateErrors } from "../views/render";
+import { nowIso, page, saveChanges, translateErrors } from "../views/render";
 import {
 	Alert,
 	Badge,
@@ -307,15 +315,15 @@ stockRoutes.post("/adjust", requirePermission("stock.adjust"), async (c) => {
 			422,
 		);
 	}
-	const user = c.var.user;
-	await db
-		.insert(stockMoves)
-		.values(
-			moveValues(
-				{ partId: part.id, qtyMilli: v.data.qty, serial: v.data.serial || null, unitCostCents: part.costCents },
-				{ reason: "adjust", refType: "adjustment", note: v.data.note, user, now: nowIso() },
-			),
-		);
+	await saveChanges(c, fmt(t.history.summaries.stockAdjust, { ref: part.ref }), [
+		adjustmentStatement(
+			db,
+			{ partId: part.id, qtyMilli: v.data.qty, serial: v.data.serial || null, unitCostCents: part.costCents },
+			v.data.note,
+			c.var.user,
+			nowIso(),
+		),
+	]);
 	return c.redirect(`/parts/${part.id}?ok=adjusted`, 303);
 });
 
@@ -438,15 +446,10 @@ stockRoutes.post("/count", requirePermission("stock.count"), async (c) => {
 		groups.push({ part, lines: [{ line: e.line, qtyMilli: e.qty, serial: "", unitCostCents: null }] });
 	}
 	const { moves, results } = planCounts(groups, onHand);
-	const user = c.var.user;
-	const now = nowIso();
-	await runBatch(
-		db,
-		moves.map((m) =>
-			db
-				.insert(stockMoves)
-				.values(moveValues(m, { reason: "count", refType: "count", note: note || "inventory count", user, now })),
-		),
+	await saveChanges(
+		c,
+		fmt(c.var.t.history.summaries.stockCount, { n: new Set(moves.map((m) => m.partId)).size }),
+		countStatements(db, moves, note || "inventory count", c.var.user, nowIso()),
 	);
 	return c.redirect(`/stock/count?done=${results.length}&adjusted=${moves.length}`, 303);
 });

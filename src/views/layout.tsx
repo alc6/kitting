@@ -21,8 +21,19 @@ const HTMX_CONFIG = JSON.stringify({
 });
 
 type NavKey = keyof Dict["nav"];
-/** `shown` hides an item from users who may not open it (the route refuses them too). */
-type NavItem = { key: NavKey; href: string; icon: IconNode; shown?: (v: AppView) => boolean };
+/**
+ * `shown` hides an item from users who may not open it (the route refuses them too). `label` names an item
+ * whose text lives in its feature's dictionary section rather than in Dict["nav"].
+ */
+type NavItem = {
+	key: NavKey | "history";
+	href: string;
+	icon: IconNode;
+	shown?: (v: AppView) => boolean;
+	label?: (t: Dict) => string;
+};
+
+const navLabel = (t: Dict, item: NavItem) => item.label?.(t) ?? t.nav[item.key as NavKey];
 
 /** Sidebar sections, grouped, in order. */
 export const NAV_GROUPS: { key: keyof Dict["navGroups"]; items: NavItem[] }[] = [
@@ -46,7 +57,10 @@ export const NAV_GROUPS: { key: keyof Dict["navGroups"]; items: NavItem[] }[] = 
 	},
 	{
 		key: "data",
-		items: [{ key: "import", href: "/import", icon: icons.fileSpreadsheet, shown: (v) => can(v, "import.preview") }],
+		items: [
+			{ key: "import", href: "/import", icon: icons.fileSpreadsheet, shown: (v) => can(v, "import.preview") },
+			{ key: "history", href: "/history", icon: icons.history, label: (t) => t.history.nav },
+		],
 	},
 	{ key: "admin", items: [{ key: "users", href: "/users", icon: icons.users, shown: (v) => can(v, "users.manage") }] },
 ];
@@ -156,7 +170,7 @@ function Sidebar(props: { view: AppView }) {
 						<ul data-slot="sidebar-menu" class="m-0 flex w-full min-w-0 list-none flex-col gap-1 p-0">
 							{group.items.map((item) => (
 								<li data-slot="sidebar-menu-item" class="relative">
-									<SidebarMenuButton item={item} active={isActive(path, item.href)} label={t.nav[item.key]} />
+									<SidebarMenuButton item={item} active={isActive(path, item.href)} label={navLabel(t, item)} />
 								</li>
 							))}
 						</ul>
@@ -261,7 +275,11 @@ function Header(props: { title: string }) {
 				<Icon icon={icons.panelLeft} />
 			</a>
 			<Separator orientation="vertical" class="mr-1 data-[orientation=vertical]:h-4" />
-			<Breadcrumb section={current ? t.nav[current.key] : undefined} sectionHref={current?.href} title={props.title} />
+			<Breadcrumb
+				section={current ? navLabel(t, current) : undefined}
+				sectionHref={current?.href}
+				title={props.title}
+			/>
 			<search class="ml-auto">
 				<form action="/search" method="get" class="flex items-center">
 					<label class="relative max-md:hidden">

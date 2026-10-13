@@ -4,7 +4,16 @@
 // - every table carries created_at / updated_at / created_by / updated_by (emails).
 // After editing this file run `npm run db:generate` to create a migration.
 import { sql } from "drizzle-orm";
-import { check, index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import {
+	type AnySQLiteColumn,
+	check,
+	index,
+	integer,
+	type SQLiteTable,
+	sqliteTable,
+	text,
+	uniqueIndex,
+} from "drizzle-orm/sqlite-core";
 
 const nowSql = sql`(strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`;
 
@@ -34,9 +43,16 @@ export type BuildStatus = (typeof BUILD_STATUSES)[number];
 export const PRICE_KINDS = ["standard", "purchase", "sale"] as const;
 export type PriceKind = (typeof PRICE_KINDS)[number];
 
-/** Where a price change came from. */
-export const PRICE_SOURCES = ["form", "import", "po", "migration"] as const;
+/** Where a price change came from (`revert`: an undone change restored it, see change_sets). */
+export const PRICE_SOURCES = ["form", "import", "po", "migration", "revert"] as const;
 export type PriceSource = (typeof PRICE_SOURCES)[number];
+
+/** Where a change set came from: a page, a CSV import or restore, an MCP client, an undo, a data migration. */
+export const CHANGE_SOURCES = ["ui", "import", "mcp", "revert", "migration"] as const;
+export type ChangeSource = (typeof CHANGE_SOURCES)[number];
+
+export const CHANGE_OPS = ["insert", "update", "delete"] as const;
+export type ChangeOp = (typeof CHANGE_OPS)[number];
 
 /** What a signed-in user may do, from least to most. Each role can do everything the previous one can. */
 export const ROLES = ["viewer", "operator", "planner", "admin"] as const;
@@ -347,6 +363,103 @@ export const settings = sqliteTable(
 	},
 	(t) => [uniqueIndex("settings_key_unique").on(t.key)],
 );
+
+// ---------------------------------------------------------------------------
+// Change history (D106–D114). Every write to a tracked table runs inside a change set (runChangeSet in
+// src/domain/history.ts); SQLite triggers copy each row change into change_log, with the full row before
+// and after as JSON. Both tables are append-only once committed.
+
+export const changeSets = sqliteTable(
+	"change_sets",
+	{
+		id: integer("id").primaryKey({ autoIncrement: true }),
+		at: text("at").notNull().default(nowSql),
+		userEmail: text("user_email").notNull(),
+		source: text("source", { enum: CHANGE_SOURCES }).notNull(),
+		// The MCP client (or other API caller) that made the change, when there is one.
+		clientName: text("client_name"),
+		// Human-readable, in the author's language; never contains an amount (shown to every role).
+		summary: text("summary").notNull(),
+		// False when the change wrote ledger rows (stock moves, as-built lines) or anything else an undo
+		// could not restore consistently: such changes are corrected with new moves instead.
+		revertible: integer("revertible", { mode: "boolean" }).notNull().default(true),
+		// Set on an undo: the change set it reverted.
+		revertsChangeSetId: integer("reverts_change_set_id").references((): AnySQLiteColumn => changeSets.id),
+	},
+	(t) => [
+		index("change_sets_at_idx").on(t.at),
+		index("change_sets_user_idx").on(t.userEmail, t.at),
+		index("change_sets_reverts_idx").on(t.revertsChangeSetId),
+		check("change_sets_source_check", inList("source", CHANGE_SOURCES)),
+	],
+);
+
+export const changeLog = sqliteTable(
+	"change_log",
+	{
+		id: integer("id").primaryKey({ autoIncrement: true }),
+		changeSetId: integer("change_set_id")
+			.notNull()
+			.references(() => changeSets.id),
+		tableName: text("table_name").notNull(),
+		rowId: integer("row_id").notNull(),
+		op: text("op", { enum: CHANGE_OPS }).notNull(),
+		// The full row as JSON (snake_case column names): before the change (NULL on insert) and after it
+		// (NULL on delete).
+		oldRow: text("old_row"),
+		newRow: text("new_row"),
+	},
+	(t) => [
+		index("change_log_set_idx").on(t.changeSetId),
+		index("change_log_row_idx").on(t.tableName, t.rowId),
+		check("change_log_op_check", inList("op", CHANGE_OPS)),
+	],
+);
+
+// At most one row, only while a batch runs: its first statements insert it (the change set being written,
+// or `suppress` for a backup restore) and its last statement deletes it. The history triggers read it, and
+// abort a write to a tracked table when there is no row. `conflict` is the undo's guard: setting it to 1
+// fails the CHECK and rolls the whole batch back.
+export const changeContext = sqliteTable(
+	"change_context",
+	{
+		id: integer("id").primaryKey(),
+		changeSetId: integer("change_set_id"),
+		suppress: integer("suppress", { mode: "boolean" }).notNull().default(false),
+		conflict: integer("conflict").notNull().default(0),
+	},
+	(t) => [check("change_context_single_row", sql`${t.id} = 1`), check("revert_conflict", sql`${t.conflict} = 0`)],
+);
+
+/**
+ * Tables whose every row change is recorded in change_log (by triggers generated from this list, see
+ * scripts/history-triggers.mjs). Not tracked: the append-only ledgers (stock_moves, build_lines,
+ * price_history) and the history tables themselves.
+ */
+export const HISTORY_TABLES: SQLiteTable[] = [
+	parts,
+	suppliers,
+	boms,
+	bomLines,
+	partSuppliers,
+	purchaseOrders,
+	poLines,
+	builds,
+	users,
+	settings,
+];
+
+/**
+ * Append-only ledgers: corrected with reverse movements, never undone. A change set that writes to them is
+ * marked non-revertible by a trigger.
+ */
+export const LEDGER_TABLES: SQLiteTable[] = [stockMoves, buildLines];
+
+/** Tables deliberately left out of the history (a test checks every table is in one list or the other). */
+export const UNTRACKED_TABLES: SQLiteTable[] = [...LEDGER_TABLES, priceHistory, changeSets, changeLog, changeContext];
+
+export type ChangeSet = typeof changeSets.$inferSelect;
+export type ChangeLogRow = typeof changeLog.$inferSelect;
 
 export type Supplier = typeof suppliers.$inferSelect;
 export type Part = typeof parts.$inferSelect;

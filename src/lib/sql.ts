@@ -15,3 +15,12 @@ function errorMessage(err: unknown): string {
 	const cause = (err as { cause?: unknown }).cause;
 	return cause ? `${err.message} ${errorMessage(cause)}` : err.message;
 }
+
+/** D1 binds at most 100 parameters per statement: split long `IN (…)` lists into chunks of this size. */
+export const IN_CHUNK = 90;
+
+export function chunks<T>(list: readonly T[], size = IN_CHUNK): T[][] {
+	const out: T[][] = [];
+	for (let i = 0; i < list.length; i += size) out.push(list.slice(i, i + size));
+	return out;
+}

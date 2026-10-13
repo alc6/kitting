@@ -2,21 +2,22 @@ import { type Context, Hono } from "hono";
 import { z } from "zod";
 import { ROLES } from "../db/schema";
 import {
-	deleteUser,
+	deleteUserStatement,
 	getUser,
 	listUsers,
 	lowerRolesSeeCosts,
-	saveUser,
-	setLowerRolesSeeCosts,
+	saveUserStatement,
+	setLowerRolesSeeCostsStatement,
 	userInput,
 } from "../domain/users";
+import { fmt } from "../i18n";
 import { type FieldErrors, field, validate } from "../lib/validation";
 import { parseAdminEmails } from "../middleware/auth";
 import { requirePermission } from "../middleware/roles";
 import type { AppEnv } from "../types";
 import { useApp } from "../views/context";
 import { icons } from "../views/icons";
-import { idParam, nowIso, page, redirectOk, translateErrors } from "../views/render";
+import { idParam, nowIso, page, redirectOk, saveChanges, translateErrors } from "../views/render";
 import {
 	Badge,
 	Button,
@@ -226,18 +227,31 @@ userRoutes.post("/", async (c) => {
 	if (!v.ok) return renderUsers(c, form as FormValues, v.errors, 422);
 	if (parseAdminEmails(c.env.ADMIN_EMAILS).includes(v.data.email))
 		return renderUsers(c, form as FormValues, { email: "user_from_config" }, 422);
-	await saveUser(c.var.db, v.data, c.var.user, nowIso());
+	const summary = fmt(c.var.t.history.summaries.userSave, {
+		email: v.data.email,
+		role: c.var.t.roles.names[v.data.role],
+	});
+	await saveChanges(c, summary, [saveUserStatement(c.var.db, v.data, c.var.user, nowIso())]);
 	return redirectOk(c, "/users");
 });
 
 userRoutes.post("/settings", async (c) => {
 	const v = validate(z.object({ lower_roles_see_costs: field.bool() }), await c.req.parseBody());
-	await setLowerRolesSeeCosts(c.var.db, v.ok && v.data.lower_roles_see_costs, c.var.user, nowIso());
+	const on = v.ok && v.data.lower_roles_see_costs;
+	const summaries = c.var.t.history.summaries;
+	await saveChanges(c, on ? summaries.costsOn : summaries.costsOff, [
+		setLowerRolesSeeCostsStatement(c.var.db, on, c.var.user, nowIso()),
+	]);
 	return redirectOk(c, "/users");
 });
 
 userRoutes.post("/:id/delete", async (c) => {
 	const id = idParam(c);
-	if (id !== null) await deleteUser(c.var.db, id);
+	const user = id !== null ? await getUser(c.var.db, id) : undefined;
+	if (user) {
+		await saveChanges(c, fmt(c.var.t.history.summaries.userDelete, { email: user.email }), [
+			deleteUserStatement(c.var.db, user.id),
+		]);
+	}
 	return redirectOk(c, "/users", "deleted");
 });

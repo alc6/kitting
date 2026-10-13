@@ -149,6 +149,16 @@ export function setStandardCostStatements(
 	];
 }
 
+/** Archives a part (hidden from pickers and lists) or brings it back. */
+export function archivePartStatement(db: Db, partId: number, archived: boolean, user: string, now: string) {
+	return db.update(parts).set({ archived, updatedAt: now, updatedBy: user }).where(eq(parts.id, partId));
+}
+
+/** Deletes a part with its offers; fails with a FOREIGN KEY error while BoMs, moves, POs or builds use it. */
+export function deletePartStatement(db: Db, partId: number) {
+	return db.delete(parts).where(eq(parts.id, partId));
+}
+
 /** Business rules shared by the form and the CSV import. Returns field -> error key. */
 export function partRuleErrors(
 	d: { kind: PartKind; trackSerial: boolean },

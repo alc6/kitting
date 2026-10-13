@@ -355,3 +355,89 @@ Short log of choices made where the brief left room. Newest at the bottom of eac
   they drop cost columns at render time, with `Money`/`CostView` as the backstop and the sweep as the proof.
   `test/permissions.test.ts` runs one request per action: refused just below its role, allowed from it.
   Images: the "not set up" hint now shows to whoever may edit parts, rather than to admins only (D100).
+
+## History and undo
+
+- **D106. Every change is a change set, recorded by SQLite triggers.** `change_sets` (who, when, source `ui` /
+  `import` / `mcp` / `revert` / `migration`, MCP client name, summary, revertible, the change set an undo
+  reverts) and `change_log` (table, row id, `insert` / `update` / `delete`, the full row before and after as
+  JSON) are append-only once committed (migration 0005). `AFTER INSERT/UPDATE/DELETE` triggers on the ten
+  catalogue and document tables (`HISTORY_TABLES` in `src/db/schema.ts`) copy each row change, cascades
+  included, so no code path can forget to log, and the snapshots hold every column. They link rows to the
+  change set through `change_context`, a one-row table that the first statements of a batch fill and its last
+  statement empties: D1 runs a batch as one transaction and one batch at a time, so the row is never seen by
+  another request, and a failed batch rolls it back (the opening statement also replaces a row that an
+  interrupted manual script might have left). A write to a tracked table with no change set open is
+  aborted (`RAISE(ABORT)`), which makes the history complete by construction: every page, CSV import, build,
+  receipt and user change goes through `runChangeSet()` (`src/domain/history.ts`; pages use `saveChanges(c,
+  summary, statements)`), which a future MCP tool calls with `source: "mcp"` and its client name; `mcp` is in
+  the enum already, so that work needs no migration. Application-level logging was rejected: one missed call
+  and a change is gone. A change set that changed nothing (e.g. "start" on a started build) is not kept. Rows that existed
+  before 0005 get no backfilled "insert" entry: their later changes carry full before/after rows, so they
+  can be undone all the same.
+  The ledgers (`stock_moves`, `build_lines`) and `price_history` are not tracked: they are append-only
+  already. Updates that only touch who/when (a BoM "touched" when a line changes) are not logged.
+- **D107. The trigger SQL is generated from the Drizzle schema.** `npm run -s db:triggers`
+  (`scripts/history-triggers.mjs`, Node 22.18+ type stripping, no new dependency) prints `DROP TRIGGER IF
+  EXISTS` + `CREATE TRIGGER` for every tracked table; its output is appended to the migration. A column added
+  to a tracked table therefore needs `npm run db:generate` then `npm run -s db:triggers >> migrations/<new>.sql`:
+  `test/history.test.ts` fails otherwise, because it compares the columns of each table in the migrated
+  database (`PRAGMA table_info`) with the columns its triggers capture, compares the triggers with the
+  generator's output, and checks that every table is either tracked or listed as untracked. Data migrations
+  that write to a tracked table must open a change set themselves (`source 'migration'`, see CLAUDE.md).
+- **D108. `price_history` is rebuilt to accept the `revert` source.** SQLite cannot alter a CHECK
+  constraint, and a revert must record the price it puts back (D109). It is the first table rebuild, allowed
+  because nothing references `price_history` (dropping it deletes no other row). drizzle-kit's `PRAGMA
+  foreign_keys=OFF/ON` is replaced by `PRAGMA defer_foreign_keys = on`: D1 runs a migration in a transaction,
+  where `foreign_keys` is a no-op. Applied with `wrangler d1 migrations apply --local` to a database holding
+  data from 0000–0004: price history rows, CHECK constraints and indexes survive.
+- **D109. Undo writes a new change set that walks the old one backwards.** An update gets its old values
+  back (signed and dated by whoever undoes it), an insert is deleted, a delete is re-inserted with its id and
+  its original who/when (ids are never reused: AUTOINCREMENT). It is refused, changing nothing, when a row's
+  data columns differ from what the change set left (who/when are ignored, so a later "touch" does not block),
+  when a deleted row is used since (a stock move on a part, a line added to a BoM…), when a restored row
+  points at a row that no longer exists, or when a restored unique value (a ref, a PO number) is taken. These
+  are checked in TypeScript first, a few queries per table, so the message can name the row and who changed
+  it; then the batch repeats them as guards (`UPDATE change_context SET conflict = 1 WHERE …` fails the
+  `revert_conflict` CHECK) so that a change made in between rolls everything back. Foreign keys are deferred
+  in the batch, so rows come back in any order; in-batch reference guards are only needed where a cascade
+  would delete silently (lines of a BoM or PO, offers of a part). An undo is itself a change set, so undoing
+  an undo re-applies the change. Undoing an import of thousands of rows is one batch of the same size as the
+  import.
+- **D110. Summaries are stored text, in the author's language, without amounts.** They come from the
+  `history.summaries` dictionary at the time of the change ("Edit BoM LAMP-DESK std Rev3"), so the history
+  reads like a log of what people did; an MCP client will write its own. Storing a message key with
+  parameters and translating at read time was considered: more columns and a contract with API clients, for
+  a mixed-language team that does not exist yet. Summaries never contain an amount: every role reads them.
+- **D111. What cannot be undone is marked so.** A change set that writes a ledger row (build completion,
+  receipts, adjustments, counts, `stock.csv`) is set non-revertible by a trigger on `stock_moves` and
+  `build_lines`, so no future caller can forget: these are corrected with reverse moves, as before. Replacing
+  or removing a product image deletes the previous file from R2, and so does deleting a part that has an image:
+  those change sets are non-revertible too (an undo would point at a missing file). A restore is recorded as
+  one non-revertible change set. Undo keeps the price history consistent: every price an undo changes back
+  (standard cost, selling price of a part or BoM variant, offer price) is appended with source `revert` and
+  the note `#<change set>`; a part or BoM that an undo deletes takes its price history with it, as deleting it
+  from its page does.
+- **D112. Anyone reads the history; undoing needs the edit rights of everything touched.** The Recent changes
+  page and the History tabs are open to every role, with amounts in snapshots nulled by `redactCosts()` (which
+  now also matches snake_case `*_cents` keys) and shown through `Money` ("Hidden"); the cost sweep covers the
+  history pages and raw cent values. Undo is `POST /history/:id/revert`, declared `history.revert` (operator:
+  the lowest role that can edit something), and `revertChangeSet()` also requires the edit action of each
+  table touched (`TABLE_ACTIONS`: parts → `parts.edit`, offers → `prices.edit`, BoM lines → `boms.edit`, PO
+  lines → `purchasing.order`, builds → `builds.plan`, users and settings → `users.manage`…). So an operator
+  can undo the planning of a build but not a part edit. Undoing a creation deletes the row with the edit
+  right, not the admin-only delete right: the deletion is logged and can itself be undone.
+- **D113. Backups carry the history; a restore does not log its rows.** `change_sets` and `change_log` are in
+  the JSON backup (`change_context` is not: it only exists inside a batch). A restore inserts a `suppress`
+  context row first, so the triggers stay silent while every table is replaced, then appends one
+  non-revertible change set saying who restored which backup. Backups taken before 0005 are refused (D53). The
+  history is never pruned: each change stores the rows it touched as JSON (about 600 bytes for a part), which
+  a small shop's D1 database holds for years; a pruning or archiving job can come later.
+- **D114. History pages.** *Recent changes* (`/history`, in the sidebar for everyone) lists change sets with
+  filters on source, user, dates and summary text, 50 per page; a change set's page shows every row it touched,
+  field by field ("quantity: 1 → 3"), with names instead of ids, translated kinds, statuses and roles, and
+  amounts through `Money`; who/when columns and the deprecated supplier columns of parts are not shown. Parts,
+  suppliers, BoMs and POs have a History tab with their own rows and those of their offers or lines (found
+  with `json_extract` on the snapshots). The Undo button shows only to those allowed (D112) on change sets
+  that can be undone and are not undone already; a refused undo re-renders the page (409) with the reasons.
+  The sidebar label lives in the `history` dictionary section (`NavItem.label`).

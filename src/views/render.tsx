@@ -2,7 +2,9 @@ import type { Context } from "hono";
 import { html } from "hono/html";
 import type { Child } from "hono/jsx";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
+import { runChangeSet } from "../domain/history";
 import { errorText } from "../i18n";
+import type { Statement } from "../lib/db";
 import type { FieldErrors } from "../lib/validation";
 import type { AppEnv } from "../types";
 import { AppViewContext, viewFor } from "./context";
@@ -62,6 +64,19 @@ export function notFound(c: Context<AppEnv>) {
 export function idParam(c: Context<AppEnv>, name = "id"): number | null {
 	const v = c.req.param(name);
 	return v && /^\d+$/.test(v) ? Number(v) : null;
+}
+
+/**
+ * Saves a change made on a page: runs the statements in one batch as a change set by the signed-in user
+ * (runChangeSet in src/domain/history.ts), with `summary` as its line in the history.
+ */
+export function saveChanges<T extends Statement[]>(
+	c: Context<AppEnv>,
+	summary: string,
+	statements: [...T],
+	opts: { revertible?: boolean } = {},
+) {
+	return runChangeSet(c.var.db, { user: c.var.user, source: "ui", summary, now: nowIso(), ...opts }, statements);
 }
 
 export function nowIso(): string {

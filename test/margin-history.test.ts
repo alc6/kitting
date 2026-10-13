@@ -2,6 +2,7 @@ import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import type { PartKind } from "../src/db/schema";
 import { buildGraph, type GraphPart } from "../src/domain/bom-graph";
+import { runChangeSet } from "../src/domain/history";
 import { planImport } from "../src/domain/import";
 import {
 	costInputs,
@@ -10,8 +11,7 @@ import {
 	type StandardRow,
 	salePriceAt,
 } from "../src/domain/margin-history";
-import { runBatch } from "../src/lib/db";
-import { bomId, importCsv, loadDemo, one, partId, postForm, request, rows, testDb } from "./helpers";
+import { bomId, changeSql, importCsv, loadDemo, one, partId, postForm, request, rows, stmt, testDb } from "./helpers";
 
 const part = (id: number, kind: PartKind, costCents: number | null): GraphPart => ({
 	id,
@@ -181,13 +181,15 @@ describe("margin history page", () => {
 		// The imports dated their history today: move it back to t1, then record the t2 increase.
 		await env.DB.prepare("UPDATE price_history SET valid_from = '2026-01-05'").run();
 		const c03 = await partId("C03");
-		await env.DB.batch([
-			env.DB.prepare("UPDATE parts SET cost_cents = 400 WHERE id = ?").bind(c03),
-			env.DB.prepare(
+		await changeSql(
+			"Raise C03",
+			stmt("UPDATE parts SET cost_cents = 400 WHERE id = ?", c03),
+			stmt(
 				`INSERT INTO price_history (part_id, kind, price_cents, valid_from, source, created_by, updated_by)
 				 VALUES (?, 'standard', 400, '2026-03-01', 'form', 'seed', 'seed')`,
-			).bind(c03),
-		]);
+				c03,
+			),
+		);
 		return { product: await partId("KIT-10"), bom: await bomId("KIT-10"), c03 };
 	}
 
@@ -337,7 +339,8 @@ describe("a supplier price that becomes the standard cost (D99)", () => {
 		);
 		expect(plan?.errors).toEqual([]);
 		expect(plan?.rows[0]?.changes).toEqual(["price: 2.00 → 4.00", "standard cost: 2.00 → 4.00"]);
-		await runBatch(db, plan?.statements("seed@example.com", new Date().toISOString()) ?? []);
+		const meta = { user: "seed@example.com", source: "import" as const, summary: "Import part_suppliers.csv" };
+		await runChangeSet(db, meta, plan?.statements("seed@example.com", new Date().toISOString()) ?? []);
 		expect(await one("SELECT cost_cents FROM parts WHERE id = ?", c03)).toEqual({ cost_cents: 400 });
 		expect(
 			await one("SELECT source, note FROM price_history WHERE part_id = ? AND kind = 'standard' ORDER BY id DESC", c03),

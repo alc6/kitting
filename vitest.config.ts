@@ -1,5 +1,5 @@
 import { cloudflareTest, readD1Migrations } from "@cloudflare/vitest-plugin";
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 
 export default defineConfig(async () => {
 	const migrations = await readD1Migrations("./migrations");
@@ -22,6 +22,10 @@ export default defineConfig(async () => {
 				},
 			}),
 		],
-		test: { setupFiles: ["./test/setup.ts"] },
+		test: {
+			setupFiles: ["./test/setup.ts"],
+			// .claude/ holds local agent files, including git worktrees with their own copy of the tests.
+			exclude: [...configDefaults.exclude, ".claude/**"],
+		},
 	};
 });

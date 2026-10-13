@@ -1,5 +1,7 @@
 // Full JSON backup and restore of the database. Tables are listed in foreign-key order:
-// restore deletes in reverse order and inserts in this order, preserving ids.
+// restore deletes in reverse order and inserts in this order, preserving ids. The change history is part of
+// the backup; a restore does not log itself row by row (it suppresses the history triggers) but appends one
+// non-revertible change set saying it happened.
 import { getTableColumns, getTableName } from "drizzle-orm";
 import type { SQLiteTable } from "drizzle-orm/sqlite-core";
 import { z } from "zod";
@@ -8,6 +10,8 @@ import {
 	boms,
 	buildLines,
 	builds,
+	changeLog,
+	changeSets,
 	partSuppliers,
 	parts,
 	poLines,
@@ -37,6 +41,9 @@ const TABLES: SQLiteTable[] = [
 	// Roles and admin options: a restore brings back who may do what (ADMIN_EMAILS still apply).
 	users,
 	settings,
+	// The change history (D113). change_context is not data: it only exists while a batch runs.
+	changeSets,
+	changeLog,
 ];
 
 export const TABLE_NAMES = TABLES.map((t) => getTableName(t));
@@ -141,9 +148,19 @@ export async function planRestore(d1: D1Database, text: string): Promise<Restore
 /** D1 limits bound parameters per statement: insert rows in chunks that fit. */
 const MAX_PARAMS = 100;
 
-/** Statements that replace the whole database with the backup (run them in one batch). */
-export function restoreStatements(d1: D1Database, backup: Backup): D1PreparedStatement[] {
-	const stmts: D1PreparedStatement[] = [d1.prepare("PRAGMA defer_foreign_keys = ON")];
+/**
+ * Statements that replace the whole database with the backup (run them in one batch). The history triggers
+ * are suppressed meanwhile; the restore itself is then recorded as one change set by `by.user`.
+ */
+export function restoreStatements(
+	d1: D1Database,
+	backup: Backup,
+	by: { user: string; now: string; summary: string },
+): D1PreparedStatement[] {
+	const stmts: D1PreparedStatement[] = [
+		d1.prepare("PRAGMA defer_foreign_keys = ON"),
+		d1.prepare("INSERT INTO change_context (id, suppress) VALUES (1, 1)"),
+	];
 	for (const name of [...TABLE_NAMES].reverse()) stmts.push(d1.prepare(`DELETE FROM ${name}`));
 	for (const name of TABLE_NAMES) {
 		const rows = backup.tables[name] ?? [];
@@ -159,5 +176,11 @@ export function restoreStatements(d1: D1Database, backup: Backup): D1PreparedSta
 			stmts.push(d1.prepare(`INSERT INTO ${name} (${used.join(", ")}) VALUES ${placeholders}`).bind(...values));
 		}
 	}
+	stmts.push(
+		d1.prepare("DELETE FROM change_context"),
+		d1
+			.prepare("INSERT INTO change_sets (at, user_email, source, summary, revertible) VALUES (?, ?, 'import', ?, 0)")
+			.bind(by.now, by.user, by.summary),
+	);
 	return stmts;
 }

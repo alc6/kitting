@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Role } from "../src/db/schema";
 import {
 	bomId,
+	changeSql,
 	importCsv,
 	insertPart,
 	letLowerRolesSeeCosts,
@@ -12,6 +13,7 @@ import {
 	postForm,
 	request,
 	setRole,
+	stmt,
 } from "./helpers";
 
 // Distinctive amounts seeded below. None of them may reach a user who does not see costs, in any format
@@ -20,7 +22,20 @@ const COST = 123456; // standard cost of BOX-LAMP
 const OFFER = 111111; // its offer price
 const SALE = 999999; // selling price of LAMP-DESK
 const PAID = 98765; // PO unit price, also the cost of the receipt moves
-const AMOUNTS = ["1,234.56", "1234.56", "1,111.11", "1111.11", "9,999.99", "9999.99", "987.65"];
+// The history keeps rows as JSON with raw cents: those must not leak either.
+const AMOUNTS = [
+	"1,234.56",
+	"1234.56",
+	"1,111.11",
+	"1111.11",
+	"9,999.99",
+	"9999.99",
+	"987.65",
+	"123456",
+	"111111",
+	"999999",
+	"98765",
+];
 
 /**
  * Demo data with the amounts above, a PO received in part, a WIDGET BoM, one done build, and one open build
@@ -29,14 +44,18 @@ const AMOUNTS = ["1,234.56", "1234.56", "1,111.11", "1111.11", "9,999.99", "9999
 async function seed() {
 	await loadDemo();
 	const box = await partId("BOX-LAMP");
-	await one("UPDATE parts SET cost_cents = ? WHERE id = ? RETURNING id", COST, box);
-	await one("UPDATE part_suppliers SET price_cents = ? WHERE part_id = ? RETURNING id", OFFER, box);
-	await one("UPDATE parts SET sale_price_cents = ? WHERE ref = 'LAMP-DESK' RETURNING id", SALE);
-	await one(
-		`INSERT INTO price_history (part_id, kind, price_cents, valid_from, source, created_by, updated_by)
-		 VALUES (?, 'standard', ?, '2026-01-01', 'form', 'seed', 'seed') RETURNING id`,
-		box,
-		COST,
+	// Recorded in the history like a page would, so the history pages hold these amounts too.
+	await changeSql(
+		"Set prices",
+		stmt("UPDATE parts SET cost_cents = ? WHERE id = ?", COST, box),
+		stmt("UPDATE part_suppliers SET price_cents = ? WHERE part_id = ?", OFFER, box),
+		stmt("UPDATE parts SET sale_price_cents = ? WHERE ref = 'LAMP-DESK'", SALE),
+		stmt(
+			`INSERT INTO price_history (part_id, kind, price_cents, valid_from, source, created_by, updated_by)
+			 VALUES (?, 'standard', ?, '2026-01-01', 'form', 'seed', 'seed')`,
+			box,
+			COST,
+		),
 	);
 	const supplier = (await one<{ id: number }>("SELECT supplier_id AS id FROM parts WHERE id = ?", box)).id;
 	const po = await postForm("/purchasing/po", { supplier_id: String(supplier), expected_at: "", notes: "" });
@@ -65,7 +84,18 @@ async function seed() {
 	const done = await plan("1");
 	expect((await postForm(`/builds/${done}/complete`, {})).status).toBe(303);
 	const open = await plan("100");
-	return { box, widget, supplier, poId, done, open, bom: await bomId("WIDGET"), lampBom: await bomId("LAMP-DESK") };
+	const priced = (await one<{ id: number }>("SELECT min(id) AS id FROM change_sets WHERE summary = 'Set prices'")).id;
+	return {
+		box,
+		widget,
+		supplier,
+		poId,
+		done,
+		open,
+		priced,
+		bom: await bomId("WIDGET"),
+		lampBom: await bomId("LAMP-DESK"),
+	};
 }
 
 function pages(s: Awaited<ReturnType<typeof seed>>): string[] {
@@ -97,6 +127,12 @@ function pages(s: Awaited<ReturnType<typeof seed>>): string[] {
 		"/stock/count",
 		"/stock/adjust",
 		"/search?q=BOX",
+		"/history",
+		`/history/${s.priced}`,
+		`/parts/${s.box}/history`,
+		`/suppliers/${s.supplier}/history`,
+		`/boms/${s.lampBom}/history`,
+		`/purchasing/po/${s.poId}/history`,
 		// Closed to these roles: refused without leaking anything.
 		"/margins",
 		`/margins/boms/${s.lampBom}`,
@@ -134,6 +170,8 @@ describe("cost visibility", () => {
 		expect(part).toContain("1,111.11");
 		expect(await (await request(`/purchasing/po/${s.poId}`, {}, NOT_ADMIN)).text()).toContain("987.65");
 		expect(await (await request("/stock/moves?format=csv", {}, NOT_ADMIN)).text()).toContain("987.65");
+		expect(await (await request(`/history/${s.priced}`, {}, NOT_ADMIN)).text()).toContain("1,234.56");
+		expect(await (await request(`/purchasing/po/${s.poId}/history`, {}, NOT_ADMIN)).text()).toContain("987.65");
 
 		await letLowerRolesSeeCosts();
 		await setRole("operator");

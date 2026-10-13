@@ -90,6 +90,23 @@ After M2 the catalogue and BoMs can be loaded; after M4 real builds can run.
 - [x] Pages hide the controls and amounts a role cannot use; additive migration 0004 (`users`, `settings`)
 - [x] JSON backup restricted to admins, and includes roles
 
+## M10: Change history and undo ✅
+
+- [x] `change_sets` and `change_log` (migration 0005), filled by SQLite triggers generated from the Drizzle
+      schema (`npm run db:triggers`); a write to a tracked table outside a change set is aborted
+- [x] Every write runs through `runChangeSet()` with a summary and a source (`ui`, `import`, `revert`, `migration`;
+      `mcp` reserved for the MCP server, with the client's name); route writes moved into `src/domain` first
+- [x] A test fails when a tracked table has a column its triggers do not capture
+- [x] Undo: a new change set that walks the old one backwards, refused atomically on conflicts (changed since,
+      still used, parent gone, unique value taken); undoing an undo works
+- [x] Ledger writes (builds, receipts, adjustments, counts) and image changes are not revertible; undone prices
+      are appended to the price history (`revert` source, `price_history` rebuilt)
+- [x] Undo needs the edit permission of every area touched (`history.revert` + `TABLE_ACTIONS`); everyone reads the
+      history, amounts redacted without cost visibility
+- [x] Recent changes page (filters: source, user, dates, text), change set page with field-level diffs and
+      conflict messages, History tab on parts, suppliers, BoMs and POs
+- [x] JSON backup includes the history; a restore suppresses the triggers and records itself
+
 ## After v1 (ideas, not planned)
 
 - Serial inventory (which serials are in stock) enforced at build time, if the shop starts scanning receipts.
@@ -101,3 +118,4 @@ After M2 the catalogue and BoMs can be loaded; after M4 real builds can run.
 - Choose one valuation method once the accountant decides (D91), and drop the deprecated `parts` supplier columns
   in a planned table rebuild.
 - Customer-specific prices, quotes (out of scope for v1).
+- History: prune or archive old change sets; undo a whole import from the import page.

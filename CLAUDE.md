@@ -32,6 +32,8 @@ was built with; `npx skills update` refreshes it.
   Vitest is pinned to 4.1.x (5.x breaks the plugin).
 - `npm run db:generate`: after any change to `src/db/schema.ts`. Commit the SQL and
   `migrations/meta/`. CI fails if the schema and migrations disagree.
+- `npm run -s db:triggers >> migrations/<new migration>.sql`: after adding or removing a column of a tracked
+  table (`HISTORY_TABLES`), re-creates the history triggers (Node 22.18+). `test/history.test.ts` fails until you do.
 - `npm run format`: Biome formatting + safe fixes (tabs, double quotes, 120 columns).
 
 ## Layout
@@ -50,7 +52,9 @@ was built with; `npx skills update` refreshes it.
   `prices.ts` (price history, dated standard costs), `costing.ts` (pure weighted average replay),
   `margins.ts` (planned and actual margins), `margin-history.ts` (margins over time, replayed from the
   price history), `images.ts` (product images in R2), `users.ts` (who has which role, cost visibility option),
-  `permissions.ts` (what each role may do: the permission table, `can()`, cost redaction).
+  `permissions.ts` (what each role may do: the permission table, `can()`, cost redaction),
+  `history.ts` (`runChangeSet()`, history queries, field diffs), `revert.ts` (undo, conflicts, `TABLE_ACTIONS`).
+  `src/db/history-sql.ts` generates the history triggers (`scripts/history-triggers.mjs` prints them).
   `src/domain/import/`: one importer per CSV type, all implementing `Importer`.
 - `src/routes/*.tsx`: one Hono router per area, with its page components.
 - `src/views/`: layout (sidebar, header), shadcn-style components (`ui.tsx`), icons (`icons.tsx`),
@@ -64,6 +68,27 @@ was built with; `npx skills update` refreshes it.
   vendored `htmx.min.js` (`npm run vendor:htmx` to update).
 
 ## Data rules
+
+- **Every write opens a change set** (D106–D114): run the statements with `runChangeSet(db, { user, source,
+  summary }, statements)` from `src/domain/history.ts`; a page uses `saveChanges(c, summary, statements)`
+  (`src/views/render.tsx`). Never run a bare query or `runBatch()` on a tracked table: the history triggers
+  abort it. Put the write logic in `src/domain` as statement builders, and give the change a meaningful
+  summary from `t.history.summaries` naming what and which record ("Edit BoM LAMP-DESK std Rev3"), never an
+  amount (every role reads it). An MCP tool passes `source: "mcp"` and its `clientName`. A write that an undo
+  could not restore consistently passes `revertible: false` (ledger writes are marked by trigger).
+- A new table goes in `HISTORY_TABLES` (with its triggers, a `TABLE_ACTIONS` entry in `revert.ts` and labels in
+  `history.tables`/`history.fields`) or in `UNTRACKED_TABLES`; `test/history.test.ts` checks both.
+- A data migration or a manual `wrangler d1 execute` that writes to a tracked table opens a change set in the
+  same file, so it is logged and allowed:
+
+  ```sql
+  INSERT INTO change_sets (user_email, source, summary) VALUES ('admin@example.com', 'migration', 'Fix part units');
+  INSERT INTO change_context (id, change_set_id) VALUES (1, (SELECT max(id) FROM change_sets));
+  UPDATE parts SET unit = 'pcs' WHERE unit = '';
+  DELETE FROM change_context;
+  ```
+
+  Tests seed fixtures with `seedSql()` (not logged) or `changeSql()` (logged), from `test/helpers.ts`.
 
 - Money: integer cents (`*_cents`). Quantities: integer thousandths (`*_milli`).
   Never use floats for stored or computed values. Parse and format only through
@@ -84,7 +109,7 @@ was built with; `npx skills update` refreshes it.
   content-addressed object key; uploads are typed from their magic bytes (JPEG, PNG, WebP only, never SVG).
 - Schema changes must stay additive on D1 (no table rebuilds under child tables): read the generated SQL,
   and apply it to a local database with data (`wrangler d1 migrations apply DB --local`) before committing.
-- Any write touching several rows goes through `runBatch()` (one D1 batch = one transaction).
+- Any write touching several rows goes through one change set (one D1 batch = one transaction).
 - Raw SQL is fine where Drizzle gets in the way (recursive CTEs), always parameterized
   (Drizzle `sql` template or `prepare().bind()`), never string concatenation of values.
 

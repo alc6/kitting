@@ -1,10 +1,11 @@
 // Product images (D100): serve, upload (multipart form), remove. Mounted under /parts.
 import { Hono } from "hono";
-import { imagesBucket, readUpload, removeImage, replaceImage } from "../domain/images";
+import { imageKeyStatement, imagesBucket, readUpload, removeImage, replaceImage } from "../domain/images";
 import { getPart } from "../domain/parts";
+import { fmt } from "../i18n";
 import { requirePermission } from "../middleware/roles";
 import type { AppEnv } from "../types";
-import { idParam, notFound, nowIso, redirectOk } from "../views/render";
+import { idParam, notFound, nowIso, redirectOk, saveChanges } from "../views/render";
 
 export const imageRoutes = new Hono<AppEnv>();
 
@@ -39,7 +40,11 @@ imageRoutes.post("/:id/image", requirePermission("parts.edit"), async (c) => {
 	const body = await c.req.parseBody();
 	const upload = await readUpload(body.image);
 	if (!upload.ok) return c.redirect(`/parts/${part.id}?err=${upload.error}#image`, 303);
-	await replaceImage(c.var.db, bucket, part, upload, c.var.user, nowIso());
+	// The previous file is deleted once replaced: an undo could not bring it back (D111).
+	const summary = fmt(c.var.t.history.summaries.partImage, { ref: part.ref });
+	await replaceImage(bucket, part, upload, (key) =>
+		saveChanges(c, summary, [imageKeyStatement(c.var.db, part.id, key, c.var.user, nowIso())], { revertible: false }),
+	);
 	return redirectOk(c, `/parts/${part.id}`);
 });
 
@@ -48,6 +53,13 @@ imageRoutes.post("/:id/image/delete", requirePermission("parts.delete"), async (
 	const part = id ? await getPart(c.var.db, id) : undefined;
 	if (!part) return notFound(c);
 	const bucket = imagesBucket(c.env);
-	if (bucket) await removeImage(c.var.db, bucket, part, c.var.user, nowIso());
+	if (bucket) {
+		const summary = fmt(c.var.t.history.summaries.partImageRemove, { ref: part.ref });
+		await removeImage(bucket, part, () =>
+			saveChanges(c, summary, [imageKeyStatement(c.var.db, part.id, null, c.var.user, nowIso())], {
+				revertible: false,
+			}),
+		);
+	}
 	return redirectOk(c, `/parts/${part.id}`, "deleted");
 });

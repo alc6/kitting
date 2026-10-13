@@ -52,6 +52,8 @@ tiers cover a small workshop. Deployment is one command.
 - **CSV export** in the same formats, for round-trips and backups.
 - **Search** across parts, BoMs, builds (including component serials), POs and suppliers
   from the header (`/` or Ctrl/Cmd+K).
+- **History and undo**: every change to the catalogue, documents, users and settings is kept, field by
+  field, with who made it and from where; any change can be reviewed and undone (see below).
 - Modern, tablet-first UI built on the [shadcn/ui](https://ui.shadcn.com) design system: left
   sidebar, light / dark / system theme, French and English.
 
@@ -91,6 +93,36 @@ Cloudflare Access decides who can sign in; Kitting decides what each person may 
   administrators always see them.
 - Every write is checked on the server, not only hidden in the page: a role that may not do
   something gets a 403.
+
+## History and undo
+
+Nothing edited in the catalogue or on documents is lost: every save, import, build, receipt or role change is
+recorded as one **change**, with who made it, when, from where (a page, an import, an undo, later an assistant
+over MCP) and every row it touched, before and after.
+
+- **Recent changes** (sidebar, everyone) lists them, newest first, filtered by origin, person, dates or text.
+  A change's page shows each row it touched field by field ("quantity: 1 → 3").
+- Parts, suppliers, BoMs and purchase orders have a **History** tab with their own changes and those of their
+  offers or lines. Records that existed before the history was installed (migration 0005) have no creation
+  entry; everything done to them since is recorded and can be undone.
+- **Undo** puts the previous values back as a new change (which can itself be undone). It is refused, and
+  nothing is changed, if a row was edited since (undo the later change first), if a deleted row is used since,
+  or if what it would restore no longer fits (a reference now taken by another part…). The message says which
+  row and who changed it.
+- Changes that moved stock or recorded a build (completions, receipts, adjustments, counts) cannot be undone:
+  correct them with a new movement, as before. Neither can replacing or removing a product image, whose old
+  file is deleted.
+- Undoing needs the right to edit everything the change touched (an operator can undo a planned build, not a
+  part edit). Viewers and operators who may not see costs see "Hidden" instead of amounts in the history.
+- The database refuses any write to these tables made outside a change. To fix data by hand with
+  `wrangler d1 execute --file`, open a change in the same file:
+
+  ```sql
+  INSERT INTO change_sets (user_email, source, summary) VALUES ('admin@example.com', 'migration', 'Fix part units');
+  INSERT INTO change_context (id, change_set_id) VALUES (1, (SELECT max(id) FROM change_sets));
+  UPDATE parts SET unit = 'pcs' WHERE unit = '';
+  DELETE FROM change_context;
+  ```
 
 ## Deploy in five steps
 
@@ -240,9 +272,10 @@ current data.
 
 ## Backups
 
-- **Import / Export → Backup** (admins) downloads the whole database, roles included, as one
+- **Import / Export → Backup** (admins) downloads the whole database, roles and change history included, as one
   JSON file. An admin can restore it (same Kitting version) on the same or another deployment: a preview shows what
   the file contains, then everything is replaced in one transaction.
+- A restore appears in **Recent changes** as one change that cannot be undone (restore another backup instead).
 - Product images are not in that file: it only records which image each part points to. The
   images stay in the R2 bucket (copy it with any S3-compatible tool if you need an offsite
   copy). An image replaced or removed after a backup was taken is gone from the bucket, so

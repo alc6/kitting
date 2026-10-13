@@ -10,6 +10,7 @@ import { originCheck, securityHeaders } from "./middleware/security";
 import { bomRoutes } from "./routes/boms";
 import { buildRoutes } from "./routes/builds";
 import { dashboardRoutes } from "./routes/dashboard";
+import { historyRoutes } from "./routes/history";
 import { imageRoutes } from "./routes/images";
 import { importRoutes } from "./routes/import";
 import { marginRoutes } from "./routes/margins";
@@ -90,6 +91,7 @@ export function createApp() {
 	app.route("/margins", marginRoutes);
 	app.route("/search", searchRoutes);
 	app.route("/users", userRoutes);
+	app.route("/history", historyRoutes);
 
 	// Fails closed: refuse to start while a write route has no requirePermission() (D105).
 	assertWritesHavePermissions(app.routes);

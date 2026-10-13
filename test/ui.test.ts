@@ -18,6 +18,7 @@ describe("layout and preferences", () => {
 			"/stock",
 			"/purchasing",
 			"/import",
+			"/history",
 		]) {
 			expect(html).toContain(`href="${href}"`);
 		}

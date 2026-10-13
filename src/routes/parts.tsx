@@ -21,6 +21,8 @@ import {
 	setPreferredStatement,
 } from "../domain/offers";
 import {
+	archivePartStatement,
+	deletePartStatement,
 	findRefClash,
 	getPart,
 	hasBoms,
@@ -39,7 +41,7 @@ import { averageCosts } from "../domain/stock";
 import { getSupplier } from "../domain/suppliers";
 import { errorText, fmt } from "../i18n";
 import { cn } from "../lib/cn";
-import { runBatch, type Statement } from "../lib/db";
+import type { Statement } from "../lib/db";
 import { isConstraintError } from "../lib/sql";
 import { formatMoney, formatPercent, lineCostCents } from "../lib/units";
 import { type FieldErrors, validate } from "../lib/validation";
@@ -48,8 +50,9 @@ import type { AppEnv } from "../types";
 import { CostView, StatusBadge } from "../views/bom";
 import { StepChart } from "../views/chart";
 import { useApp } from "../views/context";
+import { RecordTabs } from "../views/history";
 import { Icon, type IconNode, icons } from "../views/icons";
-import { idParam, notFound, nowIso, page, redirectOk, translateErrors } from "../views/render";
+import { idParam, notFound, nowIso, page, redirectOk, saveChanges, translateErrors } from "../views/render";
 import {
 	Alert,
 	Badge,
@@ -93,8 +96,8 @@ import {
 	TextArea,
 	TextField,
 } from "../views/ui";
-
 import { BuildsTable } from "./builds";
+import { recordHistoryPage } from "./history";
 import { MoveReference } from "./stock";
 
 export const partRoutes = new Hono<AppEnv>();
@@ -399,7 +402,11 @@ partRoutes.post("/", requirePermission("parts.edit"), async (c) => {
 			422,
 		);
 	}
-	await runBatch(c.var.db, savePartStatements(c.var.db, v.data, undefined, "form", c.var.user, nowIso()));
+	await saveChanges(
+		c,
+		fmt(t.history.summaries.partCreate, { ref: v.data.ref }),
+		savePartStatements(c.var.db, v.data, undefined, "form", c.var.user, nowIso()),
+	);
 	const [row] = await c.var.db.select({ id: parts.id }).from(parts).where(eq(parts.ref, v.data.ref));
 	return redirectOk(c, `/parts/${row?.id}`);
 });
@@ -480,6 +487,7 @@ function PartDetail(props: {
 					</>
 				}
 			/>
+			<RecordTabs base={`/parts/${p.id}`} active="overview" />
 			<Flash ok={props.ok} message={props.ok === "adjusted" ? t.stock.adjusted : undefined} />
 			{props.err && PART_ERRORS.has(props.err) ? <Alert variant="destructive">{errorText(t, props.err)}</Alert> : null}
 			<div class="flex flex-col gap-4">
@@ -1348,6 +1356,20 @@ partRoutes.get("/:id", async (c) => {
 	);
 });
 
+partRoutes.get("/:id/history", async (c) => {
+	const id = idParam(c);
+	const part = id ? await getPart(c.var.db, id) : undefined;
+	if (!part) return notFound(c);
+	const title = `${part.ref} · ${part.name}`;
+	const header = (
+		<>
+			<PageHeader title={title} subtitle={<KindBadge kind={part.kind} />} />
+			<RecordTabs base={`/parts/${part.id}`} active="history" />
+		</>
+	);
+	return recordHistoryPage(c, title, header, { kind: "part", id: part.id });
+});
+
 partRoutes.get("/:id/edit", requirePermission("parts.edit"), async (c) => {
 	const t = c.var.t;
 	const id = idParam(c);
@@ -1400,7 +1422,11 @@ partRoutes.post("/:id", requirePermission("parts.edit"), async (c) => {
 		);
 	}
 	const offer = part.supplierId ? await getOffer(c.var.db, part.id, part.supplierId) : undefined;
-	await runBatch(c.var.db, savePartStatements(c.var.db, v.data, { part, offer }, "form", c.var.user, nowIso()));
+	await saveChanges(
+		c,
+		fmt(t.history.summaries.partEdit, { ref: v.data.ref }),
+		savePartStatements(c.var.db, v.data, { part, offer }, "form", c.var.user, nowIso()),
+	);
 	return redirectOk(c, `/parts/${part.id}`);
 });
 
@@ -1423,7 +1449,7 @@ partRoutes.post("/:id/cost/average", requirePermission("prices.edit"), async (c)
 		nowIso(),
 		c.var.t.parts.noteAverage,
 	);
-	await runBatch(c.var.db, stmts);
+	await saveChanges(c, fmt(c.var.t.history.summaries.partCostAverage, { ref: part.ref }), stmts);
 	return redirectOk(c, `/parts/${part.id}`);
 });
 
@@ -1435,8 +1461,9 @@ partRoutes.post("/:id/cost/offer", requirePermission("prices.edit"), async (c) =
 	if (!offer || offer.priceCents === null || !isStocked(part.kind)) return c.redirect(`/parts/${part.id}`, 303);
 	const supplier = await getSupplier(c.var.db, offer.supplierId);
 	const note = fmt(c.var.t.parts.noteOffer, { supplier: supplier?.name ?? String(offer.supplierId) });
-	await runBatch(
-		c.var.db,
+	await saveChanges(
+		c,
+		fmt(c.var.t.history.summaries.partCostOffer, { ref: part.ref }),
 		setStandardCostStatements(c.var.db, part, offer.priceCents, "form", c.var.user, nowIso(), note),
 	);
 	return redirectOk(c, `/parts/${part.id}`);
@@ -1649,7 +1676,12 @@ async function createOffer(c: Context<AppEnv>) {
 	];
 	if (d.preferred) stmts.push(setPreferredStatement(c.var.db, part.id, supplierId, user, now));
 	stmts.push(...(await offerStandardStatements(c, part, supplierId, d)));
-	await runBatch(c.var.db, stmts);
+	const supplier = await getSupplier(c.var.db, supplierId);
+	await saveChanges(
+		c,
+		fmt(t.history.summaries.offerCreate, { supplier: supplier?.name ?? String(supplierId), ref: part.ref }),
+		stmts,
+	);
 	return redirectOk(c, `/parts/${part.id}`);
 }
 
@@ -1724,7 +1756,11 @@ partRoutes.post("/:id/offers/:supplierId", requirePermission("prices.edit"), asy
 	// Unticking never clears the preferred supplier: another offer is made preferred instead.
 	if (d.preferred && !preferred) stmts.push(setPreferredStatement(c.var.db, part.id, found.supplier.id, user, now));
 	stmts.push(...(await offerStandardStatements(c, part, found.supplier.id, d)));
-	await runBatch(c.var.db, stmts);
+	await saveChanges(
+		c,
+		fmt(c.var.t.history.summaries.offerEdit, { supplier: found.supplier.name, ref: part.ref }),
+		stmts,
+	);
 	return redirectOk(c, `/parts/${part.id}`);
 });
 
@@ -1735,7 +1771,9 @@ partRoutes.post("/:id/offers/:supplierId/prefer", requirePermission("prices.edit
 	if (!found) return notFound(c);
 	if (!isStocked(part.kind)) return offerKindRefused(c, part);
 	if (part.supplierId !== found.supplier.id) {
-		await runBatch(c.var.db, [setPreferredStatement(c.var.db, part.id, found.supplier.id, c.var.user, nowIso())]);
+		await saveChanges(c, fmt(c.var.t.history.summaries.offerPrefer, { supplier: found.supplier.name, ref: part.ref }), [
+			setPreferredStatement(c.var.db, part.id, found.supplier.id, c.var.user, nowIso()),
+		]);
 	}
 	return redirectOk(c, `/parts/${part.id}`);
 });
@@ -1745,7 +1783,11 @@ partRoutes.post("/:id/offers/:supplierId/delete", requirePermission("parts.delet
 	if (!part) return notFound(c);
 	const found = await offerFromParam(c, part);
 	if (!found) return notFound(c);
-	await runBatch(c.var.db, deleteOfferStatements(c.var.db, part.id, found.supplier.id, c.var.user, nowIso()));
+	await saveChanges(
+		c,
+		fmt(c.var.t.history.summaries.offerDelete, { supplier: found.supplier.name, ref: part.ref }),
+		deleteOfferStatements(c.var.db, part.id, found.supplier.id, c.var.user, nowIso()),
+	);
 	return redirectOk(c, `/parts/${part.id}`, "deleted");
 });
 
@@ -1757,23 +1799,35 @@ for (const [action, archived] of [
 ] as const) {
 	partRoutes.post(`/:id/${action}`, requirePermission("parts.delete"), async (c) => {
 		const id = idParam(c);
-		if (!id) return notFound(c);
-		await c.var.db.update(parts).set({ archived, updatedAt: nowIso(), updatedBy: c.var.user }).where(eq(parts.id, id));
-		return redirectOk(c, `/parts/${id}`, archived ? "archived" : "unarchived");
+		const part = id ? await getPart(c.var.db, id) : undefined;
+		if (!part) return notFound(c);
+		const summaries = c.var.t.history.summaries;
+		await saveChanges(c, fmt(archived ? summaries.partArchive : summaries.partUnarchive, { ref: part.ref }), [
+			archivePartStatement(c.var.db, part.id, archived, c.var.user, nowIso()),
+		]);
+		return redirectOk(c, `/parts/${part.id}`, archived ? "archived" : "unarchived");
 	});
 }
 
 partRoutes.post("/:id/delete", requirePermission("parts.delete"), async (c) => {
 	const id = idParam(c);
-	if (!id) return notFound(c);
-	const part = await getPart(c.var.db, id);
+	const part = id ? await getPart(c.var.db, id) : undefined;
+	if (!part) return notFound(c);
+	const bucket = imagesBucket(c.env);
 	try {
-		await c.var.db.delete(parts).where(eq(parts.id, id));
+		// The image file is deleted below: undoing would bring back a part pointing at nothing (D111).
+		await saveChanges(
+			c,
+			fmt(c.var.t.history.summaries.partDelete, { ref: part.ref }),
+			[deletePartStatement(c.var.db, part.id)],
+			{
+				revertible: !(bucket && part.imageKey),
+			},
+		);
 	} catch (err) {
-		if (isConstraintError(err, "FOREIGN KEY")) return c.redirect(`/parts/${id}?err=in_use`, 303);
+		if (isConstraintError(err, "FOREIGN KEY")) return c.redirect(`/parts/${part.id}?err=in_use`, 303);
 		throw err;
 	}
-	const bucket = imagesBucket(c.env);
-	if (bucket && part?.imageKey) await bucket.delete(part.imageKey);
+	if (bucket && part.imageKey) await bucket.delete(part.imageKey);
 	return redirectOk(c, "/parts", "deleted");
 });

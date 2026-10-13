@@ -1,6 +1,7 @@
 import type { Context } from "hono";
 import { Hono } from "hono";
 import { exportBackup, planRestore, type RestorePlan, restoreStatements } from "../domain/backup";
+import { runChangeSet } from "../domain/history";
 import {
 	headerOf,
 	IMPORTERS,
@@ -15,7 +16,6 @@ import { can, redactCsv } from "../domain/permissions";
 import { errorText, fmt } from "../i18n";
 import { cn } from "../lib/cn";
 import { toCsv } from "../lib/csv";
-import { runBatch } from "../lib/db";
 import { decodeText } from "../lib/encoding";
 import { requirePermission } from "../middleware/roles";
 import type { AppEnv } from "../types";
@@ -468,7 +468,8 @@ importRoutes.post("/restore/commit", requirePermission("backup.restore"), async 
 	const json = await readJsonInput(c);
 	const plan = await planRestore(c.env.DB, json);
 	if (!plan.ok) return page(c, c.var.t.import.restoreTitle, <RestorePreview plan={plan} json={json} />, 422);
-	await c.env.DB.batch(restoreStatements(c.env.DB, plan.backup));
+	const summary = fmt(c.var.t.history.summaries.restore, { at: plan.backup.exported_at.slice(0, 10) });
+	await c.env.DB.batch(restoreStatements(c.env.DB, plan.backup, { user: c.var.user, now: nowIso(), summary }));
 	return c.redirect("/import?restored=1", 303);
 });
 
@@ -530,8 +531,22 @@ importRoutes.post("/:type/commit", requirePermission("import.commit"), async (c)
 	const plan = await planImport({ db: c.var.db, locale: c.var.locale }, importer.type, csv);
 	if (!plan) return notFound(c);
 	if (plan.errors.length) return page(c, c.var.t.import.preview, <Preview plan={plan} csv={csv} />, 422);
-	await runBatch(c.var.db, plan.statements(c.var.user, nowIso()));
 	const created = plan.rows.filter((r) => r.action === "create").length;
 	const updated = plan.rows.filter((r) => r.action === "update").length;
+	const now = nowIso();
+	await runChangeSet(
+		c.var.db,
+		{
+			user: c.var.user,
+			source: "import",
+			summary: fmt(c.var.t.history.summaries.import, {
+				file: `${importer.type}.csv`,
+				create: created,
+				update: updated,
+			}),
+			now,
+		},
+		plan.statements(c.var.user, now),
+	);
 	return c.redirect(`/import?done=${importer.type}&create=${created}&update=${updated}`, 303);
 });

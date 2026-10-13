@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { buildActualCost, marginOf } from "../src/domain/margins";
 import { formatMoney, formatPercent } from "../src/lib/units";
-import { bomId, insertPart, loadDemo, one, partId, postForm, request, rows, testDb } from "./helpers";
+import { bomId, changeSql, insertPart, loadDemo, one, partId, postForm, request, rows, stmt, testDb } from "./helpers";
 
 const html = async (path: string, headers: Record<string, string> = {}) => {
 	const res = await request(path, { headers });
@@ -224,7 +224,7 @@ describe("actual cost and margin of a completed build", () => {
 	it("flags an actual cost built from parts of unknown cost", async () => {
 		const top = await insertPart("TOP", "make");
 		await insertPart("CELL", "buy"); // no cost and no stock: consumed at an unknown cost
-		await rows("UPDATE parts SET sale_price_cents = 1500 WHERE id = ?", top);
+		await changeSql("Price TOP", stmt("UPDATE parts SET sale_price_cents = 1500 WHERE id = ?", top));
 		await postForm("/boms", { parent_part_id: String(top), code: "std", revision: "Rev1", notes: "", copy_from: "" });
 		const bom = (await one<{ id: number }>("SELECT id FROM boms WHERE parent_part_id = ?", top)).id;
 		await postForm(`/boms/${bom}/lines`, { component: "CELL", qty: "1", notes: "" });

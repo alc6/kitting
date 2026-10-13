@@ -1,4 +1,4 @@
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import type { Context } from "hono";
 import { Hono } from "hono";
 import type { Child } from "hono/jsx";
@@ -15,18 +15,25 @@ import {
 } from "../domain/bom-graph";
 import {
 	activateStatements,
+	addBomLineStatements,
 	bomInput,
+	bomLabel,
 	bomLineInput,
 	bomSalePriceStatements,
 	createBomStatements,
 	DEFAULT_CODE,
 	DEFAULT_REVISION,
+	deleteBomLineStatements,
+	deleteBomStatement,
 	findBom,
 	getBom,
 	getBomLines,
 	listBoms,
 	loadGraph,
 	nextRevision,
+	reorderBomLinesStatements,
+	setBomStatusStatement,
+	updateBomLineQtyStatements,
 	wouldCreateCycle,
 } from "../domain/boms";
 import { type Margin, marginOf, salePriceOf } from "../domain/margins";
@@ -34,7 +41,6 @@ import { onHandMap, partOptions } from "../domain/parts";
 import { can } from "../domain/permissions";
 import { errorText, fmt } from "../i18n";
 import { cn } from "../lib/cn";
-import { runBatch } from "../lib/db";
 import { isConstraintError } from "../lib/sql";
 import {
 	formatCentsInput,
@@ -52,7 +58,7 @@ import { CostView, StatusBadge } from "../views/bom";
 import { BomDiagram, type DiagramView, diagramTree, treeDepth } from "../views/bom-diagram";
 import { useApp } from "../views/context";
 import { Icon, type IconNode, icons } from "../views/icons";
-import { idParam, notFound, nowIso, page, redirectOk, translateErrors } from "../views/render";
+import { idParam, notFound, nowIso, page, redirectOk, saveChanges, translateErrors } from "../views/render";
 import {
 	Alert,
 	Badge,
@@ -93,6 +99,7 @@ import {
 	TextField,
 	ToggleLinks,
 } from "../views/ui";
+import { recordHistoryPage } from "./history";
 import { csvResponse } from "./import";
 import { marginTone } from "./margins";
 
@@ -106,7 +113,7 @@ function qtyParam(c: Context<AppEnv>): number {
 	return n !== null && n > 0 ? n : MILLI;
 }
 
-type BomTab = "editor" | "tree" | "diagram" | "explode";
+type BomTab = "editor" | "tree" | "diagram" | "explode" | "history";
 
 function BomTabs(props: { bom: Bom; active: BomTab }) {
 	const { t } = useApp();
@@ -116,6 +123,7 @@ function BomTabs(props: { bom: Bom; active: BomTab }) {
 		{ key: "tree", href: `/boms/${id}/tree`, label: t.boms.tree, icon: icons.listTree },
 		{ key: "diagram", href: `/boms/${id}/diagram`, label: t.boms.diagram, icon: icons.diagram },
 		{ key: "explode", href: `/boms/${id}/explode`, label: t.boms.explode, icon: icons.list },
+		{ key: "history", href: `/boms/${id}/history`, label: t.history.tab, icon: icons.history },
 	];
 	return <LinkTabs items={tabs.map((tab) => ({ ...tab, active: tab.key === props.active }))} />;
 }
@@ -468,8 +476,15 @@ bomRoutes.post("/", requirePermission("boms.edit"), async (c) => {
 	const d = v.data;
 	const user = c.var.user;
 	const now = nowIso();
-	await runBatch(
-		db,
+	const parentRef = (
+		await db
+			.select({ ref: parts.ref })
+			.from(parts)
+			.where(eq(parts.id, d.parent_part_id as number))
+	)[0]?.ref;
+	await saveChanges(
+		c,
+		fmt(t.history.summaries.bomCreate, { bom: bomLabel(parentRef ?? "", d) }),
 		createBomStatements(
 			db,
 			{ parentPartId: d.parent_part_id as number, code: d.code, revision: d.revision, notes: d.notes },
@@ -922,6 +937,7 @@ bomRoutes.post("/:id/lines", requirePermission("boms.edit"), async (c) => {
 	const errors: FieldErrors = v.ok ? {} : { ...v.errors };
 	const vars: Record<string, string> = {};
 	let componentId: number | undefined;
+	let componentRef = "";
 	if (v.ok) {
 		const ref = v.data.component.split(/\s+[—·-]\s+/)[0]?.trim() ?? "";
 		const comp = (await db.select().from(parts).where(eq(parts.ref, ref)).limit(1))[0];
@@ -934,26 +950,25 @@ bomRoutes.post("/:id/lines", requirePermission("boms.edit"), async (c) => {
 			errors.component = "bom_cycle";
 			vars.ref = comp.ref;
 			vars.parent = part.ref;
-		} else componentId = comp.id;
+		} else {
+			componentId = comp.id;
+			componentRef = comp.ref;
+		}
 	}
 	if (!v.ok || componentId === undefined) return renderEditor(c, data, { values, errors, vars }, 422);
-	const user = c.var.user;
-	await db.insert(bomLines).values({
-		bomId: bom.id,
-		componentPartId: componentId,
-		qtyMilli: v.data.qty,
-		notes: v.data.notes,
-		position: sql`(SELECT COALESCE(MAX(position), 0) + 1 FROM bom_lines WHERE bom_id = ${bom.id})`,
-		createdBy: user,
-		updatedBy: user,
-	});
-	await touchBom(c, bom.id);
+	await saveChanges(
+		c,
+		fmt(c.var.t.history.summaries.bomLineAdd, { ref: componentRef, bom: bomLabel(part.ref, bom) }),
+		addBomLineStatements(
+			db,
+			bom.id,
+			{ componentPartId: componentId, qtyMilli: v.data.qty, notes: v.data.notes },
+			c.var.user,
+			nowIso(),
+		),
+	);
 	return c.redirect(`/boms/${bom.id}`, 303);
 });
-
-async function touchBom(c: Context<AppEnv>, bomId: number) {
-	await c.var.db.update(boms).set({ updatedAt: nowIso(), updatedBy: c.var.user }).where(eq(boms.id, bomId));
-}
 
 async function editableLine(c: Context<AppEnv>) {
 	const data = await loadBom(c);
@@ -978,11 +993,11 @@ bomRoutes.post("/:id/lines/:lineId", requirePermission("boms.edit"), async (c) =
 	if (qty === null || qty <= 0) return c.redirect(`/boms/${data.bom.id}?err=invalid_quantity`, 303);
 	const comp = (await c.var.db.select().from(parts).where(eq(parts.id, data.line.componentPartId)).limit(1))[0];
 	if (comp?.trackSerial && qty % MILLI !== 0) return c.redirect(`/boms/${data.bom.id}?err=serial_whole_qty`, 303);
-	await c.var.db
-		.update(bomLines)
-		.set({ qtyMilli: qty, updatedAt: nowIso(), updatedBy: c.var.user })
-		.where(eq(bomLines.id, data.line.id));
-	await touchBom(c, data.bom.id);
+	await saveChanges(
+		c,
+		fmt(c.var.t.history.summaries.bomLineQty, { ref: comp?.ref ?? "", bom: bomLabel(data.part.ref, data.bom) }),
+		updateBomLineQtyStatements(c.var.db, data.bom.id, data.line.id, qty, c.var.user, nowIso()),
+	);
 	return c.redirect(`/boms/${data.bom.id}`, 303);
 });
 
@@ -990,8 +1005,12 @@ bomRoutes.post("/:id/lines/:lineId/delete", requirePermission("boms.edit"), asyn
 	const data = await editableLine(c);
 	if (!data) return notFound(c);
 	if (data.bom.status === "archived") return c.redirect(`/boms/${data.bom.id}?err=bom_archived`, 303);
-	await c.var.db.delete(bomLines).where(eq(bomLines.id, data.line.id));
-	await touchBom(c, data.bom.id);
+	const comp = (await c.var.db.select().from(parts).where(eq(parts.id, data.line.componentPartId)).limit(1))[0];
+	await saveChanges(
+		c,
+		fmt(c.var.t.history.summaries.bomLineDelete, { ref: comp?.ref ?? "", bom: bomLabel(data.part.ref, data.bom) }),
+		deleteBomLineStatements(c.var.db, data.bom.id, data.line.id, c.var.user, nowIso()),
+	);
 	return c.redirect(`/boms/${data.bom.id}`, 303);
 });
 
@@ -1008,15 +1027,10 @@ bomRoutes.post("/:id/lines/:lineId/move", requirePermission("boms.edit"), async 
 		// Renumber 1..n with the two lines swapped, in one batch.
 		const order = lines.map((l) => l.id);
 		[order[idx], order[idx + dir]] = [other.id, data.line.id];
-		const now = nowIso();
-		await runBatch(
-			c.var.db,
-			order.map((id, i) =>
-				c.var.db
-					.update(bomLines)
-					.set({ position: i + 1, updatedAt: now, updatedBy: c.var.user })
-					.where(eq(bomLines.id, id)),
-			),
+		await saveChanges(
+			c,
+			fmt(c.var.t.history.summaries.bomLineMove, { bom: bomLabel(data.part.ref, data.bom) }),
+			reorderBomLinesStatements(c.var.db, data.bom.id, order, c.var.user, nowIso()),
 		);
 	}
 	return c.redirect(`/boms/${data.bom.id}`, 303);
@@ -1031,7 +1045,11 @@ bomRoutes.post("/:id/sale-price", requirePermission("prices.edit"), async (c) =>
 	const body = await c.req.parseBody();
 	const v = validate(salePriceInput, body);
 	if (!v.ok) return renderEditor(c, data, undefined, 422, { values: body as FormValues, errors: v.errors });
-	await runBatch(c.var.db, bomSalePriceStatements(c.var.db, bom, v.data.sale_price, c.var.user, nowIso()));
+	await saveChanges(
+		c,
+		fmt(c.var.t.history.summaries.bomSalePrice, { bom: bomLabel(data.part.ref, bom) }),
+		bomSalePriceStatements(c.var.db, bom, v.data.sale_price, c.var.user, nowIso()),
+	);
 	return redirectOk(c, `/boms/${bom.id}`);
 });
 
@@ -1050,7 +1068,11 @@ bomRoutes.post("/:id/activate", requirePermission("boms.edit"), async (c) => {
 				return c.redirect(`/boms/${bom.id}?err=bom_cycle`, 303);
 		}
 	}
-	await runBatch(c.var.db, activateStatements(c.var.db, bom, c.var.user, nowIso()));
+	await saveChanges(
+		c,
+		fmt(c.var.t.history.summaries.bomActivate, { bom: bomLabel(part.ref, bom) }),
+		activateStatements(c.var.db, bom, c.var.user, nowIso()),
+	);
 	return redirectOk(c, `/boms/${bom.id}`, "activated");
 });
 
@@ -1064,27 +1086,25 @@ bomRoutes.post("/:id/draft", requirePermission("boms.edit"), async (c) => {
 				return c.redirect(`/boms/${bom.id}?err=bom_cycle`, 303);
 		}
 	}
-	await c.var.db
-		.update(boms)
-		.set({ status: "draft", updatedAt: nowIso(), updatedBy: c.var.user })
-		.where(eq(boms.id, bom.id));
+	await saveChanges(c, fmt(c.var.t.history.summaries.bomDraft, { bom: bomLabel(part.ref, bom) }), [
+		setBomStatusStatement(c.var.db, bom.id, "draft", c.var.user, nowIso()),
+	]);
 	return redirectOk(c, `/boms/${bom.id}`);
 });
 
 bomRoutes.post("/:id/archive", requirePermission("boms.delete"), async (c) => {
 	const data = await loadBom(c);
 	if (!data) return notFound(c);
-	await c.var.db
-		.update(boms)
-		.set({ status: "archived", updatedAt: nowIso(), updatedBy: c.var.user })
-		.where(eq(boms.id, data.bom.id));
+	await saveChanges(c, fmt(c.var.t.history.summaries.bomArchive, { bom: bomLabel(data.part.ref, data.bom) }), [
+		setBomStatusStatement(c.var.db, data.bom.id, "archived", c.var.user, nowIso()),
+	]);
 	return redirectOk(c, `/boms/${data.bom.id}`, "archived");
 });
 
 bomRoutes.post("/:id/revision", requirePermission("boms.edit"), async (c) => {
 	const data = await loadBom(c);
 	if (!data) return notFound(c);
-	const { bom } = data;
+	const { bom, part } = data;
 	const db = c.var.db;
 	const taken = await db
 		.select({ revision: boms.revision })
@@ -1094,8 +1114,12 @@ bomRoutes.post("/:id/revision", requirePermission("boms.edit"), async (c) => {
 		bom.revision,
 		taken.map((r) => r.revision),
 	);
-	await runBatch(
-		db,
+	await saveChanges(
+		c,
+		fmt(c.var.t.history.summaries.bomRevision, {
+			bom: bomLabel(part.ref, { code: bom.code, revision }),
+			from: bom.revision,
+		}),
 		createBomStatements(
 			db,
 			{ parentPartId: bom.parentPartId, code: bom.code, revision, notes: bom.notes },
@@ -1112,7 +1136,9 @@ bomRoutes.post("/:id/delete", requirePermission("boms.delete"), async (c) => {
 	const data = await loadBom(c);
 	if (!data) return notFound(c);
 	try {
-		await c.var.db.delete(boms).where(eq(boms.id, data.bom.id));
+		await saveChanges(c, fmt(c.var.t.history.summaries.bomDelete, { bom: bomLabel(data.part.ref, data.bom) }), [
+			deleteBomStatement(c.var.db, data.bom.id),
+		]);
 	} catch (err) {
 		if (isConstraintError(err, "FOREIGN KEY")) return c.redirect(`/boms/${data.bom.id}?err=in_use`, 303);
 		throw err;
@@ -1238,6 +1264,17 @@ function TreeNode(props: { node: ExplodedNode; calc: CostCalculator; refs: Map<n
 		</li>
 	);
 }
+
+bomRoutes.get("/:id/history", async (c) => {
+	const data = await loadBom(c);
+	if (!data) return notFound(c);
+	return recordHistoryPage(
+		c,
+		bomLabel(data.part.ref, data.bom),
+		<BomHeader bom={data.bom} part={data.part} tab="history" />,
+		{ kind: "bom", id: data.bom.id },
+	);
+});
 
 bomRoutes.get("/:id/tree", async (c) => {
 	const data = await loadBom(c);

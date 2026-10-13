@@ -300,6 +300,94 @@ export function draftPoStatements(
 	return stmts;
 }
 
+// ---------------------------------------------------------------------------
+// PO edits: statements to run in one batch.
+
+export function createPoStatement(
+	db: Db,
+	po: { number: string; supplierId: number; expectedAt: string | null; notes: string },
+	user: string,
+	now: string,
+) {
+	return db
+		.insert(purchaseOrders)
+		.values({ ...po, createdBy: user, updatedBy: user, createdAt: now, updatedAt: now })
+		.returning({ id: purchaseOrders.id });
+}
+
+export function updatePoStatement(
+	db: Db,
+	poId: number,
+	d: { expectedAt: string | null; notes: string },
+	user: string,
+	now: string,
+) {
+	return db
+		.update(purchaseOrders)
+		.set({ ...d, updatedAt: now, updatedBy: user })
+		.where(eq(purchaseOrders.id, poId));
+}
+
+export function addPoLineStatement(
+	db: Db,
+	poId: number,
+	line: { partId: number; qtyMilli: number; unitPriceCents: number },
+	user: string,
+	now: string,
+) {
+	return db.insert(poLines).values({ poId, ...line, createdBy: user, updatedBy: user, createdAt: now, updatedAt: now });
+}
+
+export function updatePoLineStatement(
+	db: Db,
+	poId: number,
+	lineId: number,
+	d: { qtyMilli: number; unitPriceCents: number },
+	user: string,
+	now: string,
+) {
+	return db
+		.update(poLines)
+		.set({ ...d, updatedAt: now, updatedBy: user })
+		.where(and(eq(poLines.id, lineId), eq(poLines.poId, poId)));
+}
+
+export function deletePoLineStatement(db: Db, poId: number, lineId: number) {
+	return db.delete(poLines).where(and(eq(poLines.id, lineId), eq(poLines.poId, poId)));
+}
+
+/** Draft → sent (a PO in another status is left alone). */
+export function sendPoStatement(db: Db, poId: number, user: string, now: string) {
+	return db
+		.update(purchaseOrders)
+		.set({ status: "sent", sentAt: now, updatedAt: now, updatedBy: user })
+		.where(and(eq(purchaseOrders.id, poId), eq(purchaseOrders.status, "draft")));
+}
+
+/** Draft or sent → cancelled. */
+export function cancelPoStatement(db: Db, poId: number, user: string, now: string) {
+	return db
+		.update(purchaseOrders)
+		.set({ status: "cancelled", updatedAt: now, updatedBy: user })
+		.where(and(eq(purchaseOrders.id, poId), inArray(purchaseOrders.status, ["draft", "sent"])));
+}
+
+/** Closes a short-shipped PO: the remaining quantities are no longer expected (no stock move). */
+export function closePoStatement(db: Db, poId: number, user: string, now: string) {
+	return db
+		.update(purchaseOrders)
+		.set({ status: "received", updatedAt: now, updatedBy: user })
+		.where(and(eq(purchaseOrders.id, poId), inArray(purchaseOrders.status, ["sent", "partial"])));
+}
+
+/** Deletes a PO with its lines. */
+export function deletePoStatement(db: Db, poId: number) {
+	return db.delete(purchaseOrders).where(eq(purchaseOrders.id, poId));
+}
+
+// ---------------------------------------------------------------------------
+// PO lists and details
+
 export type PoFilters = { q?: string; status?: string };
 
 export async function listPos(db: Db, f: PoFilters = {}) {

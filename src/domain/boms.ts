@@ -229,6 +229,11 @@ export async function whereUsed(db: Db, partId: number): Promise<WhereUsedRow[]>
 	return out;
 }
 
+/** How the history and pages name a BoM: "LAMP-DESK std Rev3". */
+export function bomLabel(parentRef: string, bom: { code: string; revision: string }): string {
+	return `${parentRef} ${bom.code} ${bom.revision}`;
+}
+
 /** "Rev2" -> "Rev3", "A" -> "A-2"; skips labels already used by the part/code. */
 export function nextRevision(current: string, taken: string[]): string {
 	const used = new Set(taken);
@@ -290,6 +295,91 @@ export function createBomStatements(
 		);
 	}
 	return stmts;
+}
+
+/** Marks a BoM as changed now (its lines changed). */
+function touchBomStatement(db: Db, bomId: number, user: string, now: string) {
+	return db.update(boms).set({ updatedAt: now, updatedBy: user }).where(eq(boms.id, bomId));
+}
+
+/** Appends a line at the end of a BoM. */
+export function addBomLineStatements(
+	db: Db,
+	bomId: number,
+	line: { componentPartId: number; qtyMilli: number; notes: string },
+	user: string,
+	now: string,
+): Statement[] {
+	return [
+		db.insert(bomLines).values({
+			bomId,
+			componentPartId: line.componentPartId,
+			qtyMilli: line.qtyMilli,
+			notes: line.notes,
+			position: sql`(SELECT COALESCE(MAX(position), 0) + 1 FROM bom_lines WHERE bom_id = ${bomId})`,
+			createdBy: user,
+			updatedBy: user,
+			createdAt: now,
+			updatedAt: now,
+		}),
+		touchBomStatement(db, bomId, user, now),
+	];
+}
+
+export function updateBomLineQtyStatements(
+	db: Db,
+	bomId: number,
+	lineId: number,
+	qtyMilli: number,
+	user: string,
+	now: string,
+): Statement[] {
+	return [
+		db
+			.update(bomLines)
+			.set({ qtyMilli, updatedAt: now, updatedBy: user })
+			.where(and(eq(bomLines.id, lineId), eq(bomLines.bomId, bomId))),
+		touchBomStatement(db, bomId, user, now),
+	];
+}
+
+export function deleteBomLineStatements(db: Db, bomId: number, lineId: number, user: string, now: string): Statement[] {
+	return [
+		db.delete(bomLines).where(and(eq(bomLines.id, lineId), eq(bomLines.bomId, bomId))),
+		touchBomStatement(db, bomId, user, now),
+	];
+}
+
+/** Renumbers the lines of a BoM 1..n in the given order of line ids. */
+export function reorderBomLinesStatements(
+	db: Db,
+	bomId: number,
+	order: number[],
+	user: string,
+	now: string,
+): Statement[] {
+	return order.map((id, i) =>
+		db
+			.update(bomLines)
+			.set({ position: i + 1, updatedAt: now, updatedBy: user })
+			.where(and(eq(bomLines.id, id), eq(bomLines.bomId, bomId))),
+	);
+}
+
+/** Sets a BoM back to draft or archives it (activating goes through activateStatements). */
+export function setBomStatusStatement(
+	db: Db,
+	bomId: number,
+	status: Exclude<BomStatus, "active">,
+	user: string,
+	now: string,
+) {
+	return db.update(boms).set({ status, updatedAt: now, updatedBy: user }).where(eq(boms.id, bomId));
+}
+
+/** Deletes a BoM with its lines; fails with a FOREIGN KEY error while builds use it. */
+export function deleteBomStatement(db: Db, bomId: number) {
+	return db.delete(boms).where(eq(boms.id, bomId));
 }
 
 export function isValidCode(code: string): boolean {

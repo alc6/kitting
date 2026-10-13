@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+	changeSql,
 	insertMove,
 	insertPart,
 	loadDemo,
@@ -11,6 +12,7 @@ import {
 	request,
 	rows,
 	setRole,
+	stmt,
 	TESTER,
 } from "./helpers";
 
@@ -167,7 +169,7 @@ describe("JSON backup and restore", () => {
 		const before = await rows("SELECT * FROM stock_moves ORDER BY id");
 
 		// Wreck the data, then restore.
-		await env.DB.batch([env.DB.prepare("DELETE FROM stock_moves"), env.DB.prepare("UPDATE parts SET name = 'broken'")]);
+		await changeSql("Wreck", stmt("DELETE FROM stock_moves"), stmt("UPDATE parts SET name = 'broken'"));
 		const form = new FormData();
 		form.set("file", new File([json], "backup.json", { type: "application/json" }));
 		const preview = await request("/import/restore/preview", { method: "POST", body: form });

@@ -29,7 +29,9 @@ async function seed() {
 		notes: "",
 	});
 	const build = Number(/\/builds\/(\d+)/.exec(planned.headers.get("Location") ?? "")?.[1]);
-	return { part, supplier, draft, sent, line, lamp, bom, build };
+	// The change set that planned the build: operators may undo it (they plan builds).
+	const planning = (await one<{ id: number }>("SELECT max(id) AS id FROM change_sets")).id;
+	return { part, supplier, draft, sent, line, lamp, bom, build, planning };
 }
 
 type Ids = Awaited<ReturnType<typeof seed>>;
@@ -60,6 +62,7 @@ const CALLS: Record<Action, (ids: Ids) => Call> = {
 	"backup.download": () => ({ method: "GET", path: "/import/backup.json" }),
 	"backup.restore": () => ({ path: "/import/restore/preview", form: { json: "{}" } }),
 	"users.manage": () => ({ path: "/users", form: { email: "new@example.com", role: "operator" } }),
+	"history.revert": (i) => ({ path: `/history/${i.planning}/revert` }),
 };
 
 async function send(call: Call) {

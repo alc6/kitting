@@ -45,3 +45,25 @@ export async function getSupplier(db: Db, id: number) {
 	const rows = await db.select().from(suppliers).where(eq(suppliers.id, id)).limit(1);
 	return rows[0];
 }
+
+// ---------------------------------------------------------------------------
+// Writes: statements to run in one change set (see runChangeSet in ./history.ts).
+
+export function createSupplierStatement(db: Db, d: SupplierInput, user: string, now: string) {
+	return db
+		.insert(suppliers)
+		.values({ ...d, createdBy: user, updatedBy: user, createdAt: now, updatedAt: now })
+		.returning({ id: suppliers.id });
+}
+
+export function updateSupplierStatement(db: Db, id: number, d: SupplierInput, user: string, now: string) {
+	return db
+		.update(suppliers)
+		.set({ ...d, updatedAt: now, updatedBy: user })
+		.where(eq(suppliers.id, id));
+}
+
+/** Fails with a FOREIGN KEY error while parts, offers or POs use the supplier. */
+export function deleteSupplierStatement(db: Db, id: number) {
+	return db.delete(suppliers).where(eq(suppliers.id, id));
+}

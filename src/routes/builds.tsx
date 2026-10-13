@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, ne } from "drizzle-orm";
+import { and, asc, eq, ne } from "drizzle-orm";
 import type { Context } from "hono";
 import { Hono } from "hono";
 import type { Child } from "hono/jsx";
@@ -9,8 +9,10 @@ import {
 	buildEditInput,
 	buildInput,
 	buildPickList,
+	cancelBuildStatement,
 	choiceField,
 	completionStatements,
+	createBuildStatement,
 	getBuild,
 	getBuildLines,
 	listBuilds,
@@ -20,13 +22,14 @@ import {
 	type PickList,
 	serialCount,
 	serialField,
+	startBuildStatement,
+	updateBuildStatement,
 } from "../domain/builds";
 import { buildActualCost, marginOf, salePriceOf } from "../domain/margins";
 import { can } from "../domain/permissions";
 import { onHandAt, serialsInStock } from "../domain/stock";
 import { errorText, fmt } from "../i18n";
 import { cn } from "../lib/cn";
-import { runBatch } from "../lib/db";
 import { isConstraintError } from "../lib/sql";
 import { formatMoney, formatPercent, formatQtyInput, lineCostCents, MILLI } from "../lib/units";
 import { type FieldErrors, validate } from "../lib/validation";
@@ -34,7 +37,7 @@ import { requirePermission } from "../middleware/roles";
 import type { AppEnv } from "../types";
 import { useApp } from "../views/context";
 import { Icon, icons } from "../views/icons";
-import { idParam, notFound, nowIso, page, redirectOk, translateErrors } from "../views/render";
+import { idParam, notFound, nowIso, page, redirectOk, saveChanges, translateErrors } from "../views/render";
 import {
 	Alert,
 	Badge,
@@ -386,21 +389,25 @@ buildRoutes.post("/", requirePermission("builds.plan"), async (c) => {
 	// Numbers are sequential; retry once if another user took the same number meanwhile.
 	for (let attempt = 0; ; attempt++) {
 		try {
-			const [row] = await db
-				.insert(builds)
-				.values({
-					number: await nextBuildNumber(db),
-					partId: data.product.id,
-					bomId: d.bom_id as number,
-					qtyMilli: d.qty,
-					serial: d.serial || null,
-					plannedFor: d.planned_for,
-					notes: d.notes,
-					createdBy: user,
-					updatedBy: user,
-				})
-				.returning({ id: builds.id });
-			return redirectOk(c, `/builds/${row?.id}`, "created");
+			const number = await nextBuildNumber(db);
+			const summary = fmt(t.history.summaries.buildCreate, { number, ref: data.product.ref });
+			const { results } = await saveChanges(c, summary, [
+				createBuildStatement(
+					db,
+					{
+						number,
+						partId: data.product.id,
+						bomId: d.bom_id as number,
+						qtyMilli: d.qty,
+						serial: d.serial || null,
+						plannedFor: d.planned_for,
+						notes: d.notes,
+					},
+					user,
+					nowIso(),
+				),
+			]);
+			return redirectOk(c, `/builds/${results[0][0]?.id}`, "created");
 		} catch (err) {
 			if (attempt > 0 || !isConstraintError(err, "UNIQUE")) throw err;
 		}
@@ -1072,36 +1079,33 @@ buildRoutes.post("/:id", requirePermission("builds.plan"), async (c) => {
 	if (!v.ok || Object.keys(errors).length > 0) {
 		return renderBuild(c, data, {}, { editErrors: errors, editValues: body as FormValues, status: 422 });
 	}
-	await c.var.db
-		.update(builds)
-		.set({
-			serial: v.data.serial || null,
-			plannedFor: v.data.planned_for,
-			notes: v.data.notes,
-			updatedAt: nowIso(),
-			updatedBy: c.var.user,
-		})
-		.where(eq(builds.id, build.id));
+	await saveChanges(c, fmt(c.var.t.history.summaries.buildEdit, { number: build.number }), [
+		updateBuildStatement(
+			c.var.db,
+			build.id,
+			{ serial: v.data.serial || null, plannedFor: v.data.planned_for, notes: v.data.notes },
+			c.var.user,
+			nowIso(),
+		),
+	]);
 	return redirectOk(c, `/builds/${build.id}`);
 });
 
 buildRoutes.post("/:id/start", requirePermission("builds.plan"), async (c) => {
 	const data = await loadBuildData(c);
 	if (!data) return notFound(c);
-	await c.var.db
-		.update(builds)
-		.set({ status: "in_progress", updatedAt: nowIso(), updatedBy: c.var.user })
-		.where(and(eq(builds.id, data.build.id), eq(builds.status, "planned")));
+	await saveChanges(c, fmt(c.var.t.history.summaries.buildStart, { number: data.build.number }), [
+		startBuildStatement(c.var.db, data.build.id, c.var.user, nowIso()),
+	]);
 	return redirectOk(c, `/builds/${data.build.id}`, "started");
 });
 
 buildRoutes.post("/:id/cancel", requirePermission("builds.plan"), async (c) => {
 	const data = await loadBuildData(c);
 	if (!data) return notFound(c);
-	await c.var.db
-		.update(builds)
-		.set({ status: "cancelled", updatedAt: nowIso(), updatedBy: c.var.user })
-		.where(and(eq(builds.id, data.build.id), inArray(builds.status, OPEN_STATUSES)));
+	await saveChanges(c, fmt(c.var.t.history.summaries.buildCancel, { number: data.build.number }), [
+		cancelBuildStatement(c.var.db, data.build.id, c.var.user, nowIso()),
+	]);
 	return redirectOk(c, `/builds/${data.build.id}`, "cancelled");
 });
 
@@ -1121,7 +1125,11 @@ buildRoutes.post("/:id/complete", requirePermission("builds.complete"), async (c
 		return renderBuild(c, data, form, { validate: true, status: 422 });
 	}
 	try {
-		await runBatch(db, completionStatements(db, graph, { ...build }, pick, c.var.user, nowIso()));
+		await saveChanges(
+			c,
+			fmt(c.var.t.history.summaries.buildComplete, { number: build.number }),
+			completionStatements(db, graph, { ...build }, pick, c.var.user, nowIso()),
+		);
 	} catch (err) {
 		// The unique build_output index aborts a second completion of the same build.
 		if (isConstraintError(err, "UNIQUE")) return c.redirect(`/builds/${build.id}?err=build_not_open`, 303);

@@ -1,17 +1,27 @@
-import { and, eq, ne, sql } from "drizzle-orm";
+import { and, ne, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { type Supplier, suppliers } from "../db/schema";
 import { poUnitPrice, supplierOffers } from "../domain/offers";
 import { can } from "../domain/permissions";
-import { findSupplierByName, getSupplier, listSuppliers, supplierInput, supplierToForm } from "../domain/suppliers";
+import {
+	createSupplierStatement,
+	deleteSupplierStatement,
+	findSupplierByName,
+	getSupplier,
+	listSuppliers,
+	supplierInput,
+	supplierToForm,
+	updateSupplierStatement,
+} from "../domain/suppliers";
 import { fmt } from "../i18n";
 import { isConstraintError } from "../lib/sql";
 import { type FieldErrors, validate } from "../lib/validation";
 import { requirePermission } from "../middleware/roles";
 import type { AppEnv } from "../types";
 import { useApp } from "../views/context";
+import { RecordTabs } from "../views/history";
 import { Icon, icons } from "../views/icons";
-import { idParam, notFound, nowIso, page, redirectOk, translateErrors } from "../views/render";
+import { idParam, notFound, nowIso, page, redirectOk, saveChanges, translateErrors } from "../views/render";
 import {
 	Alert,
 	Badge,
@@ -44,6 +54,7 @@ import {
 	TextArea,
 	TextField,
 } from "../views/ui";
+import { recordHistoryPage } from "./history";
 
 export const supplierRoutes = new Hono<AppEnv>();
 
@@ -292,12 +303,10 @@ supplierRoutes.post("/", requirePermission("suppliers.edit"), async (c) => {
 			422,
 		);
 	}
-	const user = c.var.user;
-	const [row] = await c.var.db
-		.insert(suppliers)
-		.values({ ...result.data, createdBy: user, updatedBy: user })
-		.returning({ id: suppliers.id });
-	return redirectOk(c, `/suppliers/${row?.id}`);
+	const { results } = await saveChanges(c, fmt(t.history.summaries.supplierCreate, { name: result.data.name }), [
+		createSupplierStatement(c.var.db, result.data, c.var.user, nowIso()),
+	]);
+	return redirectOk(c, `/suppliers/${results[0][0]?.id}`);
 });
 
 supplierRoutes.get("/:id", async (c) => {
@@ -325,6 +334,7 @@ supplierRoutes.get("/:id", async (c) => {
 					) : null
 				}
 			/>
+			<RecordTabs base={`/suppliers/${supplier.id}`} active="overview" />
 			<Flash ok={c.req.query("ok")} />
 			{c.req.query("err") === "in_use" ? <Alert variant="destructive">{t.errors.in_use}</Alert> : null}
 			<div class="flex flex-col gap-4">
@@ -343,6 +353,19 @@ supplierRoutes.get("/:id", async (c) => {
 			</div>
 		</>,
 	);
+});
+
+supplierRoutes.get("/:id/history", async (c) => {
+	const id = idParam(c);
+	const supplier = id ? await getSupplier(c.var.db, id) : undefined;
+	if (!supplier) return notFound(c);
+	const header = (
+		<>
+			<PageHeader title={supplier.name} />
+			<RecordTabs base={`/suppliers/${supplier.id}`} active="history" />
+		</>
+	);
+	return recordHistoryPage(c, supplier.name, header, { kind: "supplier", id: supplier.id });
 });
 
 supplierRoutes.post("/:id", requirePermission("suppliers.edit"), async (c) => {
@@ -378,20 +401,22 @@ supplierRoutes.post("/:id", requirePermission("suppliers.edit"), async (c) => {
 			422,
 		);
 	}
-	await c.var.db
-		.update(suppliers)
-		.set({ ...result.data, updatedAt: nowIso(), updatedBy: c.var.user })
-		.where(eq(suppliers.id, supplier.id));
+	await saveChanges(c, fmt(t.history.summaries.supplierEdit, { name: result.data.name }), [
+		updateSupplierStatement(c.var.db, supplier.id, result.data, c.var.user, nowIso()),
+	]);
 	return redirectOk(c, `/suppliers/${supplier.id}`);
 });
 
 supplierRoutes.post("/:id/delete", requirePermission("suppliers.delete"), async (c) => {
 	const id = idParam(c);
-	if (!id) return notFound(c);
+	const supplier = id ? await getSupplier(c.var.db, id) : undefined;
+	if (!supplier) return notFound(c);
 	try {
-		await c.var.db.delete(suppliers).where(eq(suppliers.id, id));
+		await saveChanges(c, fmt(c.var.t.history.summaries.supplierDelete, { name: supplier.name }), [
+			deleteSupplierStatement(c.var.db, supplier.id),
+		]);
 	} catch (err) {
-		if (isConstraintError(err, "FOREIGN KEY")) return c.redirect(`/suppliers/${id}?err=in_use`, 303);
+		if (isConstraintError(err, "FOREIGN KEY")) return c.redirect(`/suppliers/${supplier.id}?err=in_use`, 303);
 		throw err;
 	}
 	return redirectOk(c, "/suppliers", "deleted");

@@ -49,35 +49,37 @@ export async function readUpload(
 	return type ? { ok: true, bytes, type } : { ok: false, error: "image_type" };
 }
 
+/** Points a part at an image object (or at none). */
+export function imageKeyStatement(db: Db, partId: number, key: string | null, user: string, now: string) {
+	return db.update(parts).set({ imageKey: key, updatedAt: now, updatedBy: user }).where(eq(parts.id, partId));
+}
+
 /**
- * Stores a part's new image and points the part at it, then deletes the previous object. The object is
- * written first: a failure leaves at worst an unreferenced object, never a part pointing at nothing.
+ * Stores a part's new image, points the part at it with `setKey` (the database write, e.g. imageKeyStatement),
+ * then deletes the previous object. The object is written first: a failure leaves at worst an unreferenced
+ * object, never a part pointing at nothing.
  */
 export async function replaceImage(
-	db: Db,
 	bucket: R2Bucket,
 	part: { id: number; imageKey: string | null },
 	upload: { bytes: Uint8Array; type: ImageType },
-	user: string,
-	now: string,
+	setKey: (key: string) => Promise<unknown>,
 ): Promise<string> {
 	const key = imageKeyFor(part.id, await contentHash(upload.bytes), upload.type.ext);
 	await bucket.put(key, upload.bytes, { httpMetadata: { contentType: upload.type.contentType } });
-	await db.update(parts).set({ imageKey: key, updatedAt: now, updatedBy: user }).where(eq(parts.id, part.id));
+	await setKey(key);
 	if (part.imageKey && part.imageKey !== key) await bucket.delete(part.imageKey);
 	return key;
 }
 
-/** Removes a part's image: the pointer first, then the object. */
+/** Removes a part's image: the pointer first (`clearKey`, the database write), then the object. */
 export async function removeImage(
-	db: Db,
 	bucket: R2Bucket,
 	part: { id: number; imageKey: string | null },
-	user: string,
-	now: string,
+	clearKey: () => Promise<unknown>,
 ): Promise<void> {
 	if (!part.imageKey) return;
-	await db.update(parts).set({ imageKey: null, updatedAt: now, updatedBy: user }).where(eq(parts.id, part.id));
+	await clearKey();
 	await bucket.delete(part.imageKey);
 }
 

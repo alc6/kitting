@@ -1,6 +1,7 @@
 // Stock: the append-only ledger of moves. On-hand is always SUM(qty_milli) per part.
 import { and, asc, desc, eq, gte, lte, type SQL, sql } from "drizzle-orm";
 import { MOVE_REASONS, type MoveReason, type Part, type PartKind, parts, stockMoves } from "../db/schema";
+import type { Statement } from "../lib/db";
 import { likePattern } from "../lib/sql";
 import { MILLI } from "../lib/units";
 import type { Db } from "../types";
@@ -40,6 +41,18 @@ export function moveValues(
 		createdAt: ctx.now,
 		updatedAt: ctx.now,
 	};
+}
+
+/** A manual adjustment (signed quantity), valued at the part's standard cost. */
+export function adjustmentStatement(db: Db, m: NewMove, note: string, user: string, now: string) {
+	return db.insert(stockMoves).values(moveValues(m, { reason: "adjust", refType: "adjustment", note, user, now }));
+}
+
+/** The `count` moves of an inventory count (see planCounts). */
+export function countStatements(db: Db, moves: NewMove[], note: string, user: string, now: string): Statement[] {
+	return moves.map((m) =>
+		db.insert(stockMoves).values(moveValues(m, { reason: "count", refType: "count", note, user, now })),
+	);
 }
 
 // ---------------------------------------------------------------------------
