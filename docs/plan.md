@@ -151,7 +151,7 @@ Install and upgrade without copying the code (D141).
       policies, outputs for the deploy script; example and CI job for a private repository
 - [x] CI: `terraform fmt -check` and `terraform validate`, Node tests of the scripts
 - [x] Docs: "Install with Terraform and a release"
-- [ ] Deploy to Cloudflare button: declined (D141)
+- [x] Deploy to Cloudflare button: investigated and declined (D141)
 
 ## After v1 (ideas, not planned)
 
