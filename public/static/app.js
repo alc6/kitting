@@ -226,6 +226,8 @@
 				continue;
 			if (next.type === "hidden" || next.disabled) continue;
 			next.focus();
+			// Typing replaces a prefilled quantity instead of appending to it ("1" + "2" would give 12).
+			if (next instanceof HTMLInputElement) next.select();
 			return;
 		}
 	};
