@@ -16,3 +16,12 @@ public/static/app.css
 
 # Local results of `claude plugin eval`.
 plugins/kitting/evals/results/
+
+# Terraform: providers, state and variable values never go in this repository (the lock file of a shared
+# module is not meaningful; installers commit their own).
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+.terraform.lock.hcl

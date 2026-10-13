@@ -1,0 +1,6 @@
+# Copy to terraform.tfvars (gitignored by default; keep it out of public repositories).
+account_id            = "00000000000000000000000000000000"
+hostname              = "kitting.yourco.example"
+admin_emails          = ["admin@yourco.example"]
+allowed_email_domains = ["yourco.example"]
+# allowed_emails      = ["contractor@example.com"]

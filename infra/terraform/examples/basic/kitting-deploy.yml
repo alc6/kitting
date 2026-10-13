@@ -1,0 +1,72 @@
+# .github/workflows/kitting-deploy.yml in YOUR private repository (the one that holds the Terraform folder).
+# It creates or updates the Cloudflare resources, then deploys a published Kitting release on top of them. Your
+# repository keeps settings only: the code comes from the release, pinned by KITTING_VERSION.
+#
+# Settings in this repository (Settings, Secrets and variables, Actions):
+#   secrets: CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID,
+#            TF_STATE_ACCESS_KEY_ID and TF_STATE_SECRET_ACCESS_KEY (R2 API token for the Terraform state)
+#   terraform.tfvars is not committed: pass the values as TF_VAR_* variables, as below.
+name: Deploy Kitting
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kitting-deploy
+  cancel-in-progress: false
+
+env:
+  # The Kitting release to deploy. Keep it equal to the ref=v... of the module in main.tf; a step checks it.
+  KITTING_VERSION: "0.2.0"
+  KITTING_REPO: alc6/kitting
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    defaults:
+      run:
+        working-directory: infra/kitting # the folder with main.tf
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      TF_VAR_account_id: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      TF_VAR_hostname: ${{ vars.KITTING_DOMAIN }}
+      TF_VAR_admin_emails: ${{ vars.ADMIN_EMAILS_JSON }} # for example ["admin@yourco.example"]
+      TF_VAR_allowed_email_domains: ${{ vars.ALLOWED_EMAIL_DOMAINS_JSON }} # for example ["yourco.example"]
+      AWS_ACCESS_KEY_ID: ${{ secrets.TF_STATE_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.TF_STATE_SECRET_ACCESS_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: The module and the release are the same version
+        run: grep -q "infra/terraform?ref=v${KITTING_VERSION}\"" main.tf
+
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_wrapper: false
+      - name: Cloudflare resources (Terraform)
+        run: |
+          terraform init -input=false \
+            -backend-config="endpoints={s3=\"https://${CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com\"}"
+          terraform apply -input=false -auto-approve -lock-timeout=5m
+          terraform output -json deploy_env > "${RUNNER_TEMP}/settings.json"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Download the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "${RUNNER_TEMP}/release"
+          gh release download "v${KITTING_VERSION}" --repo "${KITTING_REPO}" \
+            --pattern "kitting-${KITTING_VERSION}.tar.gz*" --dir "${RUNNER_TEMP}/release"
+          cd "${RUNNER_TEMP}/release"
+          sha256sum -c "kitting-${KITTING_VERSION}.tar.gz.sha256"
+          tar -xzf "kitting-${KITTING_VERSION}.tar.gz"
+      - name: Migrate the database and deploy the Worker
+        run: node "${RUNNER_TEMP}/release/kitting-${KITTING_VERSION}/scripts/deploy-release.mjs" --settings "${RUNNER_TEMP}/settings.json"
