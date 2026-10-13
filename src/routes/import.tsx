@@ -84,6 +84,7 @@ const TYPE_ICONS: Record<ImportType, IconNode> = {
 	suppliers: icons.factory,
 	parts: icons.package,
 	part_suppliers: icons.truck,
+	price_history: icons.history,
 	assemblies: icons.listTree,
 	stock: icons.warehouse,
 };
@@ -545,6 +546,7 @@ importRoutes.post("/:type/commit", requirePermission("import.commit"), async (c)
 				update: updated,
 			}),
 			now,
+			...(plan.revertible === false ? { revertible: false } : {}),
 		},
 		plan.statements(c.var.user, now),
 	);

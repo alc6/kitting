@@ -215,7 +215,7 @@ export function testDb(): Db {
 
 /** Imports CSV text through the real importer; throws on validation errors. */
 export async function importCsv(
-	type: "suppliers" | "parts" | "part_suppliers" | "assemblies" | "stock",
+	type: "suppliers" | "parts" | "part_suppliers" | "price_history" | "assemblies" | "stock",
 	csv: string,
 ): Promise<void> {
 	const db = testDb();
@@ -224,7 +224,12 @@ export async function importCsv(
 	if (plan.errors.length) throw new Error(`${type} import errors: ${JSON.stringify(plan.errors)}`);
 	await runChangeSet(
 		db,
-		{ user: "seed@example.com", source: "import", summary: `Import ${type}.csv` },
+		{
+			user: "seed@example.com",
+			source: "import",
+			summary: `Import ${type}.csv`,
+			...(plan.revertible === false ? { revertible: false } : {}),
+		},
 		plan.statements("seed@example.com", new Date().toISOString()),
 	);
 }

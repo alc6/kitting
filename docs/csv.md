@@ -8,7 +8,7 @@ Files from French or English versions of Excel work as they are: the separator c
 tab, decimals can use a point or a comma, and the encoding can be UTF-8 or Windows-1252. Header names are not
 case-sensitive.
 
-Import the files in this order: suppliers, parts, supplier offers, assemblies, stock.
+Import the files in this order: suppliers, parts, supplier offers, past prices, assemblies, stock.
 
 ## suppliers.csv
 
@@ -39,6 +39,27 @@ One row per part and supplier, matched on both.
   use.
 
 Every price change is kept in the price history.
+
+## price_history.csv
+
+`ref,price,valid_from,supplier,note`
+
+Prices a part had before Kitting, one row per price. Nothing is updated: every row adds a line to the part's price
+history, dated `valid_from` (`YYYY-MM-DD`).
+
+- Without `supplier`, the row is a **standard cost**. With a supplier (matched by name, which may have no offer for
+  the part any more), it is that supplier's **offer price**. A supplier price is for stocked parts only (buy, make).
+- `valid_from` must be before today and before the latest price of the same series (same part, and same supplier
+  or the standard cost), so a past price never becomes the current one. It never changes the part's cost, an offer
+  or any other current value. Change those on the part's form or with `parts.csv` and `part_suppliers.csv`.
+- A series cannot have two prices on the same date, in the file or with the history already recorded. Rows of the
+  file can come in any order.
+- `price` can be 0 and uses a point or a comma. `note` is optional.
+- One wrong row refuses the whole file. Rows added this way cannot be undone, and the history is never edited, so
+  check the preview.
+
+The export lists the standard cost and supplier price history of every part in this format. It is a record to read
+or archive: importing it again is refused, since its rows already exist.
 
 ## assemblies.csv
 

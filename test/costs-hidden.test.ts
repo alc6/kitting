@@ -22,6 +22,7 @@ const COST = 123456; // standard cost of BOX-LAMP
 const OFFER = 111111; // its offer price
 const SALE = 999999; // selling price of LAMP-DESK
 const PAID = 98765; // PO unit price, also the cost of the receipt moves
+const PAST = 77777; // a past standard cost entered as history (D142)
 // The history keeps rows as JSON with raw cents: those must not leak either.
 const AMOUNTS = [
 	"1,234.56",
@@ -35,6 +36,8 @@ const AMOUNTS = [
 	"111111",
 	"999999",
 	"98765",
+	"777.77",
+	"77777",
 ];
 
 /**
@@ -55,6 +58,12 @@ async function seed() {
 			 VALUES (?, 'standard', ?, '2026-01-01', 'form', 'seed', 'seed')`,
 			box,
 			COST,
+		),
+		stmt(
+			`INSERT INTO price_history (part_id, kind, price_cents, valid_from, source, created_by, updated_by)
+			 VALUES (?, 'standard', ?, '2025-01-01', 'import', 'seed', 'seed')`,
+			box,
+			PAST,
 		),
 	);
 	const supplier = (await one<{ id: number }>("SELECT supplier_id AS id FROM parts WHERE id = ?", box)).id;
@@ -142,6 +151,8 @@ function pages(s: Awaited<ReturnType<typeof seed>>): string[] {
 		"/stock/valuation",
 		`/purchasing/po/${s.poId}/export.csv`,
 		"/import/parts/export.csv",
+		"/import/price_history/export.csv",
+		"/import/price_history/template.csv",
 		"/import/backup.json",
 	];
 }
@@ -171,6 +182,7 @@ describe("cost visibility", () => {
 		const part = await (await request(`/parts/${s.box}`, {}, NOT_ADMIN)).text();
 		expect(part).toContain("1,234.56");
 		expect(part).toContain("1,111.11");
+		expect(part).toContain("777.77");
 		expect(await (await request(`/purchasing/po/${s.poId}`, {}, NOT_ADMIN)).text()).toContain("987.65");
 		expect(await (await request("/stock/moves?format=csv", {}, NOT_ADMIN)).text()).toContain("987.65");
 		expect(await (await request(`/history/${s.priced}`, {}, NOT_ADMIN)).text()).toContain("1,234.56");

@@ -3,7 +3,7 @@ import type { Statement } from "../../lib/db";
 import type { NumberLocale } from "../../lib/units";
 import type { Db } from "../../types";
 
-export const IMPORT_TYPES = ["suppliers", "parts", "part_suppliers", "assemblies", "stock"] as const;
+export const IMPORT_TYPES = ["suppliers", "parts", "part_suppliers", "price_history", "assemblies", "stock"] as const;
 export type ImportType = (typeof IMPORT_TYPES)[number];
 
 /** A problem tied to a CSV line. `key` is an i18n error key (Dict.errors). */
@@ -28,6 +28,8 @@ export type ImportPlan = {
 	warnings: RowIssue[];
 	/** Statements to run in one batch on commit. Only meaningful when errors is empty. */
 	statements: (user: string, now: string) => Statement[];
+	/** False when the change set cannot be undone (default: true). */
+	revertible?: boolean;
 };
 
 export type ImportContext = { db: Db; locale: NumberLocale };
