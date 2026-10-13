@@ -40,7 +40,8 @@ async function seed() {
 	const build = Number(/\/builds\/(\d+)/.exec(planned.headers.get("Location") ?? "")?.[1]);
 	// The change set that planned the build: operators may undo it (they plan builds).
 	const planning = (await one<{ id: number }>("SELECT max(id) AS id FROM change_sets")).id;
-	return { part, supplier, draft, sent, line, lamp, assembly, build, planning };
+	const price = (await one<{ id: number }>("SELECT min(id) AS id FROM price_history WHERE part_id = ?", part)).id;
+	return { part, supplier, draft, sent, line, lamp, assembly, build, planning, price };
 }
 
 type Ids = Awaited<ReturnType<typeof seed>>;
@@ -59,6 +60,8 @@ const CALLS: Record<Action, (ids: Ids) => Call> = {
 	// Used by the planned build: refused with a redirect (in_use), after the permission check.
 	"assemblies.delete": (i) => ({ path: `/assemblies/${i.assembly}/delete` }),
 	"prices.edit": (i) => ({ path: `/assemblies/${i.assembly}/sale-price`, form: { sale_price: "99.00" } }),
+	// The only row of its series: refused with a redirect (price_is_current), after the permission check.
+	"prices.delete": (i) => ({ path: `/parts/${i.part}/prices/${i.price}/delete` }),
 	"builds.plan": (i) => ({
 		path: "/builds",
 		form: {

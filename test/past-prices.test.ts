@@ -325,3 +325,182 @@ describe("undo", () => {
 		expect(list).not.toContain("7.77");
 	});
 });
+
+describe("deleting a wrong row of the price history (D143)", () => {
+	const del = (partId: number, priceId: number, overrides = {}) =>
+		postForm(`/parts/${partId}/prices/${priceId}/delete`, {}, overrides);
+	const priceId = async (validFrom: string, supplierId?: number) =>
+		(
+			await one<{ id: number }>(
+				"SELECT id FROM price_history WHERE valid_from = ? AND supplier_id IS ?",
+				validFrom,
+				supplierId ?? null,
+			)
+		).id;
+	/** setup() plus a wrong past price of 9.99 on 2024-03-01. */
+	async function withTypo() {
+		const id = await setup();
+		await post(id, form({ price: "9.99" }));
+		return id;
+	}
+	const location = (res: Response) => res.headers.get("Location");
+
+	it("deletes an old row as an administrator: one change set naming the part and the date, no amount", async () => {
+		const id = await withTypo();
+		const row = await priceId("2024-03-01");
+		const res = await del(id, row);
+		expect(res.status).toBe(303);
+		expect(location(res)).toBe(`/parts/${id}?ok=pricedeleted#price-history`);
+		expect(await rows("SELECT valid_from, price_cents FROM price_history")).toEqual([
+			{ valid_from: "2026-01-01", price_cents: 500 },
+		]);
+		const sets = await rows<{ summary: string; revertible: number; source: string; user_email: string }>(
+			"SELECT summary, revertible, source, user_email FROM change_sets ORDER BY id",
+		);
+		expect(sets.at(-1)).toEqual({
+			summary: "Delete the 2024-03-01 price of RES-10K",
+			revertible: 0,
+			source: "ui",
+			user_email: TESTER,
+		});
+		expect(sets.at(-1)?.summary).not.toMatch(/\d\.\d/);
+		expect(await one("SELECT cost_cents FROM parts WHERE id = ?", id)).toEqual({ cost_cents: 500 });
+		const page = await (await request(`/parts/${id}?ok=pricedeleted`)).text();
+		expect(page).toContain("Price deleted from the history.");
+	});
+
+	it("refuses the latest row of its series and says to change the current price instead", async () => {
+		const id = await withTypo();
+		const res = await del(id, await priceId("2026-01-01"));
+		expect(res.status).toBe(303);
+		expect(location(res)).toBe(`/parts/${id}?err=price_is_current#price-history`);
+		expect(await countHistory()).toBe(2);
+		expect((await rows("SELECT * FROM change_sets")).length).toBe(1);
+		const page = await (await request(`/parts/${id}?err=price_is_current`)).text();
+		expect(page).toContain("Change the current price on the part&#39;s form instead.");
+	});
+
+	it("keeps the series apart: each has its own current row", async () => {
+		const id = await setup();
+		const supplier = await insertSupplier("Former Supplier");
+		await seedSql(
+			historyRow(id, "purchase", 280, "2023-05-01", supplier),
+			historyRow(id, "purchase", 290, "2024-05-01", supplier),
+		);
+		// The standard cost is newer than every supplier row, yet the latest supplier row is still current.
+		expect(location(await del(id, await priceId("2024-05-01", supplier)))).toContain("err=price_is_current");
+		expect(location(await del(id, await priceId("2023-05-01", supplier)))).toContain("ok=pricedeleted");
+		// The only standard row is current, whatever the supplier rows say.
+		expect(location(await del(id, await priceId("2026-01-01")))).toContain("err=price_is_current");
+		expect(await countHistory()).toBe(2);
+	});
+
+	it("orders rows of the same date by id: only the last one is current", async () => {
+		const id = await setup();
+		await seedSql(historyRow(id, "standard", 600, "2026-01-01"));
+		const [first, second] = (await rows<{ id: number }>("SELECT id FROM price_history ORDER BY id")).map((r) => r.id);
+		expect(location(await del(id, second as number))).toContain("err=price_is_current");
+		expect(location(await del(id, first as number))).toContain("ok=pricedeleted");
+		expect(await rows("SELECT price_cents FROM price_history")).toEqual([{ price_cents: 600 }]);
+	});
+
+	it("does not cover selling prices", async () => {
+		const id = await setup();
+		await seedSql(
+			stmt(
+				`INSERT INTO price_history (part_id, kind, price_cents, valid_from, source, created_by, updated_by)
+				 VALUES (?, 'sale', 1000, '2025-01-01', 'form', 'seed', 'seed'), (?, 'sale', 1200, '2026-01-01', 'form', 'seed', 'seed')`,
+				id,
+				id,
+			),
+		);
+		const res = await del(id, await priceId("2025-01-01"));
+		expect(location(res)).toBe(`/parts/${id}?err=price_not_deletable#price-history`);
+		expect(await countHistory()).toBe(3);
+		// And no button is shown for it: only the standard cost row has one.
+		expect((await (await request(`/parts/${id}`)).text()).match(/\/prices\/\d+\/delete"/g)?.length).toBe(1);
+	});
+
+	it("is a 404 for a row of another part or that does not exist, and writes nothing", async () => {
+		const id = await withTypo();
+		const other = await insertPart("CAP-1U", "buy", { costCents: 10 });
+		await seedSql(historyRow(other, "standard", 10, "2025-01-01"), historyRow(other, "standard", 12, "2026-01-01"));
+		const theirs = (
+			await one<{ id: number }>("SELECT id FROM price_history WHERE part_id = ? AND price_cents = 10", other)
+		).id;
+		expect((await del(id, theirs)).status).toBe(404);
+		expect((await del(id, 9999)).status).toBe(404);
+		expect((await del(9999, await priceId("2024-03-01"))).status).toBe(404);
+		expect(await countHistory()).toBe(4);
+	});
+
+	it("is for administrators: planners and operators get a 403 and see no delete button", async () => {
+		const id = await withTypo();
+		const row = await priceId("2024-03-01");
+		const adminPage = await (await request(`/parts/${id}`)).text();
+		expect(adminPage).toContain(`action="/parts/${id}/prices/${row}/delete"`);
+		// One button per standard cost or supplier price row.
+		expect(adminPage.match(/\/prices\/\d+\/delete"/g)?.length).toBe(2);
+
+		await letLowerRolesSeeCosts();
+		for (const role of ["planner", "operator", "viewer"] as const) {
+			await setRole(role);
+			const page = await request(`/parts/${id}`, {}, NOT_ADMIN);
+			expect(page.status).toBe(200);
+			expect(await page.text()).not.toMatch(/\/prices\/\d+\/delete/);
+			expect((await del(id, row, NOT_ADMIN)).status).toBe(403);
+		}
+		expect(await countHistory()).toBe(2);
+	});
+
+	it("no longer feeds the dated standard cost or the margin history, and the date can be added again", async () => {
+		const id = await withTypo();
+		await seedSql(
+			stmt("UPDATE parts SET sale_price_cents = 1000 WHERE id = ?", id),
+			stmt(
+				`INSERT INTO price_history (part_id, kind, price_cents, valid_from, source, created_by, updated_by)
+				 VALUES (?, 'sale', 1000, '2026-01-01', 'form', 'seed', 'seed')`,
+				id,
+			),
+		);
+		const db = testDb();
+		const plannedCosts = async () =>
+			(await marginHistory(db, { partId: id, assemblyId: null }))?.planned.map((p) => [p.date, p.costCents]);
+		expect((await standardCostsAt(db, "2025-06-01")).costs.get(id)).toBe(999);
+		expect(await plannedCosts()).toEqual([
+			["2024-03-01", 999],
+			["2026-01-01", 500],
+		]);
+
+		expect(location(await del(id, await priceId("2024-03-01")))).toContain("ok=pricedeleted");
+		// Only the first row is left, so the dated cost falls back to it (flagged), as before any past price.
+		const after = await standardCostsAt(db, "2025-06-01");
+		expect(after.costs.get(id)).toBe(500);
+		expect(after.fallback.has(id)).toBe(true);
+		expect(await plannedCosts()).toEqual([["2026-01-01", 500]]);
+
+		// The date is free again.
+		expect((await post(id, form({ price: "3.00" }))).status).toBe(303);
+		expect(await one("SELECT price_cents FROM price_history WHERE valid_from = '2024-03-01'")).toEqual({
+			price_cents: 300,
+		});
+	});
+
+	it("is listed in the history and cannot be undone", async () => {
+		const id = await withTypo();
+		await del(id, await priceId("2024-03-01"));
+		const set = await one<{ id: number }>("SELECT max(id) AS id FROM change_sets");
+		expect(
+			await revertChangeSet(testDb(), { role: "admin", seeCosts: true }, set.id, {
+				user: TESTER,
+				summary: () => "Undo",
+			}),
+		).toEqual({ ok: false, reason: "not_revertible" });
+		expect((await postForm(`/history/${set.id}/revert`, {})).status).toBe(409);
+		const list = await (await request("/history")).text();
+		expect(list).toContain("Delete the 2024-03-01 price of RES-10K");
+		expect(list).toContain("Cannot be undone");
+		expect(list).not.toContain("9.99");
+		expect(await countHistory()).toBe(1);
+	});
+});

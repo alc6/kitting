@@ -43,6 +43,7 @@ export const NEVER_OVER_MCP: readonly Action[] = [
 	"suppliers.delete",
 	"assemblies.delete",
 	"purchasing.delete",
+	"prices.delete",
 	"history.revert",
 	"users.manage",
 	"backup.download",

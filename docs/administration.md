@@ -38,7 +38,9 @@ it came from (a page, an import, an undo or an AI assistant), and each record it
 - Stock movements can't be undone: completed builds, receipts, adjustments and counts are corrected with a new
   movement instead. Replacing or removing a product photo can't be undone either, since the old file is
   deleted. Past prices added to a part's price history (from the part page or `price_history.csv`) can't be undone
-  either: the price history is a log that is never edited.
+  either: the price history is a log that is never edited. An administrator can delete a wrong row with the bin
+  button on the part's price history, except the current price of its series (change that one on the part's
+  form). The deletion is recorded in Recent changes and can't be undone either.
 - To undo a change, you need the right to make every edit it contains. An operator can undo a planned build but
   not a part edit, and only an administrator can undo archiving a part.
 

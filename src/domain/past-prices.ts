@@ -3,7 +3,7 @@
 // series (same part, same kind, same supplier), so it can never become the current price: it never changes
 // parts.cost_cents, an offer or any other current value. The series is the standard cost (no supplier) or one
 // supplier's offer price. The supplier may have no offer for the part any more.
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { type PartKind, type PriceKind, priceHistory } from "../db/schema";
 import type { Statement } from "../lib/db";
@@ -110,4 +110,51 @@ export function pastPriceStatement(
 		user,
 		now,
 	);
+}
+
+/** Why a price history row cannot be deleted: only a standard cost or supplier price that is not the current one can. */
+export type PriceDeleteRefusal = "not_found" | "price_not_deletable" | "price_is_current";
+
+export type DeletablePrice = { id: number; validFrom: string; kind: PriceKind; supplierId: number | null };
+
+/** True when the series (same part, kind and supplier) has a later row: a later date, or the same date and a later id. */
+const hasLaterRow = (partId: number, row: DeletablePrice) =>
+	sql`EXISTS (SELECT 1 FROM price_history AS later WHERE later.part_id = ${partId} AND later.kind = ${row.kind} AND later.supplier_id IS ${row.supplierId} AND (later.valid_from > ${row.validFrom} OR (later.valid_from = ${row.validFrom} AND later.id > ${row.id})))`;
+
+/**
+ * The row to delete (D143): it must belong to that part, be a standard cost or a supplier price (a selling price
+ * is not covered), and not be the latest row of its series, ordered by date then id like every reader does,
+ * because that row is the current value: it is changed on the part's form.
+ */
+export async function checkPriceDelete(
+	db: Db,
+	partId: number,
+	priceId: number,
+): Promise<{ ok: true; row: DeletablePrice } | { ok: false; reason: PriceDeleteRefusal }> {
+	const [row] = await db
+		.select({
+			id: priceHistory.id,
+			validFrom: priceHistory.validFrom,
+			kind: priceHistory.kind,
+			supplierId: priceHistory.supplierId,
+		})
+		.from(priceHistory)
+		.where(and(eq(priceHistory.id, priceId), eq(priceHistory.partId, partId)));
+	if (!row) return { ok: false, reason: "not_found" };
+	if (row.kind !== "standard" && row.kind !== "purchase") return { ok: false, reason: "price_not_deletable" };
+	const [later] = await db
+		.select({ id: priceHistory.id })
+		.from(priceHistory)
+		.where(and(eq(priceHistory.id, row.id), hasLaterRow(partId, row)));
+	return later ? { ok: true, row } : { ok: false, reason: "price_is_current" };
+}
+
+/**
+ * The delete for a row that passed checkPriceDelete. It repeats the "a later row exists" condition, so a row that
+ * became the current one in the meantime is kept.
+ */
+export function priceDeleteStatement(db: Db, partId: number, row: DeletablePrice): Statement {
+	return db
+		.delete(priceHistory)
+		.where(and(eq(priceHistory.id, row.id), eq(priceHistory.partId, partId), hasLaterRow(partId, row)));
 }

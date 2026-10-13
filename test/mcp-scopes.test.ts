@@ -104,6 +104,7 @@ describe("MCP scopes", () => {
 			"suppliers.delete",
 			"assemblies.delete",
 			"purchasing.delete",
+			"prices.delete",
 			"history.revert",
 			"users.manage",
 			"backup.download",

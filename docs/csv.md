@@ -56,7 +56,8 @@ history, dated `valid_from` (`YYYY-MM-DD`).
   file can come in any order.
 - `price` can be 0 and uses a point or a comma. `note` is optional.
 - One wrong row refuses the whole file. Rows added this way cannot be undone, and the history is never edited, so
-  check the preview.
+  check the preview. An administrator can still delete a wrong row, other than the current price of its series,
+  from the part's price history.
 
 The export lists the standard cost and supplier price history of every part in this format. It is a record to read
 or archive: importing it again is refused, since its rows already exist.

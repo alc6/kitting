@@ -30,7 +30,15 @@ import {
 	savePartStatements,
 	setStandardCostStatements,
 } from "../domain/parts";
-import { loadSeries, pastPriceInput, pastPriceRuleErrors, pastPriceStatement, seriesKey } from "../domain/past-prices";
+import {
+	checkPriceDelete,
+	loadSeries,
+	pastPriceInput,
+	pastPriceRuleErrors,
+	pastPriceStatement,
+	priceDeleteStatement,
+	seriesKey,
+} from "../domain/past-prices";
 import { can } from "../domain/permissions";
 import { lastPaidBySupplier, paidPrices, partPriceHistory } from "../domain/prices";
 import { averageCosts } from "../domain/stock";
@@ -477,7 +485,13 @@ function PartDetail(props: {
 			<Flash
 				ok={props.ok}
 				message={
-					props.ok === "adjusted" ? t.stock.adjusted : props.ok === "pastprice" ? t.parts.pastPriceAdded : undefined
+					props.ok === "adjusted"
+						? t.stock.adjusted
+						: props.ok === "pastprice"
+							? t.parts.pastPriceAdded
+							: props.ok === "pricedeleted"
+								? t.parts.priceDeleted
+								: undefined
 				}
 			/>
 			{props.err && PART_ERRORS.has(props.err) ? <Alert variant="destructive">{errorText(t, props.err)}</Alert> : null}
@@ -624,7 +638,15 @@ function PartDetail(props: {
 }
 
 /** Error keys a redirect may show on the part page (?err=…). */
-const PART_ERRORS = new Set(["in_use", "image_missing", "image_too_large", "image_type", "images_disabled"]);
+const PART_ERRORS = new Set([
+	"in_use",
+	"price_is_current",
+	"price_not_deletable",
+	"image_missing",
+	"image_too_large",
+	"image_type",
+	"images_disabled",
+]);
 
 /** The product image (D100): shown, uploaded (resized in the browser when JavaScript runs), removed by admins. */
 function ImageCard(props: { part: Part; enabled: boolean }) {
@@ -1063,8 +1085,11 @@ function PriceHistoryCard(props: {
 	today: string;
 	pastPrice?: PastPriceFormProps | undefined;
 }) {
-	const { t } = useApp();
+	const view = useApp();
+	const { t } = view;
 	const { history, paid } = props;
+	// Deleting a wrong, non-current row is an admin correction (D143); the route refuses the current row.
+	const canDelete = can(view, "prices.delete");
 	// The chart plots known standard costs and paid prices only (not offer or selling prices).
 	const plottable =
 		history.some((h) => h.kind === "standard" && h.priceCents !== null) || paid.some((r) => r.unitCostCents !== null);
@@ -1099,6 +1124,7 @@ function PriceHistoryCard(props: {
 										<TableHead class="text-right">{t.parts.price}</TableHead>
 										<TableHead>{t.parts.source}</TableHead>
 										<TableHead>{t.parts.by}</TableHead>
+										{canDelete ? <TableHead class="w-px" /> : null}
 									</TableRow>
 								</TableHeader>
 								<TableBody>
@@ -1125,6 +1151,26 @@ function PriceHistoryCard(props: {
 												</span>
 											</TableCell>
 											<TableCell class="text-muted-foreground">{h.createdBy}</TableCell>
+											{canDelete ? (
+												<TableCell class="text-right">
+													{h.kind === "standard" || h.kind === "purchase" ? (
+														<form
+															method="post"
+															action={`/parts/${props.part.id}/prices/${h.id}/delete`}
+															class="inline"
+															data-confirm={t.parts.confirmDeletePrice}
+														>
+															<Button
+																variant="ghost"
+																size="icon-sm"
+																icon={icons.trash}
+																aria-label={`${t.parts.deletePrice}: ${h.validFrom}`}
+																title={t.parts.deletePrice}
+															/>
+														</form>
+													) : null}
+												</TableCell>
+											) : null}
 										</TableRow>
 									))}
 								</TableBody>
@@ -1583,6 +1629,26 @@ partRoutes.post("/:id/prices/past", requirePermission("prices.edit"), async (c) 
 		{ revertible: false },
 	);
 	return c.redirect(`/parts/${part.id}?ok=pastprice#price-history`, 303);
+});
+
+// Delete a wrong row of the price history (D143): admins only, never the current row of its series.
+partRoutes.post("/:id/prices/:priceId/delete", requirePermission("prices.delete"), async (c) => {
+	const part = await partFromParam(c);
+	const priceId = idParam(c, "priceId");
+	if (!part || !priceId) return notFound(c);
+	const check = await checkPriceDelete(c.var.db, part.id, priceId);
+	if (!check.ok) {
+		if (check.reason === "not_found") return notFound(c);
+		return c.redirect(`/parts/${part.id}?err=${check.reason}#price-history`, 303);
+	}
+	await saveChanges(
+		c,
+		fmt(c.var.t.history.summaries.priceDelete, { date: check.row.validFrom, ref: part.ref }),
+		[priceDeleteStatement(c.var.db, part.id, check.row)],
+		// The history is not tracked row by row (D92): there is no log entry to restore the row from (D143).
+		{ revertible: false },
+	);
+	return c.redirect(`/parts/${part.id}?ok=pricedeleted#price-history`, 303);
 });
 
 // ---------------------------------------------------------------------------

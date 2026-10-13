@@ -761,3 +761,24 @@ Short log of choices made where the brief left room. Newest at the bottom of eac
     and the form's refusal messages are the guard. Tracking `price_history` and allowing deletes was left out: it
     would change D92 for the whole log.
   - Not available over MCP (no tool; adding one would need `prices.edit` and the same rules).
+  - A mistyped row can now be deleted by an administrator (D143).
+- **D143. An administrator can delete a wrong, non-current row of a part's price history (amends D92 and D142).**
+  A typo in a past price (D142) stayed forever and kept its date taken. The price history stays append-only for
+  everything the app does; the only exception is this correction. The part page's price history shows a bin button
+  (confirm, plain POST form) on each standard cost and supplier price row to those who `can(access, "prices.delete")`
+  (admin, listed under "Prices and costs"; the card is itself shown only with `costs.view`). Rules, in
+  `src/domain/past-prices.ts`:
+  - *Which rows.* The row must belong to the part in the URL (else 404), be a standard cost or a supplier price
+    (selling prices are not covered, as no past selling price can be entered), and not be the latest row of its series
+    (same part, kind and supplier, ordered by date then id like every reader). The latest row is the current value,
+    which the part's form changes; it is refused with a flash saying so (`?err=price_is_current`). Two rows of the
+    same day: only the higher id is current. The delete statement repeats the "a later row exists" condition, so a
+    row that became current between the check and the batch is kept.
+  - *Change set.* `runChangeSet()` with `revertible: false`, summary "Delete the {date} price of {ref}" (never the
+    amount). `price_history` is still untracked (D92), so the deleted row is not restorable: the change set shows
+    "Cannot be undone", like a past price. The confirm dialog says so.
+  - *Effects.* The dated valuation (D91) and margin history (D98) replay the remaining rows, so the deleted value
+    disappears from them (before the first remaining row the fallback applies again); the date can be added again as
+    a past price. `parts.cost_cents`, offers and selling prices never change.
+  - *Not over MCP.* `prices.delete` is in `NEVER_OVER_MCP`, with the other permanent deletes.
+  - Tracking `price_history` row by row (to make this undoable) was left out, for the reason given in D142.

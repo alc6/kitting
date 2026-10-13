@@ -22,6 +22,8 @@ export const PERMISSIONS = {
 	"assemblies.archive": { min: "admin" },
 	"assemblies.delete": { min: "admin" },
 	"prices.edit": { min: "planner" },
+	// Deleting a wrong row of a price history that is not the current price (D143).
+	"prices.delete": { min: "admin" },
 	// Shop floor
 	"builds.plan": { min: "operator" },
 	"builds.complete": { min: "operator" },
@@ -60,7 +62,7 @@ export const PERMISSION_GROUPS = [
 	{ key: "parts", actions: ["parts.edit", "parts.archive", "parts.delete"] },
 	{ key: "assemblies", actions: ["assemblies.edit", "assemblies.archive", "assemblies.delete"] },
 	{ key: "suppliers", actions: ["suppliers.edit", "suppliers.delete"] },
-	{ key: "costs", actions: ["costs.view", "prices.edit"] },
+	{ key: "costs", actions: ["costs.view", "prices.edit", "prices.delete"] },
 	{ key: "builds", actions: ["builds.plan", "builds.complete"] },
 	{ key: "stock", actions: ["stock.adjust", "stock.count"] },
 	{ key: "purchasing", actions: ["purchasing.order", "purchasing.receive", "purchasing.delete"] },
