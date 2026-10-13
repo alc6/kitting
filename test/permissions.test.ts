@@ -40,11 +40,15 @@ type Call = { method?: "GET" | "POST"; path: string; form?: Record<string, strin
 /** One request per action, performing exactly that action. */
 const CALLS: Record<Action, (ids: Ids) => Call> = {
 	"parts.edit": () => ({ path: "/parts", form: { ref: "NEW-1", name: "New part", kind: "buy", unit: "pcs" } }),
-	"parts.delete": (i) => ({ path: `/parts/${i.part}/archive` }),
+	"parts.archive": (i) => ({ path: `/parts/${i.part}/archive` }),
+	// Used by BoMs and POs: refused with a redirect (in_use), after the permission check.
+	"parts.delete": (i) => ({ path: `/parts/${i.part}/delete` }),
 	"suppliers.edit": () => ({ path: "/suppliers", form: { name: "Acme", email: "", phone: "", notes: "" } }),
 	"suppliers.delete": (i) => ({ path: `/suppliers/${i.supplier}/delete` }),
 	"boms.edit": (i) => ({ path: `/boms/${i.bom}/revision` }),
-	"boms.delete": (i) => ({ path: `/boms/${i.bom}/archive` }),
+	"boms.archive": (i) => ({ path: `/boms/${i.bom}/archive` }),
+	// Used by the planned build: refused with a redirect (in_use), after the permission check.
+	"boms.delete": (i) => ({ path: `/boms/${i.bom}/delete` }),
 	"prices.edit": (i) => ({ path: `/boms/${i.bom}/sale-price`, form: { sale_price: "99.00" } }),
 	"builds.plan": (i) => ({
 		path: "/builds",

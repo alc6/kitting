@@ -1,14 +1,17 @@
-import { and, asc, eq, ne } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import type { Context } from "hono";
 import { Hono } from "hono";
 import type { Child } from "hono/jsx";
-import { BUILD_STATUSES, type BuildStatus, boms, builds, type Part, parts, stockMoves } from "../db/schema";
+import { BUILD_STATUSES, type BuildStatus, type Part, parts, stockMoves } from "../db/schema";
 import type { ExplodedNode } from "../domain/bom-graph";
 import { loadGraph } from "../domain/boms";
 import {
+	buildableProduct,
 	buildEditInput,
 	buildInput,
 	buildPickList,
+	buildPlanErrors,
+	buildSerialTaken,
 	cancelBuildStatement,
 	choiceField,
 	completionStatements,
@@ -31,7 +34,7 @@ import { onHandAt, serialsInStock } from "../domain/stock";
 import { errorText, fmt } from "../i18n";
 import { cn } from "../lib/cn";
 import { isConstraintError } from "../lib/sql";
-import { formatMoney, formatPercent, formatQtyInput, lineCostCents, MILLI } from "../lib/units";
+import { formatMoney, formatPercent, formatQtyInput, lineCostCents } from "../lib/units";
 import { type FieldErrors, validate } from "../lib/validation";
 import { requirePermission } from "../middleware/roles";
 import type { AppEnv } from "../types";
@@ -307,21 +310,12 @@ function NewBuildForm(props: {
 }
 
 async function newBuildData(c: Context<AppEnv>, partId: number | null) {
-	const db = c.var.db;
-	const products = await db
+	const products = await c.var.db
 		.select({ id: parts.id, ref: parts.ref, name: parts.name })
 		.from(parts)
 		.where(and(eq(parts.kind, "make"), eq(parts.archived, false)))
 		.orderBy(asc(parts.ref));
-	const product = partId ? (await db.select().from(parts).where(eq(parts.id, partId)).limit(1))[0] : undefined;
-	const bomOptions = product
-		? await db
-				.select({ id: boms.id, code: boms.code, revision: boms.revision })
-				.from(boms)
-				.where(and(eq(boms.parentPartId, product.id), eq(boms.status, "active")))
-				.orderBy(asc(boms.code))
-		: [];
-	return { products, product: product?.kind === "make" ? product : undefined, bomOptions };
+	return { products, ...(await buildableProduct(c.var.db, partId)) };
 }
 
 buildRoutes.get("/new", requirePermission("builds.plan"), async (c) => {
@@ -354,25 +348,7 @@ buildRoutes.post("/", requirePermission("builds.plan"), async (c) => {
 	const errors: FieldErrors = v.ok ? {} : { ...v.errors };
 	const partId = v.ok ? v.data.part_id : null;
 	const data = await newBuildData(c, partId);
-	if (v.ok) {
-		const d = v.data;
-		if (!data.product) errors.part_id = d.part_id ? "build_part_kind" : "required";
-		else {
-			if (!d.bom_id || !data.bomOptions.some((b) => b.id === d.bom_id)) errors.bom_id = "build_bom_mismatch";
-			if (data.product.trackSerial) {
-				if (d.qty !== MILLI) errors.qty = "build_serial_qty";
-				if (!d.serial) errors.serial = "build_serial_required";
-			}
-			if (d.serial) {
-				const taken = await db
-					.select({ id: builds.id })
-					.from(builds)
-					.where(and(eq(builds.partId, data.product.id), eq(builds.serial, d.serial), ne(builds.status, "cancelled")))
-					.limit(1);
-				if (taken.length) errors.serial = "build_serial_taken";
-			}
-		}
-	}
+	if (v.ok) Object.assign(errors, await buildPlanErrors(db, v.data, data.product, data.bomOptions));
 	if (!v.ok || Object.keys(errors).length > 0 || !data.product) {
 		return page(
 			c,
@@ -1060,21 +1036,8 @@ buildRoutes.post("/:id", requirePermission("builds.plan"), async (c) => {
 	const errors: FieldErrors = v.ok ? {} : { ...v.errors };
 	if (v.ok) {
 		if (part.trackSerial && !v.data.serial) errors.serial = "build_serial_required";
-		if (v.data.serial) {
-			const taken = await c.var.db
-				.select({ id: builds.id })
-				.from(builds)
-				.where(
-					and(
-						eq(builds.partId, part.id),
-						eq(builds.serial, v.data.serial),
-						ne(builds.status, "cancelled"),
-						ne(builds.id, build.id),
-					),
-				)
-				.limit(1);
-			if (taken.length) errors.serial = "build_serial_taken";
-		}
+		if (v.data.serial && (await buildSerialTaken(c.var.db, part.id, v.data.serial, build.id)))
+			errors.serial = "build_serial_taken";
 	}
 	if (!v.ok || Object.keys(errors).length > 0) {
 		return renderBuild(c, data, {}, { editErrors: errors, editValues: body as FormValues, status: 422 });

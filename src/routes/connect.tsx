@@ -12,10 +12,12 @@ import { type Context, Hono } from "hono";
 import { createMiddleware } from "hono/factory";
 import { knownScopes, MCP_SCOPES, type McpScope, offeredScopes, scopeAllowed } from "../domain/mcp-scopes";
 import { can } from "../domain/permissions";
+import { resolveAccess } from "../domain/users";
 import { fmt } from "../i18n";
 import { allGrants, type ConnectedApp, grantUserId, isGrantId, userGrants } from "../mcp/grants";
 import { oauthApi, oauthKv, oauthOriginOk } from "../mcp/oauth";
 import { MCP_PATH } from "../mcp/server";
+import { parseAdminEmails } from "../middleware/auth";
 import { forbidden, requirePermission } from "../middleware/roles";
 import type { AppEnv } from "../types";
 import { useApp } from "../views/context";
@@ -59,8 +61,33 @@ const accessOf = (c: Context<AppEnv>) => ({ role: c.var.role, seeCosts: c.var.se
 // ---------------------------------------------------------------------------
 // Consent
 
+/**
+ * Only listed people (Users page or ADMIN_EMAILS) may connect an assistant (D130): /mcp skips Access, so the Users
+ * page is what offboarding removes. Others see why, before any consent transaction starts.
+ */
+const listedOnly = createMiddleware<AppEnv>(async (c, next) => {
+	const { listed } = await resolveAccess(c.var.db, c.var.user, parseAdminEmails(c.env.ADMIN_EMAILS));
+	if (listed) return next();
+	const t = c.var.t;
+	return page(
+		c,
+		t.mcp.notListedTitle,
+		<EmptyState
+			icon={icons.lock}
+			title={t.mcp.notListedTitle}
+			description={fmt(t.mcp.notListed, { email: c.var.user })}
+			class="mt-12"
+		>
+			<Button href="/" variant="outline">
+				{t.nav.dashboard}
+			</Button>
+		</EmptyState>,
+		403,
+	);
+});
+
 export const authorizeRoutes = new Hono<AppEnv>();
-authorizeRoutes.use("*", mcpEnabled, requirePermission("apps.connect"));
+authorizeRoutes.use("*", mcpEnabled, requirePermission("apps.connect"), listedOnly);
 
 function ConsentPage(props: {
 	details: ConsentDescription;
@@ -104,7 +131,7 @@ function ConsentPage(props: {
 										checked={props.checked.includes(scope)}
 									/>
 									<span>{t.mcp.scopes[scope]}</span>
-									<Badge variant="muted">{scope}</Badge>
+									<Badge variant={MCP_SCOPES[scope].kind === "write" ? "warning" : "muted"}>{scope}</Badge>
 								</label>
 							))}
 							<FieldDescription>{t.mcp.scopesHint}</FieldDescription>
@@ -228,7 +255,7 @@ authorizeRoutes.post("/", async (c) => {
 			userId: grantUserId(email),
 			metadata: { email, clientName: details.clientName, redirectHost: details.redirectHost },
 			scope: approved.request.scope,
-			props: { email, scopes: approved.request.scope },
+			props: { email, scopes: approved.request.scope, clientName: details.clientName },
 		});
 		approved.headers.set("Location", redirectTo);
 		return new Response(null, { status: 302, headers: approved.headers });

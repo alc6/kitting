@@ -1,12 +1,13 @@
 import { eq } from "drizzle-orm";
 import type { Context } from "hono";
 import { Hono } from "hono";
-import { z } from "zod";
 import { MOVE_REASONS, parts } from "../db/schema";
 import { centsOf } from "../domain/bom-graph";
 import { getPart, listParts, partOptions } from "../domain/parts";
 import { can } from "../domain/permissions";
 import {
+	adjustInput,
+	adjustmentErrors,
 	adjustmentStatement,
 	type CountGroup,
 	countStatements,
@@ -18,8 +19,8 @@ import {
 } from "../domain/stock";
 import { errorText, fmt } from "../i18n";
 import { cn } from "../lib/cn";
-import { formatCentsInput, formatQtyInput, MILLI, parseMilli } from "../lib/units";
-import { type FieldErrors, field, validate } from "../lib/validation";
+import { formatCentsInput, formatQtyInput, parseMilli } from "../lib/units";
+import { type FieldErrors, validate } from "../lib/validation";
 import { requirePermission } from "../middleware/roles";
 import type { AppEnv } from "../types";
 import { useApp } from "../views/context";
@@ -218,13 +219,6 @@ stockRoutes.get("/", async (c) => {
 // ---------------------------------------------------------------------------
 // Adjustments
 
-const adjustInput = z.object({
-	part: field.required(64),
-	qty: field.signedQty(),
-	serial: field.text(100),
-	note: field.required(500),
-});
-
 function AdjustForm(props: { values: FormValues; errors: FormErrors; options: { ref: string; name: string }[] }) {
 	const { t } = useApp();
 	const p = { values: props.values, errors: props.errors };
@@ -286,19 +280,13 @@ stockRoutes.post("/adjust", requirePermission("stock.adjust"), async (c) => {
 	const body = await c.req.parseBody();
 	const v = validate(adjustInput, body);
 	const errors: FieldErrors = v.ok ? {} : { ...v.errors };
-	const vars: Record<string, string> = {};
+	let vars: Record<string, string> = {};
 	let part: typeof parts.$inferSelect | undefined;
 	if (v.ok) {
 		part = (await db.select().from(parts).where(eq(parts.ref, v.data.part)).limit(1))[0];
-		if (!part) {
-			errors.part = "unknown_part";
-			vars.ref = v.data.part;
-		} else if (!isStocked(part.kind)) {
-			errors.part = "not_stocked";
-			vars.kind = part.kind;
-		}
-		if (v.data.qty === 0) errors.qty = "zero_qty";
-		else if (v.data.serial && part?.trackSerial && Math.abs(v.data.qty) !== MILLI) errors.qty = "serial_one";
+		const problems = adjustmentErrors(part, v.data);
+		Object.assign(errors, problems.errors);
+		vars = problems.vars;
 	}
 	if (!v.ok || !part || Object.keys(errors).length > 0) {
 		return page(

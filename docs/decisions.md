@@ -519,7 +519,8 @@ Short log of choices made where the brief left room. Newest at the bottom of eac
   connection goes back through Access consent at least monthly; dynamically registered clients expire after
   90 days unused; a consent page after ten minutes. Because `/mcp` skips Access, removing someone from the
   Access policy does not stop their assistant until its grant expires: revoke it on the connected apps page
-  (the README says so). Client ID Metadata Documents, which the 2026 authorization spec prefers to dynamic
+  (the README says so). Superseded in part by D130: only listed users may use MCP, and removing a user revokes
+  their grants. Client ID Metadata Documents, which the 2026 authorization spec prefers to dynamic
   registration, are not enabled yet: they need the `global_fetch_strictly_public` compatibility flag, which
   changes every `fetch()` of the Worker; the provider logs a notice about it once per isolate.
 - **D124. Testing MCP in workerd.** The vitest config adds an `OAUTH_KV` namespace; `test/mcp-helpers.ts`
@@ -527,3 +528,78 @@ Short log of choices made where the brief left room. Newest at the bottom of eac
   dynamic registration, the consent page with its binding cookie, the PKCE exchange, then JSON-RPC calls to
   `/mcp` (answers may be JSON or SSE). `{ OAUTH_KV: undefined }` checks the app without the binding, and
   `ENVIRONMENT: "production"` that every other route still needs the Access JWT.
+
+## MCP write tools
+
+- **D125. Archiving is its own permission.** `parts.archive` and `boms.archive` (admin, as before) are split from
+  `parts.delete` and `boms.delete`: the part archive/unarchive routes and the BoM archive route declare them, and
+  the `*.delete` actions now mean permanent deletes only (parts with their offers and images, suppliers, BoMs,
+  POs). That lets `NEVER_OVER_MCP` list every `*.delete` action while `catalog:archive` offers archiving.
+  `TABLE_ACTIONS` is unchanged: archiving is an UPDATE of `parts` or `boms`, undone with `parts.edit` or
+  `boms.edit` like any edit (as D112 lets the edit right undo a creation); a planner could already bring a BoM
+  back with "Set back to draft" or "Activate" (`boms.edit`).
+- **D126. Write scopes are table rows with their actions.** `catalog:write` → `parts.edit`, `suppliers.edit`,
+  `boms.edit`; `prices:write` → `prices.edit`; `catalog:archive` → `parts.archive`, `boms.archive`;
+  `stock:write` → `stock.adjust`, `stock.count`; `builds:write` → `builds.plan`, `builds.complete`;
+  `purchasing:write` → `purchasing.order`, `purchasing.receive`. As D116 planned, consent offers a scope when the
+  role has at least one of its actions, and each tool declares one action of its scope (a test checks it), so an
+  operator granted `purchasing:write` may `receive_po` but not `mark_po_sent`. The table is ordered by area for the
+  consent page, where write scopes carry a warning badge and are pre-ticked only when the client asks for them.
+  `NEVER_OVER_MCP` now also lists the permanent deletes and `history.revert`: undoing stays in the app, where its
+  conflicts are shown.
+- **D127. Each write tool is one change set through the pages' own rules.** A write tool builds the values its
+  page would post and runs the same domain validation and statement builders. The route checks that lived in
+  handlers moved to `src/domain` first (`checkPart`, `supplierNameTaken`, `newBomErrors`, `componentError`,
+  `archivedBomCycles`, `buildPlanErrors`, `adjustmentErrors`, `planReceipts`, `offerFormStatements`), and the
+  routes call them too. `saveChange()` (`src/mcp/kit.ts`) runs the statements with `runChangeSet()`: the user's
+  email, source `mcp`, the client's name (kept in the grant's encrypted props at consent; grants made before
+  show their client ID) and a summary from `history.summaries` in the deployment's `DEFAULT_LOCALE` (summaries
+  are in their author's language, D110; an assistant has none), never an amount. Every result carries
+  `change_set_id`, `revertible` (read back, since ledger triggers clear it), and when it can be undone
+  `history_path` and `history_url` with a sentence saying how; a call that changes nothing records nothing and
+  says so. Edits merge the given fields over the current values (`partToForm`, `offerToForm`, `supplierToForm`),
+  so an omitted field never resets: `update_part` keeps prices and the preferred offer's terms. Refusals are
+  English sentences built from the same error keys (`field: message`, every problem at once), and nothing is
+  written. Inputs are references, names and numbers as people say them; decimals as strings or numbers, parsed
+  by the forms' field builders. Annotations: `destructiveHint` when a tool overwrites, archives or removes data,
+  or writes the stock ledger (no undo); `idempotentHint` when a second identical call changes nothing more.
+  Price history rows keep the source `form`: `price_history.source` has a CHECK without `mcp`, and adding it
+  would rebuild the table, which schema changes avoid on D1; the change set records the origin. Specific choices:
+  `complete_build` takes serials per part and sub-assembly choices by reference (every place the part appears,
+  found by exploding the BoM with no stock) or by the `path` that `get_build` now returns, and refuses serials
+  the pick list would not use (the page cannot send them); `update_draft_po` sets a quantity per part (`0`
+  removes the line), its expected date and notes work on any PO like its page, its lines only on drafts;
+  `create_draft_pos` maps the shortage page's supplier checkboxes (`suppliers`) and "order from" selects
+  (`order_from`), refusing an `order_from` the page would silently skip.
+- **D128. Over MCP, BoMs change through draft revisions.** `set_bom_lines` replaces every line at once, each
+  checked like the editor's (known, not archived, whole units for serial-tracked parts, no cycle), nothing written
+  if one fails. It never edits an active BoM: in one change set it creates the next revision (draft, the active
+  one's notes, no copied lines since they are replaced) and inserts the lines (`bom_id` by a subquery on parent,
+  code and revision), and its result says the active BoM is unchanged. `activate_bom` is the separate, explicit
+  step; it archives the previous active revision, which can be activated again (re-checking cycles, as the page
+  does). Archived BoMs are read-only (`new_bom_revision` copies one). The pages still edit an active BoM line by
+  line: a person sees each change, while an assistant's batch should be reviewed before builds use it.
+- **D129. `list_recent_changes`.** On `catalog:read`, since every role reads Recent changes. Filters are the
+  page's (source, user, text, dates) plus `before` for paging; each change set has its summary, source, client,
+  undo state, page, and up to 50 row entries (table, operation, record name from `rowName()`, moved to the domain,
+  and fields before/after). Snapshot columns are snake_case (`cost_cents`), which `toWire()` does not convert,
+  so the tool formats them itself after `entryView()` redaction: decimals, names instead of ids, booleans, and an
+  amount the user may not see as `{ field, hidden: true }` with no values. The cost sweep includes it, with a
+  logged price change, and also looks for raw cent values.
+- **D130. Offboarding: MCP needs a listed user, and removing one revokes their connections.** `/mcp` skips
+  Access, so removing someone from Access left their assistant working until its grant expired (D123).
+  `resolveAccess()` now also says whether the user is listed (a row on Users, or `ADMIN_EMAILS`); the consent
+  page (before any consent transaction starts) and every `/mcp` request require it. The web app is unchanged:
+  an unlisted person is still a viewer there, and the consent page explains why they cannot connect. `/mcp`
+  answers 403 with a JSON-RPC error rather than 401, as re-authorizing would fail at consent too. Removing a user
+  on the Users page revokes all their grants through the provider (when `OAUTH_KV` is bound and the origin can
+  run OAuth). The README's offboarding steps: remove from Access, then from Users. Reversible: one condition in
+  `mcpApiHandler` and one middleware on `/authorize`; dropping both restores D123. Known limits: undoing a
+  "Remove user" restores the row, not the grants (the person reconnects); a users row removed another way (an
+  undo of its creation, SQL) leaves grants that the per-call check refuses, and that would work again if the
+  person were listed again before they expire (30 days at most).
+- **D131. Server instructions for writes.** The instructions returned at `initialize` and `server/discover` now
+  say to confirm with the user before any write, that BoM edits go through draft revisions activated
+  separately, and that every change can be undone from Recent changes except stock and build ledger operations
+  (corrected with reverse movements), which the assistant itself cannot undo. Tool descriptions repeat what
+  matters for each tool.

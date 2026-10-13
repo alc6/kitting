@@ -19,12 +19,14 @@ import {
 	nextPoNumbers,
 	OPEN_PO_STATUSES,
 	planDraftOrders,
+	planReceipts,
 	poEditInput,
 	poInput,
 	poLineInput,
 	RECEIVABLE_PO_STATUSES,
-	type Receipt,
 	receiptStatements,
+	receiveQtyField,
+	receiveSerialsField,
 	type ShortageLine,
 	type ShortageOffer,
 	type Shortages,
@@ -42,7 +44,6 @@ import {
 	formatQty,
 	formatQtyInput,
 	lineCostCents,
-	MILLI,
 	parseCents,
 	parseMilli,
 } from "../lib/units";
@@ -846,8 +847,8 @@ function ReceiveForm(props: { po: PoData["po"]; lines: PoLineRow[]; values: Form
 						<TableBody>
 							{props.lines.map((l) => {
 								const remaining = Math.max(0, l.line.qtyMilli - l.line.receivedQtyMilli);
-								const qtyName = `recv_${l.line.id}`;
-								const serialName = `serials_${l.line.id}`;
+								const qtyName = receiveQtyField(l.line.id);
+								const serialName = receiveSerialsField(l.line.id);
 								const qtyError = props.errors[qtyName];
 								const serialError = props.errors[serialName];
 								return (
@@ -1347,41 +1348,7 @@ purchasingRoutes.post("/po/:id/receive", requirePermission("purchasing.receive")
 	const body = await c.req.parseBody();
 	const values: FormValues = {};
 	for (const [k, v] of Object.entries(body)) if (typeof v === "string") values[k] = v;
-	const lines = await getPoLines(db, data.po.id);
-	const errors: FieldErrors = {};
-	const receipts: Receipt[] = [];
-	for (const l of lines) {
-		const qtyName = `recv_${l.line.id}`;
-		const serialName = `serials_${l.line.id}`;
-		const raw = (values[qtyName] ?? "").trim();
-		if (raw === "") continue;
-		const qty = parseMilli(raw);
-		if (qty === null) {
-			errors[qtyName] = "invalid_quantity";
-			continue;
-		}
-		if (qty < 0) {
-			errors[qtyName] = "negative";
-			continue;
-		}
-		if (qty === 0) continue;
-		const serials = (values[serialName] ?? "")
-			.split(/[\r\n,;]+/)
-			.map((s) => s.trim())
-			.filter(Boolean);
-		if (serials.length > 0) {
-			if (qty % MILLI !== 0 || serials.length !== qty / MILLI) errors[serialName] = "serial_count";
-			else if (new Set(serials).size !== serials.length) errors[serialName] = "serial_duplicate";
-		}
-		receipts.push({
-			lineId: l.line.id,
-			partId: l.line.partId,
-			qtyMilli: qty,
-			unitPriceCents: l.line.unitPriceCents,
-			serials,
-		});
-	}
-	if (Object.keys(errors).length === 0 && receipts.length === 0) errors._ = "nothing_received";
+	const { receipts, errors } = planReceipts(await getPoLines(db, data.po.id), values);
 	if (Object.keys(errors).length > 0) {
 		return renderPo(c, data, { receiveValues: values, receiveErrors: errors }, 422);
 	}

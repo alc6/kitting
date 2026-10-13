@@ -13,8 +13,8 @@ import {
 } from "../db/schema";
 import type { Statement } from "../lib/db";
 import { likePattern } from "../lib/sql";
-import { lineCostCents, MILLI, roundOrderQty } from "../lib/units";
-import { field } from "../lib/validation";
+import { lineCostCents, MILLI, parseMilli, roundOrderQty } from "../lib/units";
+import { type FieldErrors, field } from "../lib/validation";
 import type { Db } from "../types";
 import { explode, type GraphPart } from "./bom-graph";
 import { loadGraph } from "./boms";
@@ -450,6 +450,56 @@ export async function getPoLines(db: Db, poId: number) {
 }
 
 export type Receipt = { lineId: number; partId: number; qtyMilli: number; unitPriceCents: number; serials: string[] };
+
+/** Form field names of a receipt: the quantity and the serials received on a PO line. */
+export const receiveQtyField = (lineId: number) => `recv_${lineId}`;
+export const receiveSerialsField = (lineId: number) => `serials_${lineId}`;
+
+/**
+ * Reads what was received from the receive form's fields (or the same fields built by an MCP tool): a quantity per
+ * line, zero or more, and optionally one serial per unit (newlines, commas or semicolons between them). Errors are
+ * keyed by field; nothing received at all is an error too.
+ */
+export function planReceipts(
+	lines: { line: { id: number; partId: number; unitPriceCents: number } }[],
+	values: Record<string, string>,
+): { receipts: Receipt[]; errors: FieldErrors } {
+	const errors: FieldErrors = {};
+	const receipts: Receipt[] = [];
+	for (const l of lines) {
+		const qtyName = receiveQtyField(l.line.id);
+		const serialName = receiveSerialsField(l.line.id);
+		const raw = (values[qtyName] ?? "").trim();
+		if (raw === "") continue;
+		const qty = parseMilli(raw);
+		if (qty === null) {
+			errors[qtyName] = "invalid_quantity";
+			continue;
+		}
+		if (qty < 0) {
+			errors[qtyName] = "negative";
+			continue;
+		}
+		if (qty === 0) continue;
+		const serials = (values[serialName] ?? "")
+			.split(/[\r\n,;]+/)
+			.map((s) => s.trim())
+			.filter(Boolean);
+		if (serials.length > 0) {
+			if (qty % MILLI !== 0 || serials.length !== qty / MILLI) errors[serialName] = "serial_count";
+			else if (new Set(serials).size !== serials.length) errors[serialName] = "serial_duplicate";
+		}
+		receipts.push({
+			lineId: l.line.id,
+			partId: l.line.partId,
+			qtyMilli: qty,
+			unitPriceCents: l.line.unitPriceCents,
+			serials,
+		});
+	}
+	if (Object.keys(errors).length === 0 && receipts.length === 0) errors._ = "nothing_received";
+	return { receipts, errors };
+}
 
 /**
  * One batch: receipt moves (one per serial when serials are given), received quantities

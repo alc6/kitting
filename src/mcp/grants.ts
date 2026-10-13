@@ -3,8 +3,15 @@
 import type { GrantSummary, OAuthHelpers } from "@cloudflare/workers-oauth-provider";
 import { z } from "zod";
 
-/** Who consented, and the scopes they granted. Their role is read again on every request, never stored here. */
-export const grantProps = z.object({ email: z.string().includes("@"), scopes: z.array(z.string()) });
+/**
+ * Who consented, the scopes they granted, and the client's name as shown at consent (recorded on every change it
+ * makes; absent from grants made before D127). Their role is read again on every request, never stored here.
+ */
+export const grantProps = z.object({
+	email: z.string().includes("@"),
+	scopes: z.array(z.string()),
+	clientName: z.string().max(200).optional(),
+});
 export type GrantProps = z.output<typeof grantProps>;
 
 export const grantMetadata = z.object({

@@ -12,6 +12,7 @@ import {
 } from "../domain/users";
 import { fmt } from "../i18n";
 import { type FieldErrors, field, validate } from "../lib/validation";
+import { revokeUserGrants } from "../mcp/oauth";
 import { parseAdminEmails } from "../middleware/auth";
 import { requirePermission } from "../middleware/roles";
 import type { AppEnv } from "../types";
@@ -252,6 +253,13 @@ userRoutes.post("/:id/delete", async (c) => {
 		await saveChanges(c, fmt(c.var.t.history.summaries.userDelete, { email: user.email }), [
 			deleteUserStatement(c.var.db, user.id),
 		]);
+		// Offboarding (D130): their AI assistants are disconnected at once, not only refused on their next call.
+		// Should KV fail, the removal stands: /mcp refuses unlisted users anyway.
+		try {
+			await revokeUserGrants(c.env, new URL(c.req.url).origin, user.email);
+		} catch (err) {
+			console.error(err);
+		}
 	}
 	return redirectOk(c, "/users", "deleted");
 });

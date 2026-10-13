@@ -20,14 +20,23 @@ export function canSeeCosts(role: Role, lowerRolesSeeCosts: boolean): boolean {
 /** Keys of the `settings` table. A missing row means the default (off). */
 export const SETTINGS = { lowerRolesSeeCosts: "lower_roles_see_costs" } as const;
 
-/** The role and cost visibility of a signed-in user, in one query. `email` is lower-cased. */
-export async function resolveAccess(db: Db, email: string, adminEmails: readonly string[]): Promise<Access> {
-	if (adminEmails.includes(email)) return { role: "admin", seeCosts: true };
+/**
+ * The role and cost visibility of a signed-in user, in one query (`email` lower-cased), and whether they are
+ * listed: in ADMIN_EMAILS or on the Users page. Unlisted people are viewers in the app, but may not connect an AI
+ * assistant nor use one (D130).
+ */
+export async function resolveAccess(
+	db: Db,
+	email: string,
+	adminEmails: readonly string[],
+): Promise<Access & { listed: boolean }> {
+	if (adminEmails.includes(email)) return { role: "admin", seeCosts: true, listed: true };
 	const rows = await db.all<{ role: string | null; see: string | null }>(sql`
 		SELECT (SELECT role FROM users WHERE email = ${email}) AS role,
 			(SELECT value FROM settings WHERE key = ${SETTINGS.lowerRolesSeeCosts}) AS see`);
-	const role: Role = isRole(rows[0]?.role) ? rows[0].role : "viewer";
-	return { role, seeCosts: canSeeCosts(role, rows[0]?.see === "1") };
+	const stored = rows[0]?.role ?? null;
+	const role: Role = isRole(stored) ? stored : "viewer";
+	return { role, seeCosts: canSeeCosts(role, rows[0]?.see === "1"), listed: stored !== null };
 }
 
 export const userInput = z.object({

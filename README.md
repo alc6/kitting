@@ -84,7 +84,7 @@ Cloudflare Access decides who can sign in; Kitting decides what each person may 
 
 | Role | Can |
 | --- | --- |
-| Viewer | Look at everything and change nothing. Anyone not listed on the Users page is a viewer. |
+| Viewer | Look at everything and change nothing. Anyone not listed on the Users page is a viewer (and cannot connect an AI assistant). |
 | Operator | Shop floor: run builds, adjust and count stock, receive deliveries. |
 | Planner | Office: also edit parts, BoMs, suppliers, offers, prices and purchase orders; Import / Export. |
 | Administrator | Also confirm imports, delete, archive, restore backups and manage users. |
@@ -100,7 +100,7 @@ Cloudflare Access decides who can sign in; Kitting decides what each person may 
 ## History and undo
 
 Nothing edited in the catalogue or on documents is lost: every save, import, build, receipt or role change is
-recorded as one **change**, with who made it, when, from where (a page, an import, an undo, later an assistant
+recorded as one **change**, with who made it, when, from where (a page, an import, an undo, an AI assistant
 over MCP) and every row it touched, before and after.
 
 - **Recent changes** (sidebar, everyone) lists them, newest first, filtered by origin, person, dates or text.
@@ -232,30 +232,54 @@ domain Access protects.
 ## Connect an AI assistant (MCP)
 
 Optional. Kitting can serve an [MCP](https://modelcontextprotocol.io) server at `https://<your-domain>/mcp`,
-so an AI assistant (Claude, ChatGPT or any MCP client) can look things up for you: parts, BoMs, stock, builds,
-shortages and purchase orders. For now it only reads.
+so an AI assistant (Claude, ChatGPT or any MCP client) can look things up and, if you allow it, do the paperwork:
+create parts and BoMs, update prices, adjust stock, plan and complete builds, draft and receive purchase orders.
+It acts in your name, with your role, and every change it makes is in **Recent changes**.
 
 | Permission (scope) | Tools |
 | --- | --- |
-| `catalog:read` | `search_parts`, `get_part` (details, offers, on hand, BoMs, where-used), `get_bom` (tree with per-parent and cumulative quantities, cost roll-up), `explode_bom` (flat list for a quantity, optionally using sub-assemblies in stock) |
+| `catalog:read` | `search_parts`, `get_part` (details, offers, on hand, BoMs, where-used), `get_bom` (tree with per-parent and cumulative quantities, cost roll-up), `explode_bom` (flat list for a quantity, optionally using sub-assemblies in stock), `list_recent_changes` (the change history with field diffs) |
+| `catalog:write` | `create_part`, `update_part` (never prices), `create_supplier`, `update_supplier`, `create_bom` (a draft, empty or copied), `set_bom_lines` (replaces all lines at once; on an active BoM it creates a new draft revision instead), `new_bom_revision`, `activate_bom` |
+| `prices:write` | `set_standard_cost`, `set_sale_price` (of a part or a BoM variant), `upsert_supplier_offer` (also: make it preferred, use its price as the standard cost) |
+| `catalog:archive` | `archive_part`, `unarchive_part`, `archive_bom` |
 | `stock:read` | `stock_on_hand` (below zero, below MOQ, in stock), `list_moves` |
+| `stock:write` | `adjust_stock`, `count_stock` |
 | `builds:read` | `list_builds` (also finds the build that used a component serial), `get_build` (pick list, or the as-built record) |
+| `builds:write` | `plan_build`, `complete_build` (serials and "take from stock / build now" choices, checked like the pick list), `cancel_build` |
 | `purchasing:read` | `get_shortages`, `list_purchase_orders`, `get_purchase_order` |
+| `purchasing:write` | `create_draft_pos` (from the shortages), `update_draft_po`, `mark_po_sent`, `receive_po`, `cancel_po`, `close_po` |
+
+A write permission is offered only to roles that may do it in the app (an operator sees `stock:write`, never
+`catalog:write`), and each tool checks the same rules as its page.
 
 How it stays safe:
 
-- Each person connects their own assistant. The assistant opens a consent page on your domain, behind Access
-  like every page, where the person ticks what it may read (only what their role allows) and clicks Allow.
-  The assistant gets OAuth tokens for that, never the Access session.
-- Every MCP request checks the person's role again: a demotion applies to the next call, and costs, prices
-  and margins stay hidden from roles that may not see them. Quantities and amounts are decimals.
-- Never over MCP: user management, backups, imports, image uploads, permanent deletes.
+- Each person connects their own assistant, and only people listed on **Users** (or in `ADMIN_EMAILS`) can:
+  someone who signs in without being listed is a viewer in the app, but the consent page tells them to ask an
+  administrator first. The assistant opens that consent page on your domain, behind Access like every page,
+  where the person ticks what it may do (only what their role allows; write permissions are never pre-ticked
+  unless the assistant asks for them) and clicks Allow. The assistant gets OAuth tokens for that, never the
+  Access session.
+- Every MCP request checks the person again: still listed, current role (a demotion applies to the next call),
+  and costs, prices and margins stay hidden from roles that may not see them. Quantities and amounts are
+  decimals.
+- The assistant is told to confirm with you before any change. Every change is one entry in **Recent changes**,
+  marked with the assistant's name, and each tool's answer gives its link: undo it there like any other change.
+  Stock and build ledger operations (adjustments, counts, receipts, build completions) cannot be undone, as in
+  the app: they are corrected with reverse movements. BoMs are only changed through draft revisions: an active
+  BoM stays as it is until you activate the new revision.
+- Never over MCP: permanent deletes (parts, suppliers, BoMs, purchase orders, offers, images), undoing a change
+  (undo stays in the app), user management, backups and restores, CSV imports, image uploads.
 - **Connected apps** (bottom of the sidebar) lists your connections with *Revoke*; administrators see and
   revoke everyone's. Revoking stops the assistant at once.
 - Lifetimes: access tokens last one hour and are renewed automatically for 30 days after consent; then the
   assistant asks again, through Access. Unused client registrations expire after 90 days.
 - `/mcp`, `/token`, `/register` and `/.well-known/oauth-*` skip Access (they check OAuth tokens instead), so
-  **removing someone from the Access policy does not disconnect their assistant**: revoke it on Connected apps.
+  removing someone from the Access policy alone does not disconnect their assistant. **To offboard someone:**
+  1. remove them from the Access policy (no more sign-in, no new connection);
+  2. remove them on **Users**: this also revokes all their assistant connections at once (and any connection
+     made before is refused on its next call, since they are no longer listed).
+
   `/register` is public by design: registering gives an app nothing until someone signs in and allows it.
 
 Set it up:

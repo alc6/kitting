@@ -14,9 +14,16 @@ import {
 import type { Statement } from "../lib/db";
 import { likePattern } from "../lib/sql";
 import { formatCentsInput, formatQtyInput, type NumberLocale } from "../lib/units";
-import { type FieldErrors, field } from "../lib/validation";
+import { type FieldErrors, field, validate } from "../lib/validation";
 import type { Db } from "../types";
-import { NO_TERMS, type OfferTerms, saveOfferStatements } from "./offers";
+import {
+	NO_TERMS,
+	type OfferInput,
+	type OfferTerms,
+	offerTerms,
+	saveOfferStatements,
+	setPreferredStatement,
+} from "./offers";
 import { priceRecordForRefStatement, priceRecordStatement } from "./prices";
 
 export const partInput = z.object({
@@ -149,6 +156,47 @@ export function setStandardCostStatements(
 	];
 }
 
+/** Statements setting a part's selling price (null: none), logged in the price history like the part form does. */
+export function setSalePriceStatements(
+	db: Db,
+	part: Pick<Part, "id" | "salePriceCents">,
+	priceCents: number | null,
+	source: PriceSource,
+	user: string,
+	now: string,
+	note = "",
+): Statement[] {
+	if (part.salePriceCents === priceCents) return [];
+	return [
+		db.update(parts).set({ salePriceCents: priceCents, updatedAt: now, updatedBy: user }).where(eq(parts.id, part.id)),
+		priceRecordStatement(db, { partId: part.id, kind: "sale", priceCents, source, note }, user, now),
+	];
+}
+
+/**
+ * Statements saving a supplier offer from the offer form or an MCP tool: the offer (its price logged when it
+ * changes; `previous` is the current offer, undefined to create it), the preferred supplier when `preferred` is
+ * set (clearing it never unsets the preferred supplier), and the part's standard cost when `set_standard_cost`
+ * (D99), noted with `standardNote`.
+ */
+export function offerFormStatements(
+	db: Db,
+	part: Pick<Part, "id" | "supplierId" | "costCents">,
+	supplierId: number,
+	d: OfferInput,
+	previous: OfferTerms | undefined,
+	standardNote: string,
+	user: string,
+	now: string,
+): Statement[] {
+	const stmts = saveOfferStatements(db, { partId: part.id }, supplierId, offerTerms(d), previous, "form", user, now);
+	if (d.preferred && part.supplierId !== supplierId)
+		stmts.push(setPreferredStatement(db, part.id, supplierId, user, now));
+	if (d.set_standard_cost && d.price !== null)
+		stmts.push(...setStandardCostStatements(db, part, d.price, "form", user, now, standardNote));
+	return stmts;
+}
+
 /** Archives a part (hidden from pickers and lists) or brings it back. */
 export function archivePartStatement(db: Db, partId: number, archived: boolean, user: string, now: string) {
 	return db.update(parts).set({ archived, updatedAt: now, updatedBy: user }).where(eq(parts.id, partId));
@@ -169,6 +217,25 @@ export function partRuleErrors(
 	if (ctx.hasMoves && (d.kind === "kit" || d.kind === "fee")) errors.kind = "kind_has_stock";
 	if (ctx.hasBoms && d.kind !== "make" && d.kind !== "kit") errors.kind = "kind_has_boms";
 	return errors;
+}
+
+/**
+ * Validates a part as the form and the MCP tools do (string values, as posted): the fields, a reference unique
+ * ignoring case, and the kind/serial rules against the existing part's stock and BoMs. `clashRef` is the other
+ * part's reference, for the ref_case message.
+ */
+export async function checkPart(db: Db, body: Record<string, unknown>, existing?: Pick<Part, "id">) {
+	const result = validate(partInput, body);
+	if (!result.ok) return { ok: false as const, errors: result.errors, clashRef: undefined };
+	const d = result.data;
+	const errors: FieldErrors = {};
+	const clash = await findRefClash(db, d.ref, existing?.id);
+	if (clash) errors.ref = clash.ref === d.ref ? "duplicate_ref" : "ref_case";
+	const hasMoves = existing ? await hasStockMoves(db, existing.id) : false;
+	const ownsBoms = existing ? await hasBoms(db, existing.id) : false;
+	Object.assign(errors, partRuleErrors({ kind: d.kind, trackSerial: d.track_serial }, { hasMoves, hasBoms: ownsBoms }));
+	if (Object.keys(errors).length > 0) return { ok: false as const, errors, clashRef: clash?.ref };
+	return { ok: true as const, data: d };
 }
 
 export async function hasBoms(db: Db, partId: number): Promise<boolean> {

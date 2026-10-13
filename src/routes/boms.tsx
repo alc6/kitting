@@ -16,10 +16,12 @@ import {
 import {
 	activateStatements,
 	addBomLineStatements,
+	archivedBomCycles,
 	bomInput,
 	bomLabel,
 	bomLineInput,
 	bomSalePriceStatements,
+	componentError,
 	createBomStatements,
 	DEFAULT_CODE,
 	DEFAULT_REVISION,
@@ -30,11 +32,11 @@ import {
 	getBomLines,
 	listBoms,
 	loadGraph,
+	newBomErrors,
 	nextRevision,
 	reorderBomLinesStatements,
 	setBomStatusStatement,
 	updateBomLineQtyStatements,
-	wouldCreateCycle,
 } from "../domain/boms";
 import { type Margin, marginOf, salePriceOf } from "../domain/margins";
 import { onHandMap, partOptions } from "../domain/parts";
@@ -189,6 +191,7 @@ function BomHeader(props: { bom: Bom; part: Part; tab: BomTab; pricing?: BomPric
 	const view = useApp();
 	const { t, seeCosts } = view;
 	const canEdit = can(view, "boms.edit");
+	const canArchive = can(view, "boms.archive");
 	const canDelete = can(view, "boms.delete");
 	const { bom, part } = props;
 	return (
@@ -232,7 +235,7 @@ function BomHeader(props: { bom: Bom; part: Part; tab: BomTab; pricing?: BomPric
 								/>
 							</>
 						) : null}
-						{canDelete && bom.status !== "archived" ? (
+						{canArchive && bom.status !== "archived" ? (
 							<PostButton
 								action={`/boms/${bom.id}/archive`}
 								label={t.boms.archive}
@@ -440,21 +443,16 @@ bomRoutes.post("/", requirePermission("boms.edit"), async (c) => {
 	const v = validate(bomInput, body);
 	const errors: FieldErrors = v.ok ? {} : { ...v.errors };
 	if (v.ok) {
-		const parentId = v.data.parent_part_id;
-		const parent = parentId ? (await db.select().from(parts).where(eq(parts.id, parentId)).limit(1))[0] : undefined;
-		if (!parent) errors.parent_part_id = "required";
-		else if (parent.kind !== "make" && parent.kind !== "kit") errors.parent_part_id = "bom_parent_kind";
-		else if (await findBom(db, parent.id, v.data.code, v.data.revision)) errors.revision = "duplicate_bom";
-		if (v.data.copy_from && parent) {
-			// Copying lines from another parent's BoM must not create a cycle.
-			const src = await getBomLines(db, v.data.copy_from);
-			for (const line of src) {
-				if (await wouldCreateCycle(db, parent.id, line.partId)) {
-					errors.copy_from = "bom_cycle";
-					break;
-				}
-			}
-		}
+		const d = v.data;
+		Object.assign(
+			errors,
+			await newBomErrors(db, {
+				parentPartId: d.parent_part_id,
+				code: d.code,
+				revision: d.revision,
+				copyFrom: d.copy_from,
+			}),
+		);
 	}
 	if (!v.ok || Object.keys(errors).length > 0) {
 		const { parents, sources } = await newBomOptions(c);
@@ -941,16 +939,11 @@ bomRoutes.post("/:id/lines", requirePermission("boms.edit"), async (c) => {
 	if (v.ok) {
 		const ref = v.data.component.split(/\s+[—·-]\s+/)[0]?.trim() ?? "";
 		const comp = (await db.select().from(parts).where(eq(parts.ref, ref)).limit(1))[0];
-		if (!comp) {
-			errors.component = "unknown_part";
-			vars.ref = ref;
-		} else if (comp.archived) errors.component = "archived_part";
-		else if (comp.trackSerial && v.data.qty % MILLI !== 0) errors.qty = "serial_whole_qty";
-		else if (await wouldCreateCycle(db, part.id, comp.id)) {
-			errors.component = "bom_cycle";
-			vars.ref = comp.ref;
-			vars.parent = part.ref;
-		} else {
+		const problem = await componentError(db, part, comp, ref, v.data.qty);
+		if (problem) {
+			errors[problem.field] = problem.key;
+			Object.assign(vars, problem.vars);
+		} else if (comp) {
 			componentId = comp.id;
 			componentRef = comp.ref;
 		}
@@ -1061,13 +1054,7 @@ bomRoutes.post("/:id/activate", requirePermission("boms.edit"), async (c) => {
 	if (!data) return notFound(c);
 	const { bom, part } = data;
 	if (part.kind !== "make" && part.kind !== "kit") return c.redirect(`/boms/${bom.id}?err=bom_parent_kind`, 303);
-	// An archived BoM may predate newer BoMs: re-check cycles before it counts again.
-	if (bom.status === "archived") {
-		for (const line of await getBomLines(c.var.db, bom.id)) {
-			if (await wouldCreateCycle(c.var.db, part.id, line.partId))
-				return c.redirect(`/boms/${bom.id}?err=bom_cycle`, 303);
-		}
-	}
+	if (await archivedBomCycles(c.var.db, bom)) return c.redirect(`/boms/${bom.id}?err=bom_cycle`, 303);
 	await saveChanges(
 		c,
 		fmt(c.var.t.history.summaries.bomActivate, { bom: bomLabel(part.ref, bom) }),
@@ -1080,19 +1067,14 @@ bomRoutes.post("/:id/draft", requirePermission("boms.edit"), async (c) => {
 	const data = await loadBom(c);
 	if (!data) return notFound(c);
 	const { bom, part } = data;
-	if (bom.status === "archived") {
-		for (const line of await getBomLines(c.var.db, bom.id)) {
-			if (await wouldCreateCycle(c.var.db, part.id, line.partId))
-				return c.redirect(`/boms/${bom.id}?err=bom_cycle`, 303);
-		}
-	}
+	if (await archivedBomCycles(c.var.db, bom)) return c.redirect(`/boms/${bom.id}?err=bom_cycle`, 303);
 	await saveChanges(c, fmt(c.var.t.history.summaries.bomDraft, { bom: bomLabel(part.ref, bom) }), [
 		setBomStatusStatement(c.var.db, bom.id, "draft", c.var.user, nowIso()),
 	]);
 	return redirectOk(c, `/boms/${bom.id}`);
 });
 
-bomRoutes.post("/:id/archive", requirePermission("boms.delete"), async (c) => {
+bomRoutes.post("/:id/archive", requirePermission("boms.archive"), async (c) => {
 	const data = await loadBom(c);
 	if (!data) return notFound(c);
 	await saveChanges(c, fmt(c.var.t.history.summaries.bomArchive, { bom: bomLabel(data.part.ref, data.bom) }), [

@@ -1,11 +1,11 @@
 // Builds: planned production of a `make` part from an exact BoM, completed atomically.
-import { and, desc, eq, inArray, type SQL, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, ne, type SQL, sql } from "drizzle-orm";
 import { z } from "zod";
-import { BUILD_STATUSES, type BuildStatus, boms, buildLines, builds, parts, stockMoves } from "../db/schema";
+import { BUILD_STATUSES, type BuildStatus, boms, buildLines, builds, type Part, parts, stockMoves } from "../db/schema";
 import type { Statement } from "../lib/db";
 import { likePattern } from "../lib/sql";
 import { MILLI, roundDiv } from "../lib/units";
-import { field } from "../lib/validation";
+import { type FieldErrors, field } from "../lib/validation";
 import type { Db } from "../types";
 import {
 	type BomGraph,
@@ -29,6 +29,8 @@ export const buildInput = z.object({
 	planned_for: field.date(),
 	notes: field.text(),
 });
+
+export type BuildInput = z.output<typeof buildInput>;
 
 export const buildEditInput = z.object({
 	serial: field.text(100),
@@ -55,7 +57,56 @@ export async function getBuild(db: Db, id: number) {
 }
 
 // ---------------------------------------------------------------------------
-// Planning: statements to run in one batch (completion is completionStatements below).
+// Planning: checks, then statements to run in one batch (completion is completionStatements below).
+
+/** The product of a new build (a make part, else undefined) and its active BoMs, the choices of the form. */
+export async function buildableProduct(db: Db, partId: number | null) {
+	const product = partId ? (await db.select().from(parts).where(eq(parts.id, partId)).limit(1))[0] : undefined;
+	const bomOptions = product
+		? await db
+				.select({ id: boms.id, code: boms.code, revision: boms.revision })
+				.from(boms)
+				.where(and(eq(boms.parentPartId, product.id), eq(boms.status, "active")))
+				.orderBy(asc(boms.code))
+		: [];
+	return { product: product?.kind === "make" ? product : undefined, bomOptions };
+}
+
+/** Whether another build of this product, not cancelled, already has this serial. */
+export async function buildSerialTaken(db: Db, partId: number, serial: string, exceptBuildId?: number) {
+	const conds = [eq(builds.partId, partId), eq(builds.serial, serial), ne(builds.status, "cancelled")];
+	if (exceptBuildId) conds.push(ne(builds.id, exceptBuildId));
+	const taken = await db
+		.select({ id: builds.id })
+		.from(builds)
+		.where(and(...conds))
+		.limit(1);
+	return taken.length > 0;
+}
+
+/**
+ * Errors of a build to plan, from the form or an MCP tool: a make part, one of its active BoMs, and for a
+ * serial-tracked product one unit with a serial no other build uses.
+ */
+export async function buildPlanErrors(
+	db: Db,
+	d: Pick<BuildInput, "part_id" | "bom_id" | "qty" | "serial">,
+	product: Part | undefined,
+	bomOptions: { id: number }[],
+): Promise<FieldErrors> {
+	const errors: FieldErrors = {};
+	if (!product) {
+		errors.part_id = d.part_id ? "build_part_kind" : "required";
+		return errors;
+	}
+	if (!d.bom_id || !bomOptions.some((b) => b.id === d.bom_id)) errors.bom_id = "build_bom_mismatch";
+	if (product.trackSerial) {
+		if (d.qty !== MILLI) errors.qty = "build_serial_qty";
+		if (!d.serial) errors.serial = "build_serial_required";
+	}
+	if (d.serial && (await buildSerialTaken(db, product.id, d.serial))) errors.serial = "build_serial_taken";
+	return errors;
+}
 
 export function createBuildStatement(
 	db: Db,

@@ -9,6 +9,7 @@ import * as schema from "../db/schema";
 import { knownScopes, MCP_SCOPES, toolAllowed, toolRefusal } from "../domain/mcp-scopes";
 import type { Access } from "../domain/permissions";
 import { resolveAccess } from "../domain/users";
+import { dict, isLocale } from "../i18n";
 import { parseAdminEmails } from "../middleware/auth";
 import { grantProps } from "./grants";
 import { READ_ONLY_ANNOTATIONS, TOOL_BY_NAME, TOOLS, type ToolContext, ToolError, type ToolSpec } from "./tools";
@@ -23,6 +24,9 @@ export const INSTRUCTIONS = [
 	"Kitting is a small manufacturer's MRP: parts (buy, make, kit, fee), bills of materials (BoMs), stock moves, builds and purchase orders.",
 	'Quantities and prices are decimal strings ("1.5", "12.30") in the part\'s unit and the workshop\'s currency; send quantities the same way.',
 	"Read before you write: look parts and BoMs up (search_parts, get_part, get_bom) before relying on them. The tools offered depend on what the user granted and on their role.",
+	"Confirm before writes: say exactly what you are about to change (records, quantities, prices) and wait for the user's go-ahead before calling any tool that changes data. Every change is made in the user's name.",
+	"BoM edits go through draft revisions: set_bom_lines never changes an active BoM, it creates a new draft revision and edits that; activate_bom then makes it the one builds use (the previous revision is archived and can be activated again).",
+	"Every change can be undone from Recent changes in the app (each write result gives its change set and history page), except stock and build ledger operations (adjustments, counts, receipts, build completions), which are corrected with reverse movements. You cannot undo changes yourself.",
 	"Costs, prices and margins may be hidden for this user's role: they are then left out and the result has costs_hidden: true. Never guess them.",
 ].join("\n");
 
@@ -36,7 +40,7 @@ export function buildServer(tools: readonly ToolSpec[], ctx: ToolContext): McpSe
 				title: t.title,
 				description: t.description,
 				inputSchema: t.input,
-				annotations: MCP_SCOPES[t.rule.scope].kind === "read" ? READ_ONLY_ANNOTATIONS : undefined,
+				annotations: t.annotations ?? (MCP_SCOPES[t.rule.scope].kind === "read" ? READ_ONLY_ANNOTATIONS : undefined),
 			},
 			async (args: unknown) => {
 				let data: Record<string, unknown>;
@@ -109,6 +113,21 @@ async function refusal(
 	);
 }
 
+/** Refuses every call of a connection whose user is no longer listed on the Users page nor in ADMIN_EMAILS. */
+function notListed(email: string): Response {
+	return Response.json(
+		{
+			jsonrpc: "2.0",
+			id: null,
+			error: {
+				code: -32001,
+				message: `Forbidden: ${email} is not listed on the Users page of Kitting, so this connection may not be used. An administrator can add them.`,
+			},
+		},
+		{ status: 403 },
+	);
+}
+
 /** The apiHandler of the OAuth provider: called only with a valid token for this deployment's /mcp. */
 export const mcpApiHandler = {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -117,7 +136,10 @@ export const mcpApiHandler = {
 		const grant = grantProps.safeParse(props);
 		if (!grant.success) return new Response("Forbidden: invalid grant", { status: 403 });
 		const db = drizzle(env.DB, { schema });
-		const access = await resolveAccess(db, grant.data.email.toLowerCase(), parseAdminEmails(env.ADMIN_EMAILS));
+		const email = grant.data.email.toLowerCase();
+		const { listed, ...access } = await resolveAccess(db, email, parseAdminEmails(env.ADMIN_EMAILS));
+		// /mcp skips Access: being listed (Users page or ADMIN_EMAILS) is what lets a connection work (D130).
+		if (!listed) return notListed(email);
 		const granted = knownScopes(auth.scope);
 		const refused = await refusal(request, granted, access, auth);
 		if (refused) return refused;
@@ -129,7 +151,17 @@ export const mcpApiHandler = {
 			...(auth.expiresAt !== undefined && { expiresAt: auth.expiresAt }),
 			resource: new URL(auth.audience),
 		};
-		const handler = createMcpHandler(() => buildServer(tools, { db, access }), {
+		const locale = isLocale(env.DEFAULT_LOCALE) ? env.DEFAULT_LOCALE : "en";
+		const context: ToolContext = {
+			db,
+			access,
+			user: email,
+			// Grants made before the client's name was kept in their props show the client ID instead.
+			clientName: grant.data.clientName ?? auth.clientId ?? "MCP client",
+			origin: new URL(request.url).origin,
+			t: dict(locale),
+		};
+		const handler = createMcpHandler(() => buildServer(tools, context), {
 			onerror: (error) => console.error(error),
 		});
 		return handler.fetch(request, { authInfo });

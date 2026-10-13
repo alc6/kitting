@@ -1,9 +1,10 @@
 import { and, asc, eq, ne, type SQL, sql } from "drizzle-orm";
 import { z } from "zod";
-import { BOM_STATUSES, type Bom, type BomStatus, bomLines, boms, parts } from "../db/schema";
+import { BOM_STATUSES, type Bom, type BomStatus, bomLines, boms, type Part, parts } from "../db/schema";
 import type { Statement } from "../lib/db";
 import { likePattern } from "../lib/sql";
-import { field, REF_PATTERN } from "../lib/validation";
+import { MILLI } from "../lib/units";
+import { type FieldErrors, field, REF_PATTERN } from "../lib/validation";
 import type { Db } from "../types";
 import { type BomGraph, buildGraph, CostCalculator, defaultBom } from "./bom-graph";
 import { priceRecordStatement } from "./prices";
@@ -156,6 +157,62 @@ export async function wouldCreateCycle(db: Db, parentPartId: number, componentPa
 		)
 		SELECT 1 AS hit FROM down WHERE part_id = ${parentPartId} LIMIT 1`);
 	return rows.length > 0;
+}
+
+/**
+ * Errors of a new BoM, from the form or an MCP tool: the parent must be a make or kit part, its (code, revision)
+ * new, and the lines copied from `copyFrom` must not create a cycle under it.
+ */
+export async function newBomErrors(
+	db: Db,
+	d: { parentPartId: number | null; code: string; revision: string; copyFrom: number | null },
+): Promise<FieldErrors> {
+	const errors: FieldErrors = {};
+	const parent = d.parentPartId
+		? (await db.select().from(parts).where(eq(parts.id, d.parentPartId)).limit(1))[0]
+		: undefined;
+	if (!parent) errors.parent_part_id = "required";
+	else if (parent.kind !== "make" && parent.kind !== "kit") errors.parent_part_id = "bom_parent_kind";
+	else if (await findBom(db, parent.id, d.code, d.revision)) errors.revision = "duplicate_bom";
+	if (d.copyFrom && parent) {
+		// Copying lines from another parent's BoM must not create a cycle.
+		for (const line of await getBomLines(db, d.copyFrom)) {
+			if (await wouldCreateCycle(db, parent.id, line.partId)) {
+				errors.copy_from = "bom_cycle";
+				break;
+			}
+		}
+	}
+	return errors;
+}
+
+/**
+ * Why `component` (looked up from `ref`) cannot be a line of a BoM of `parent`, in the editor or over MCP: unknown,
+ * archived, a serial-tracked part in a fractional quantity, or a cycle. Null when it can.
+ */
+export async function componentError(
+	db: Db,
+	parent: Pick<Part, "id" | "ref">,
+	component: Pick<Part, "id" | "ref" | "archived" | "trackSerial"> | undefined,
+	ref: string,
+	qtyMilli: number,
+): Promise<{ field: "component" | "qty"; key: string; vars: Record<string, string> } | null> {
+	if (!component) return { field: "component", key: "unknown_part", vars: { ref } };
+	if (component.archived) return { field: "component", key: "archived_part", vars: {} };
+	if (component.trackSerial && qtyMilli % MILLI !== 0) return { field: "qty", key: "serial_whole_qty", vars: {} };
+	if (await wouldCreateCycle(db, parent.id, component.id))
+		return { field: "component", key: "bom_cycle", vars: { ref: component.ref, parent: parent.ref } };
+	return null;
+}
+
+/** Whether an archived BoM would close a cycle if it counted again (activated or set back to draft). */
+export async function archivedBomCycles(db: Db, bom: Pick<Bom, "id" | "status" | "parentPartId">): Promise<boolean> {
+	if (bom.status !== "archived") return false;
+	// An archived BoM may predate newer BoMs: its lines are checked again.
+	for (const line of await getBomLines(db, bom.id)) {
+		if (await wouldCreateCycle(db, bom.parentPartId, line.partId)) return true;
+	}
+	return false;
 }
 
 export type WhereUsedRow = {
@@ -347,6 +404,40 @@ export function deleteBomLineStatements(db: Db, bomId: number, lineId: number, u
 	return [
 		db.delete(bomLines).where(and(eq(bomLines.id, lineId), eq(bomLines.bomId, bomId))),
 		touchBomStatement(db, bomId, user, now),
+	];
+}
+
+/**
+ * Replaces every line of a BoM with `lines`, in that order (positions 1..n), in one batch. `bom` is an id, or the
+ * (parent, code, revision) of a BoM created earlier in the same batch.
+ */
+export function replaceBomLinesStatements(
+	db: Db,
+	bom: number | { parentPartId: number; code: string; revision: string },
+	lines: { componentPartId: number; qtyMilli: number; notes: string }[],
+	user: string,
+	now: string,
+): Statement[] {
+	const bomId =
+		typeof bom === "number"
+			? sql`${bom}`
+			: sql`(SELECT id FROM boms WHERE parent_part_id = ${bom.parentPartId} AND code = ${bom.code} AND revision = ${bom.revision})`;
+	return [
+		db.delete(bomLines).where(eq(bomLines.bomId, bomId)),
+		...lines.map((l, i) =>
+			db.insert(bomLines).values({
+				bomId,
+				componentPartId: l.componentPartId,
+				qtyMilli: l.qtyMilli,
+				notes: l.notes,
+				position: i + 1,
+				createdBy: user,
+				updatedBy: user,
+				createdAt: now,
+				updatedAt: now,
+			}),
+		),
+		db.update(boms).set({ updatedAt: now, updatedBy: user }).where(eq(boms.id, bomId)),
 	];
 }
 

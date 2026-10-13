@@ -292,6 +292,44 @@ export const REFERENCE_COLUMNS: Record<string, string> = {
 	po_id: "purchase_orders",
 };
 
+/** Labels of referenced rows, keyed "table:id" (from referenceLabels). */
+export type Labels = Map<string, string>;
+
+/** The label of row `id` of `table`: "#id" when the row is gone, "" without an id. */
+export function labelOf(labels: Labels, table: string, id: unknown): string {
+	const n = typeof id === "number" ? id : null;
+	return n === null ? "" : (labels.get(`${table}:${n}`) ?? `#${n}`);
+}
+
+/** What a row is called, from its snapshot: "LAMP-DESK", "BOX-LAMP · Acme", "PO-0003"… */
+export function rowName(table: string, row: Snapshot | null, labels: Labels): string {
+	if (!row) return "";
+	const s = (k: string) => String(row[k] ?? "");
+	switch (table) {
+		case "parts":
+			return s("ref");
+		case "suppliers":
+			return s("name");
+		case "boms":
+			return `${labelOf(labels, "parts", row.parent_part_id)} ${s("code")} ${s("revision")}`;
+		case "bom_lines":
+			return `${labelOf(labels, "parts", row.component_part_id)} (${labelOf(labels, "boms", row.bom_id)})`;
+		case "part_suppliers":
+			return `${labelOf(labels, "parts", row.part_id)} · ${labelOf(labels, "suppliers", row.supplier_id)}`;
+		case "purchase_orders":
+		case "builds":
+			return s("number");
+		case "po_lines":
+			return `${labelOf(labels, "parts", row.part_id)} (${labelOf(labels, "purchase_orders", row.po_id)})`;
+		case "users":
+			return s("email");
+		case "settings":
+			return s("key");
+		default:
+			return `#${s("id")}`;
+	}
+}
+
 /** Names of the rows the entries point at, keyed "table:id" (current names; "#id" when the row is gone). */
 export async function referenceLabels(db: Db, views: EntryView[]): Promise<Map<string, string>> {
 	const ids: Record<string, Set<number>> = {

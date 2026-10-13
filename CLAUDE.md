@@ -53,7 +53,8 @@ was built with; `npx skills update` refreshes it.
   `margins.ts` (planned and actual margins), `margin-history.ts` (margins over time, replayed from the
   price history), `images.ts` (product images in R2), `users.ts` (who has which role, cost visibility option),
   `permissions.ts` (what each role may do: the permission table, `can()`, cost redaction),
-  `history.ts` (`runChangeSet()`, history queries, field diffs), `revert.ts` (undo, conflicts, `TABLE_ACTIONS`).
+  `history.ts` (`runChangeSet()`, history queries, field diffs, row names), `revert.ts` (undo, conflicts,
+  `TABLE_ACTIONS`), `mcp-scopes.ts` (MCP scopes and their permission actions).
   `src/db/history-sql.ts` generates the history triggers (`scripts/history-triggers.mjs` prints them).
   `src/domain/import/`: one importer per CSV type, all implementing `Importer`.
 - `src/routes/*.tsx`: one Hono router per area, with its page components.
@@ -74,8 +75,9 @@ was built with; `npx skills update` refreshes it.
   (`src/views/render.tsx`). Never run a bare query or `runBatch()` on a tracked table: the history triggers
   abort it. Put the write logic in `src/domain` as statement builders, and give the change a meaningful
   summary from `t.history.summaries` naming what and which record ("Edit BoM LAMP-DESK std Rev3"), never an
-  amount (every role reads it). An MCP tool passes `source: "mcp"` and its `clientName`. A write that an undo
-  could not restore consistently passes `revertible: false` (ledger writes are marked by trigger).
+  amount (every role reads it). An MCP tool saves through `saveChange()` (source `mcp`, its client name). A
+  write that an undo could not restore consistently passes `revertible: false` (ledger writes are marked by
+  trigger).
 - A new table goes in `HISTORY_TABLES` (with its triggers, a `TABLE_ACTIONS` entry in `revert.ts` and labels in
   `history.tables`/`history.fields`) or in `UNTRACKED_TABLES`; `test/history.test.ts` checks both.
 - A data migration or a manual `wrangler d1 execute` that writes to a tracked table opens a change set in the
@@ -165,18 +167,27 @@ was built with; `npx skills update` refreshes it.
 
 ## MCP (AI assistants)
 
-- Optional (D115–D124): `src/mcp/` holds the OAuth provider setup (`oauth.ts`), the stateless MCP endpoint
-  (`server.ts`), the tools (`tools.ts`) and the wire format (`wire.ts`); `src/domain/mcp-scopes.ts` maps scopes
-  to permission actions; `src/routes/connect.tsx` is the consent page and the connected apps page. Everything is
-  off (404) without the `OAUTH_KV` binding. Only `/mcp`, `/token`, `/register` and `/.well-known/oauth-*` skip
-  Access (`isOAuthPath`, exact paths): never widen it.
-- **Adding an MCP tool = scope + permission check + redaction + test.** Give it a `rule` (`{ scope, action }`:
-  a scope from `MCP_SCOPES`, plus the `PERMISSIONS` action for anything that changes data), return data with the
-  app's integer field names (`*Milli`, `*Cents`) so `toWire()` redacts costs then converts to decimals, and add a
-  test in `test/mcp-tools.test.ts` (`connect(scopes)` and `callTool()` from `test/mcp-helpers.ts`), including the
-  cost sweep's `calls()` list. Write tools go through the same
-  domain functions as the routes. Never over MCP: user management, backups, imports, image uploads, permanent
-  deletes (`NEVER_OVER_MCP`).
+- Optional (D115–D131): `src/mcp/` holds the OAuth provider setup (`oauth.ts`), the stateless MCP endpoint
+  (`server.ts`, with the server instructions), the wire format (`wire.ts`), the tools (`kit.ts`: tool shape, inputs,
+  lookups, `saveChange()`; `read-tools.ts`, `history-tools.ts`, `catalog-tools.ts`, `price-tools.ts`,
+  `stock-tools.ts`, `build-tools.ts`, `purchasing-tools.ts`; `tools.ts` lists them all); `src/domain/mcp-scopes.ts`
+  maps scopes to permission actions; `src/routes/connect.tsx` is the consent page and the connected apps page.
+  Everything is off (404) without the `OAUTH_KV` binding. Only `/mcp`, `/token`, `/register` and
+  `/.well-known/oauth-*` skip Access (`isOAuthPath`, exact paths): never widen it. Only listed users (Users page or
+  `ADMIN_EMAILS`) may connect and call `/mcp`; removing a user revokes their connections (D130).
+- **Adding an MCP tool = scope + permission action + change set summary + redaction + test.** Give it a `rule`
+  (`{ scope, action }`: a scope from `MCP_SCOPES`, plus for anything that changes data one of that scope's
+  `PERMISSIONS` actions) and, for a write, `annotations: writes({ destructive, idempotent })`. A write builds the
+  values its page would post, runs the same domain validation and statement builders (move any check still in a
+  route into `src/domain` first), and saves with `saveChange(ctx, summary, statements)`: one change set, source
+  `mcp`, the client's name, a summary from `ctx.t.history.summaries` (never an amount); spread its result into the
+  tool's result. Return data with the app's integer field names (`*Milli`, `*Cents`) so `toWire()` redacts costs
+  then converts to decimals (snake_case snapshot columns are not converted: format and redact them yourself, as
+  `history-tools.ts` does). Test it: a read tool in `test/mcp-tools.test.ts` (and the cost sweep's `calls()`), a
+  write tool in `test/mcp-write.test.ts` (its `CASES` row checks the change set, undo, scope and role refusals;
+  plus its own happy path and refusals).
+- Never over MCP: permanent deletes, undo, user management, backups, imports, image uploads (`NEVER_OVER_MCP` and
+  the tool-name check in `test/mcp-scopes.test.ts`). BoMs change only through draft revisions (D128).
 
 ## Tests
 

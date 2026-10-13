@@ -107,7 +107,7 @@ After M2 the catalogue and BoMs can be loaded; after M4 real builds can run.
       conflict messages, History tab on parts, suppliers, BoMs and POs
 - [x] JSON backup includes the history; a restore suppresses the triggers and records itself
 
-## M11: MCP server
+## M11: MCP server ✅
 
 AI assistants (Claude, ChatGPT or any MCP client) connect to `/mcp` with OAuth; optional (`OAUTH_KV` binding).
 
@@ -117,13 +117,19 @@ AI assistants (Claude, ChatGPT or any MCP client) connect to `/mcp` with OAuth; 
       (admins see everyone's), token lifetimes documented
 - [x] Scope table mapped onto the permission actions; role read again and costs redacted on every request
 - [x] Read tools: parts, BoMs (tree, explosion), stock, moves, builds (serial search, pick list, as-built),
-      shortages, purchase orders
+      shortages, purchase orders, recent changes with field diffs
 - [x] README setup (KV namespace, Access bypass, custom connector, local testing with the MCP Inspector)
-- [ ] Write tools (catalogue, prices, archive, stock, builds, purchasing) with their scopes and actions
-- [ ] Client ID Metadata Documents (needs the `global_fetch_strictly_public` compatibility flag, D123)
+- [x] Archiving split from permanent deletes in the permission table (`parts.archive`, `boms.archive`)
+- [x] Write tools (catalogue, prices, archive, stock, builds, purchasing) with their scopes and actions: the pages'
+      validation and statement builders, one change set each (source `mcp`, client name), undo link in results
+- [x] BoM edits through draft revisions (`set_bom_lines` never edits an active BoM; `activate_bom` is explicit)
+- [x] Never over MCP, tested: permanent deletes, undo, users, backups, imports, image uploads
+- [x] Offboarding: only listed users connect and call `/mcp`; removing a user revokes their connections
 
 ## After v1 (ideas, not planned)
 
+- MCP: Client ID Metadata Documents (needs the `global_fetch_strictly_public` compatibility flag, D123); a skill or
+  plugin documenting the tools for assistants.
 - Serial inventory (which serials are in stock) enforced at build time, if the shop starts scanning receipts.
 - Reservations of stock for planned builds; build scheduling.
 - PDF purchase orders.

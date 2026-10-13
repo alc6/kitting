@@ -9,6 +9,7 @@ import {
 	type OAuthProviderOptions,
 } from "@cloudflare/workers-oauth-provider";
 import { MCP_SCOPE_NAMES } from "../domain/mcp-scopes";
+import { grantUserId, userGrants } from "./grants";
 import { MCP_PATH, mcpApiHandler } from "./server";
 
 export const AUTHORIZE_PATH = "/authorize";
@@ -81,4 +82,17 @@ export function oauthProvider(origin: string): OAuthProvider<Env> {
 /** The provider's helpers (consent, grants) for the application's own pages. */
 export function oauthApi(env: Env, origin: string): OAuthHelpers {
 	return getOAuthApi(options(origin), env);
+}
+
+/**
+ * Revokes every MCP connection of a user at once (their tokens stop working), when they are removed from the
+ * Users page (D130). A no-op without the OAUTH_KV binding, or on an origin where OAuth does not run (where no
+ * connection could have been made). Returns how many were revoked.
+ */
+export async function revokeUserGrants(env: Env, origin: string, email: string): Promise<number> {
+	if (!oauthKv(env) || !oauthOriginOk(origin)) return 0;
+	const api = oauthApi(env, origin);
+	const grants = await userGrants(api, grantUserId(email.toLowerCase()));
+	for (const g of grants) await api.revokeGrant(g.id, g.userId);
+	return grants.length;
 }

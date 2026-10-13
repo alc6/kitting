@@ -1,9 +1,7 @@
-// What an AI assistant connected over MCP may do (D116). A connection's OAuth scopes are a ceiling the user
+// What an AI assistant connected over MCP may do (D116, D126). A connection's OAuth scopes are a ceiling the user
 // chose at consent; the permission table (./permissions.ts) still decides, on every request, with the user's
 // current role: a tool is listed and callable only when the token carries its scope AND can() allows its action.
-// Write scopes (catalog:write → parts.edit/boms.edit, prices:write → prices.edit, catalog:archive → parts.delete,
-// stock:write → stock.adjust/stock.count, builds:write → builds.plan/builds.complete, purchasing:write →
-// purchasing.order/purchasing.receive) are added here, with their actions, when their tools exist.
+// Each write tool declares one of its scope's actions (test/mcp-scopes.test.ts checks it).
 import { type Access, type Action, can } from "./permissions";
 
 type ScopeRule = {
@@ -16,11 +14,18 @@ type ScopeRule = {
 	actions: readonly Action[];
 };
 
+/** In the order the consent page lists them: by area, reading first. */
 export const MCP_SCOPES = {
 	"catalog:read": { kind: "read", actions: [] },
+	"catalog:write": { kind: "write", actions: ["parts.edit", "suppliers.edit", "boms.edit"] },
+	"prices:write": { kind: "write", actions: ["prices.edit"] },
+	"catalog:archive": { kind: "write", actions: ["parts.archive", "boms.archive"] },
 	"stock:read": { kind: "read", actions: [] },
+	"stock:write": { kind: "write", actions: ["stock.adjust", "stock.count"] },
 	"builds:read": { kind: "read", actions: [] },
+	"builds:write": { kind: "write", actions: ["builds.plan", "builds.complete"] },
 	"purchasing:read": { kind: "read", actions: [] },
+	"purchasing:write": { kind: "write", actions: ["purchasing.order", "purchasing.receive"] },
 } as const satisfies Record<string, ScopeRule>;
 
 export type McpScope = keyof typeof MCP_SCOPES;
@@ -28,11 +33,17 @@ export type McpScope = keyof typeof MCP_SCOPES;
 export const MCP_SCOPE_NAMES = Object.keys(MCP_SCOPES) as McpScope[];
 
 /**
- * Never reachable over MCP, now or later: user management, backup and restore, CSV import, and these connections
- * themselves. Permanent deletes and image uploads have no tool either (they share actions with archiving and
- * editing, so the rule is on tools: test/mcp-scopes.test.ts checks the names).
+ * Never reachable over MCP, now or later: permanent deletes (parts and their offers and images, suppliers, BoMs,
+ * POs), undoing a change (it stays in the app, where its conflicts are shown), user management, backup and
+ * restore, CSV import, and these connections themselves. Image uploads share parts.edit, so that rule is on tool
+ * names (test/mcp-scopes.test.ts checks both).
  */
 export const NEVER_OVER_MCP: readonly Action[] = [
+	"parts.delete",
+	"suppliers.delete",
+	"boms.delete",
+	"purchasing.delete",
+	"history.revert",
 	"users.manage",
 	"backup.download",
 	"backup.restore",

@@ -27,19 +27,25 @@ async function as(role: Role) {
 }
 
 describe("role resolution", () => {
-	it("puts ADMIN_EMAILS first, then the users table, else viewer", async () => {
+	it("puts ADMIN_EMAILS first, then the users table, else viewer (unlisted)", async () => {
 		const db = testDb();
-		expect(await resolveAccess(db, "nobody@example.com", [])).toEqual({ role: "viewer", seeCosts: false });
+		expect(await resolveAccess(db, "nobody@example.com", [])).toEqual({
+			role: "viewer",
+			seeCosts: false,
+			listed: false,
+		});
 		await setRole("operator", "op@example.com");
-		expect(await resolveAccess(db, "op@example.com", [])).toEqual({ role: "operator", seeCosts: false });
+		expect(await resolveAccess(db, "op@example.com", [])).toEqual({ role: "operator", seeCosts: false, listed: true });
 		// ADMIN_EMAILS cannot be demoted from the users table.
 		await setRole("viewer", "boss@example.com");
 		expect(await resolveAccess(db, "boss@example.com", ["boss@example.com"])).toEqual({
 			role: "admin",
 			seeCosts: true,
+			listed: true,
 		});
+		expect(await resolveAccess(db, "boss@example.com", [])).toEqual({ role: "viewer", seeCosts: false, listed: true });
 		await letLowerRolesSeeCosts();
-		expect(await resolveAccess(db, "op@example.com", [])).toEqual({ role: "operator", seeCosts: true });
+		expect(await resolveAccess(db, "op@example.com", [])).toEqual({ role: "operator", seeCosts: true, listed: true });
 	});
 
 	it("orders roles and keeps costs visible to planners and admins", () => {

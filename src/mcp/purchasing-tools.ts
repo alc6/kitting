@@ -1,0 +1,366 @@
+// purchasing:write tools (D127): draft POs from the shortages, edit drafts, send, receive, cancel and close, with
+// the purchasing pages' checks and statement builders. Receiving writes the stock ledger: it cannot be undone.
+import { z } from "zod";
+import { getOffer, poUnitPrice } from "../domain/offers";
+import {
+	addPoLineStatement,
+	cancelPoStatement,
+	closePoStatement,
+	computeShortages,
+	deletePoLineStatement,
+	draftPoStatements,
+	getPoLines,
+	nextPoNumbers,
+	planDraftOrders,
+	planReceipts,
+	RECEIVABLE_PO_STATUSES,
+	receiptStatements,
+	receiveQtyField,
+	receiveSerialsField,
+	sendPoStatement,
+	updatePoLineStatement,
+	updatePoStatement,
+} from "../domain/purchasing";
+import { isStocked } from "../domain/stock";
+import { fmt } from "../i18n";
+import type { Statement } from "../lib/db";
+import { isConstraintError } from "../lib/sql";
+import { formatQtyInput, lineCostCents } from "../lib/units";
+import { field, validate } from "../lib/validation";
+import type { Db } from "../types";
+import { supplierByName } from "./catalog-tools";
+import {
+	date,
+	decimal,
+	errorMessage,
+	findPart,
+	formValue,
+	NOTHING_CHANGED,
+	poByNumber,
+	refuse,
+	saveChange,
+	ToolError,
+	type ToolSpec,
+	tool,
+	writes,
+} from "./kit";
+
+const now = () => new Date().toISOString();
+
+const poNumberInput = z.string().trim().min(1).max(32).describe('The PO number, e.g. "PO-0001".');
+
+/** A purchase order with its lines, as the write tools return it. */
+async function poView(db: Db, number: string) {
+	const { po, supplier } = await poByNumber(db, number);
+	const lines = await getPoLines(db, po.id);
+	return {
+		purchaseOrder: {
+			number: po.number,
+			status: po.status,
+			supplier: supplier.name,
+			expectedAt: po.expectedAt,
+			sentAt: po.sentAt,
+			notes: po.notes || undefined,
+		},
+		lines: lines.map((l) => ({
+			ref: l.ref,
+			unit: l.unit,
+			qtyMilli: l.line.qtyMilli,
+			receivedMilli: l.line.receivedQtyMilli,
+			remainingMilli: Math.max(0, l.line.qtyMilli - l.line.receivedQtyMilli),
+			unitPriceCents: l.line.unitPriceCents,
+		})),
+		totalCents: lines.reduce((s, l) => s + lineCostCents(l.line.qtyMilli, l.line.unitPriceCents), 0),
+	};
+}
+
+/** The line of a part on a PO; refused when the part is not on it, or on several lines (ambiguous). */
+function lineOf<T extends { ref: string }>(lines: T[], ref: string, number: string): T | undefined {
+	const found = lines.filter((l) => l.ref.toLowerCase() === ref.toLowerCase());
+	if (found.length > 1) throw new ToolError(`${ref} is on several lines of ${number}: edit it in Kitting.`);
+	return found[0];
+}
+
+const createDraftPos = tool({
+	name: "create_draft_pos",
+	title: "Draft POs from shortages",
+	description:
+		"Turns the current shortages (get_shortages) into draft purchase orders, as the shortage page's button does: one draft per supplier, each line rounded up to that supplier's MOQ and pack size and priced at its offer (else the standard cost). By default every supplier group is drafted; suppliers limits it to some. order_from orders a part from another supplier that has an offer for it (parts without a preferred supplier are drafted only this way). Drafts are not sent: review them, then mark_po_sent.",
+	rule: { scope: "purchasing:write", action: "purchasing.order" },
+	annotations: writes({ destructive: false, idempotent: false }),
+	input: z.object({
+		suppliers: z
+			.array(z.string().trim().min(1).max(200))
+			.max(100)
+			.optional()
+			.describe("Only these suppliers' groups (names, case-insensitive)."),
+		order_from: z
+			.array(z.object({ ref: z.string().trim().min(1).max(64), supplier: z.string().trim().min(1).max(200) }))
+			.max(500)
+			.default([])
+			.describe("Order these parts from another supplier with an offer for them."),
+	}),
+	run: async (a, ctx) => {
+		const shortages = await computeShortages(ctx.db);
+		const lines = shortages.groups.flatMap((g) => g.lines);
+		let include = (_supplierId: number) => true;
+		if (a.suppliers) {
+			const ids = new Set<number>();
+			for (const name of a.suppliers) ids.add((await supplierByName(ctx.db, name)).id);
+			include = (supplierId) => ids.has(supplierId);
+		}
+		const chosen = new Map<number, number>();
+		for (const o of a.order_from) {
+			const line = lines.find((l) => l.part.ref.toLowerCase() === o.ref.toLowerCase());
+			if (!line) throw new ToolError(`${o.ref} is not short: get_shortages lists what to order.`);
+			const supplier = await supplierByName(ctx.db, o.supplier);
+			if (!line.offers.some((offer) => offer.supplierId === supplier.id))
+				throw new ToolError(`${supplier.name} has no offer for ${line.part.ref}: add one with upsert_supplier_offer.`);
+			chosen.set(line.part.id, supplier.id);
+		}
+		const orders = planDraftOrders(shortages.groups, include, (partId) => chosen.get(partId));
+		if (orders.length === 0) return { ...NOTHING_CHANGED, purchaseOrders: [], note: "Nothing to order." };
+		for (let attempt = 0; ; attempt++) {
+			const numbers = await nextPoNumbers(ctx.db, orders.length);
+			try {
+				const { change } = await saveChange(
+					ctx,
+					fmt(ctx.t.history.summaries.draftPos, { n: orders.length }),
+					draftPoStatements(ctx.db, orders, numbers, ctx.user, now()),
+				);
+				const created = [];
+				for (const n of numbers) created.push(await poView(ctx.db, n));
+				return { ...change, purchaseOrders: created };
+			} catch (err) {
+				if (attempt > 0 || !isConstraintError(err, "UNIQUE")) throw err;
+			}
+		}
+	},
+});
+
+const updateDraftPo = tool({
+	name: "update_draft_po",
+	title: "Edit a draft PO",
+	description:
+		"Edits a purchase order: its expected date and notes (any open PO, as on its page), and the lines of a draft. Each line sets the quantity of a part on the PO: an existing line is changed (its price too when given), a new part is added (priced at this supplier's offer, else the standard cost, unless a price is given), and qty \"0\" removes the part's line. Lines of a sent PO cannot change.",
+	rule: { scope: "purchasing:write", action: "purchasing.order" },
+	annotations: writes({ destructive: true, idempotent: true }),
+	input: z.object({
+		number: poNumberInput,
+		expected_at: date.nullable().optional().describe("Expected delivery date, YYYY-MM-DD (null clears it)."),
+		notes: z.string().max(2000).optional(),
+		lines: z
+			.array(
+				z.object({
+					ref: z.string().trim().min(1).max(64),
+					qty: decimal('Quantity to order in the part\'s unit; "0" removes the line.'),
+					price: decimal('Unit price, e.g. "1.05".').optional(),
+				}),
+			)
+			.max(500)
+			.default([]),
+	}),
+	run: async (a, ctx) => {
+		const { po } = await poByNumber(ctx.db, a.number);
+		if (a.lines.length && po.status !== "draft") refuse({ lines: "po_not_draft" });
+		const stamp = now();
+		const stmts: Statement[] = [];
+		if (a.expected_at !== undefined || a.notes !== undefined) {
+			const v = validate(z.object({ expected_at: field.date(), notes: field.text() }), {
+				expected_at: a.expected_at === undefined ? (po.expectedAt ?? "") : (a.expected_at ?? ""),
+				notes: a.notes ?? po.notes,
+			});
+			if (!v.ok) refuse(v.errors);
+			stmts.push(
+				updatePoStatement(ctx.db, po.id, { expectedAt: v.data.expected_at, notes: v.data.notes }, ctx.user, stamp),
+			);
+		}
+		const current = await getPoLines(ctx.db, po.id);
+		const problems: string[] = [];
+		const seen = new Set<number>();
+		for (const [i, l] of a.lines.entries()) {
+			const at = `line ${i + 1} (${l.ref})`;
+			const v = validate(z.object({ qty: field.qty(), price: field.money() }), {
+				qty: formValue(l.qty),
+				price: formValue(l.price),
+			});
+			if (!v.ok) {
+				problems.push(...Object.entries(v.errors).map(([f, key]) => `${at} ${f}: ${errorMessage(key)}`));
+				continue;
+			}
+			const part = await findPart(ctx.db, l.ref);
+			if (!part) {
+				problems.push(`${at}: ${errorMessage("unknown_part", { ref: l.ref })}`);
+				continue;
+			}
+			if (seen.has(part.id)) {
+				problems.push(`${at}: listed twice.`);
+				continue;
+			}
+			seen.add(part.id);
+			const existing = lineOf(current, part.ref, po.number);
+			const { qty, price } = v.data;
+			if (existing) {
+				if (qty === 0) stmts.push(deletePoLineStatement(ctx.db, po.id, existing.line.id));
+				else
+					stmts.push(
+						updatePoLineStatement(
+							ctx.db,
+							po.id,
+							existing.line.id,
+							{ qtyMilli: qty, unitPriceCents: price ?? existing.line.unitPriceCents },
+							ctx.user,
+							stamp,
+						),
+					);
+			} else if (qty === 0) problems.push(`${at}: not on ${po.number}.`);
+			else if (!isStocked(part.kind)) problems.push(`${at}: ${errorMessage("not_stocked", { kind: part.kind })}`);
+			else {
+				const unitPriceCents =
+					price ?? poUnitPrice((await getOffer(ctx.db, part.id, po.supplierId))?.priceCents, part.costCents);
+				stmts.push(
+					addPoLineStatement(ctx.db, po.id, { partId: part.id, qtyMilli: qty, unitPriceCents }, ctx.user, stamp),
+				);
+			}
+		}
+		if (problems.length) throw new ToolError(`Refused, nothing was changed. ${problems.join(" ")}`);
+		const { change } = await saveChange(ctx, fmt(ctx.t.history.summaries.poEdit, { number: po.number }), stmts);
+		return { ...change, ...(await poView(ctx.db, po.number)) };
+	},
+});
+
+const markPoSent = tool({
+	name: "mark_po_sent",
+	title: "Mark a PO as sent",
+	description:
+		"Marks a draft purchase order as sent to its supplier (Kitting does not send anything itself: the user sends the order). Its lines can no longer change; it waits for receive_po.",
+	rule: { scope: "purchasing:write", action: "purchasing.order" },
+	annotations: writes({ destructive: false, idempotent: true }),
+	input: z.object({ number: poNumberInput }),
+	run: async (a, ctx) => {
+		const { po } = await poByNumber(ctx.db, a.number);
+		if (po.status === "sent") return { ...NOTHING_CHANGED, ...(await poView(ctx.db, po.number)) };
+		if (po.status !== "draft") refuse({ _: "po_not_draft" });
+		if ((await getPoLines(ctx.db, po.id)).length === 0) refuse({ _: "po_empty" });
+		const { change } = await saveChange(ctx, fmt(ctx.t.history.summaries.poSend, { number: po.number }), [
+			sendPoStatement(ctx.db, po.id, ctx.user, now()),
+		]);
+		return { ...change, ...(await poView(ctx.db, po.number)) };
+	},
+});
+
+const receivePo = tool({
+	name: "receive_po",
+	title: "Receive goods on a PO",
+	description:
+		"Records goods received on a purchase order, as its receive form does: per part, the quantity received now (more deliveries can follow), and optionally one serial per unit. Stock goes up at the PO's price; the PO becomes partly received or received. This writes the stock ledger: it cannot be undone, only corrected with an adjustment.",
+	rule: { scope: "purchasing:write", action: "purchasing.receive" },
+	annotations: writes({ destructive: true, idempotent: false }),
+	input: z.object({
+		number: poNumberInput,
+		lines: z
+			.array(
+				z.object({
+					ref: z.string().trim().min(1).max(64),
+					qty: decimal('Quantity received now, e.g. "4".'),
+					serials: z.array(z.string().trim().min(1).max(100)).max(1000).default([]).describe("One per unit, if any."),
+				}),
+			)
+			.min(1)
+			.max(500),
+	}),
+	run: async (a, ctx) => {
+		const { po } = await poByNumber(ctx.db, a.number);
+		if (!RECEIVABLE_PO_STATUSES.includes(po.status)) refuse({ _: "po_not_receivable" });
+		const lines = await getPoLines(ctx.db, po.id);
+		const values: Record<string, string> = {};
+		const names: Record<string, string> = {};
+		for (const l of a.lines) {
+			const line = lineOf(lines, l.ref, po.number);
+			if (!line) throw new ToolError(`${l.ref} is not on ${po.number}. get_purchase_order lists its lines.`);
+			const qtyField = receiveQtyField(line.line.id);
+			const serialsField = receiveSerialsField(line.line.id);
+			if (qtyField in values) throw new ToolError(`${line.ref} is listed twice.`);
+			values[qtyField] = formValue(l.qty);
+			values[serialsField] = l.serials.join("\n");
+			names[qtyField] = `${line.ref} qty`;
+			names[serialsField] = `${line.ref} serials`;
+		}
+		const { receipts, errors } = planReceipts(lines, values);
+		if (Object.keys(errors).length) {
+			const messages = Object.entries(errors).map(([f, key]) => {
+				// serial_count names the quantity received on that line.
+				const r = receipts.find((x) => receiveSerialsField(x.lineId) === f);
+				const message = errorMessage(key, { n: r ? formatQtyInput(r.qtyMilli) : "" });
+				return names[f] ? `${names[f]}: ${message}` : message;
+			});
+			throw new ToolError(`Refused, nothing was changed. ${messages.join(" ")}`);
+		}
+		const { change } = await saveChange(
+			ctx,
+			fmt(ctx.t.history.summaries.poReceive, { number: po.number }),
+			receiptStatements(ctx.db, po, receipts, ctx.user, now()),
+		);
+		const view = await poView(ctx.db, po.number);
+		return {
+			...change,
+			received: receipts.map((r) => ({
+				ref: lines.find((l) => l.line.id === r.lineId)?.ref,
+				qtyMilli: r.qtyMilli,
+				serials: r.serials.length ? r.serials : undefined,
+			})),
+			...view,
+		};
+	},
+});
+
+const cancelPo = tool({
+	name: "cancel_po",
+	title: "Cancel a PO",
+	description:
+		"Cancels a draft or sent purchase order that received nothing: its quantities are no longer on order. A partly received PO is closed with close_po instead. POs are never deleted over MCP.",
+	rule: { scope: "purchasing:write", action: "purchasing.order" },
+	annotations: writes({ destructive: true, idempotent: true }),
+	input: z.object({ number: poNumberInput }),
+	run: async (a, ctx) => {
+		const { po } = await poByNumber(ctx.db, a.number);
+		if (po.status === "cancelled") return { ...NOTHING_CHANGED, ...(await poView(ctx.db, po.number)) };
+		const lines = await getPoLines(ctx.db, po.id);
+		if (lines.some((l) => l.line.receivedQtyMilli > 0)) refuse({ _: "po_has_receipts" });
+		if (po.status !== "draft" && po.status !== "sent")
+			throw new ToolError(`${po.number} is ${po.status}: only draft and sent POs can be cancelled.`);
+		const { change } = await saveChange(ctx, fmt(ctx.t.history.summaries.poCancel, { number: po.number }), [
+			cancelPoStatement(ctx.db, po.id, ctx.user, now()),
+		]);
+		return { ...change, ...(await poView(ctx.db, po.number)) };
+	},
+});
+
+const closePo = tool({
+	name: "close_po",
+	title: "Close a PO",
+	description:
+		"Closes a sent or partly received purchase order whose remaining quantities will not come (short shipment): they are no longer on order. Nothing moves in stock.",
+	rule: { scope: "purchasing:write", action: "purchasing.order" },
+	annotations: writes({ destructive: true, idempotent: true }),
+	input: z.object({ number: poNumberInput }),
+	run: async (a, ctx) => {
+		const { po } = await poByNumber(ctx.db, a.number);
+		if (po.status === "received") return { ...NOTHING_CHANGED, ...(await poView(ctx.db, po.number)) };
+		if (po.status !== "sent" && po.status !== "partial")
+			throw new ToolError(`${po.number} is ${po.status}: only sent and partly received POs can be closed.`);
+		const { change } = await saveChange(ctx, fmt(ctx.t.history.summaries.poClose, { number: po.number }), [
+			closePoStatement(ctx.db, po.id, ctx.user, now()),
+		]);
+		return { ...change, ...(await poView(ctx.db, po.number)) };
+	},
+});
+
+export const PURCHASING_TOOLS: readonly ToolSpec[] = [
+	createDraftPos,
+	updateDraftPo,
+	markPoSent,
+	receivePo,
+	cancelPo,
+	closePo,
+];

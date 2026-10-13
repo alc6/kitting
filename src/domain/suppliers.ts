@@ -1,4 +1,4 @@
-import { asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, ne, sql } from "drizzle-orm";
 import { z } from "zod";
 import { type Supplier, suppliers } from "../db/schema";
 import { likePattern } from "../lib/sql";
@@ -39,6 +39,17 @@ export async function listSuppliers(db: Db, q = "") {
 export async function findSupplierByName(db: Db, name: string) {
 	const rows = await db.select().from(suppliers).where(sql`lower(${suppliers.name}) = lower(${name.trim()})`).limit(1);
 	return rows[0];
+}
+
+/** Whether another supplier has this name, ignoring case (the form and the MCP tools refuse duplicates). */
+export async function supplierNameTaken(db: Db, name: string, exceptId?: number): Promise<boolean> {
+	const same = sql`lower(${suppliers.name}) = lower(${name.trim()})`;
+	const rows = await db
+		.select({ id: suppliers.id })
+		.from(suppliers)
+		.where(exceptId ? and(same, ne(suppliers.id, exceptId)) : same)
+		.limit(1);
+	return rows.length > 0;
 }
 
 export async function getSupplier(db: Db, id: number) {

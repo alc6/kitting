@@ -2,7 +2,14 @@
 // and a change set's details. Amounts in row snapshots are redacted by entryView() and shown through Money.
 import { getTableColumns, getTableName } from "drizzle-orm";
 import { type ChangeSet, HISTORY_TABLES } from "../db/schema";
-import { type ChangeSetSummary, type EntryView, REFERENCE_COLUMNS } from "../domain/history";
+import {
+	type ChangeSetSummary,
+	type EntryView,
+	type Labels,
+	labelOf,
+	REFERENCE_COLUMNS,
+	rowName,
+} from "../domain/history";
 import { can } from "../domain/permissions";
 import type { ChangedBy, RevertConflict } from "../domain/revert";
 import { fmt } from "../i18n";
@@ -20,8 +27,7 @@ const BOOLEAN_COLUMNS = new Set(
 	),
 );
 
-/** Labels of referenced rows, keyed "table:id" (referenceLabels in src/domain/history.ts). */
-export type Labels = Map<string, string>;
+export type { Labels };
 
 type Row = Record<string, unknown>;
 
@@ -43,40 +49,6 @@ export function RecordTabs(props: { base: string; active: "overview" | "history"
 			]}
 		/>
 	);
-}
-
-function labelOf(labels: Labels, table: string, id: unknown): string {
-	const n = num(id);
-	return n === null ? "" : (labels.get(`${table}:${n}`) ?? `#${n}`);
-}
-
-/** What a row is called, from its snapshot: "LAMP-DESK", "BOX-LAMP · Acme", "PO-0003"… */
-export function rowName(table: string, row: Row | null, labels: Labels): string {
-	if (!row) return "";
-	const s = (k: string) => String(row[k] ?? "");
-	switch (table) {
-		case "parts":
-			return s("ref");
-		case "suppliers":
-			return s("name");
-		case "boms":
-			return `${labelOf(labels, "parts", row.parent_part_id)} ${s("code")} ${s("revision")}`;
-		case "bom_lines":
-			return `${labelOf(labels, "parts", row.component_part_id)} (${labelOf(labels, "boms", row.bom_id)})`;
-		case "part_suppliers":
-			return `${labelOf(labels, "parts", row.part_id)} · ${labelOf(labels, "suppliers", row.supplier_id)}`;
-		case "purchase_orders":
-		case "builds":
-			return s("number");
-		case "po_lines":
-			return `${labelOf(labels, "parts", row.part_id)} (${labelOf(labels, "purchase_orders", row.po_id)})`;
-		case "users":
-			return s("email");
-		case "settings":
-			return s("key");
-		default:
-			return `#${s("id")}`;
-	}
 }
 
 function tableLabel(view: Pick<AppView, "t">, table: string): string {

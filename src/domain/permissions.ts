@@ -13,10 +13,13 @@ type Rule = {
 export const PERMISSIONS = {
 	// Catalogue (office)
 	"parts.edit": { min: "planner" },
+	// Archiving hides a part or BoM and is undone by unarchiving; deleting is permanent (D125).
+	"parts.archive": { min: "admin" },
 	"parts.delete": { min: "admin" },
 	"suppliers.edit": { min: "planner" },
 	"suppliers.delete": { min: "admin" },
 	"boms.edit": { min: "planner" },
+	"boms.archive": { min: "admin" },
 	"boms.delete": { min: "admin" },
 	"prices.edit": { min: "planner" },
 	// Shop floor

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
 	bomId,
+	changeSql,
 	importCsv,
 	insertPart,
 	letLowerRolesSeeCosts,
@@ -43,6 +44,8 @@ const COST = 123456; // standard cost of BOX-LAMP
 const OFFER = 111111; // its offer price
 const SALE = 999999; // selling price of LAMP-DESK
 const AMOUNTS = ["1234.56", "1111.11", "9999.99", "987.65", "9876.50"];
+/** The same amounts in cents, as a raw snapshot would hold them. */
+const CENTS = ["123456", "111111", "999999", "98765", "987650"];
 
 /**
  * Demo data, the amounts above, a lamp built with serial components, a WIDGET (one BOX-LAMP each) with an open
@@ -51,12 +54,13 @@ const AMOUNTS = ["1234.56", "1111.11", "9999.99", "987.65", "9876.50"];
 async function seed() {
 	await loadDemo();
 	const box = await partId("BOX-LAMP");
-	// Fixture prices, written outside the change history (as a restore would).
+	// Fixture prices, written outside the change history (as a restore would), except the standard cost: its change
+	// is in the history, which list_recent_changes must not reveal either.
 	await seedSql(
-		stmt("UPDATE parts SET cost_cents = ? WHERE id = ?", COST, box),
 		stmt("UPDATE part_suppliers SET price_cents = ? WHERE part_id = ?", OFFER, box),
 		stmt("UPDATE parts SET sale_price_cents = ? WHERE ref = 'LAMP-DESK'", SALE),
 	);
+	await changeSql("Set the standard cost of BOX-LAMP", stmt("UPDATE parts SET cost_cents = ? WHERE id = ?", COST, box));
 
 	const lamp = await planBuild("LAMP-DESK", { serial: "L-0042" });
 	const page = await (await request(`/builds/${lamp}`)).text();
@@ -102,6 +106,7 @@ function calls(s: Awaited<ReturnType<typeof seed>>): [string, Record<string, unk
 		["get_shortages", {}],
 		["list_purchase_orders", { status: "all" }],
 		["get_purchase_order", { number: s.po }],
+		["list_recent_changes", { limit: 100 }],
 	];
 }
 
@@ -115,9 +120,11 @@ describe("cost redaction over MCP", () => {
 				const r = await callTool(token, name, args, NOT_ADMIN);
 				expect(r.isError, `${role} ${name}: ${r.text}`).toBe(false);
 				expect(r.data.costs_hidden, `${role} ${name}`).toBe(true);
-				for (const amount of AMOUNTS) expect(r.text, `${role} ${name} leaks ${amount}`).not.toContain(amount);
+				for (const amount of [...AMOUNTS, ...CENTS])
+					expect(r.text, `${role} ${name} leaks ${amount}`).not.toContain(amount);
+				// No amount field (as a key: list_recent_changes names a changed price, hidden, as a value).
 				expect(r.text, `${role} ${name}`).not.toMatch(
-					/"(standard_cost|sale_price|unit_cost|unit_price|price|total|total_cost|extended_cost|line_total)"/,
+					/"(standard_cost|sale_price|unit_cost|unit_price|price|total|total_cost|extended_cost|line_total)":/,
 				);
 			}
 		}
@@ -132,6 +139,15 @@ describe("cost redaction over MCP", () => {
 		expect(part.text).toContain('"price":"1111.11"');
 		const po = await callTool(planner, "get_purchase_order", { number: s.po }, NOT_ADMIN);
 		expect(po.text).toContain('"unit_price":"987.65"');
+		const history = await callTool(planner, "list_recent_changes", { query: "standard cost" }, NOT_ADMIN);
+		expect((history.data.changes as { changes: unknown[] }[])[0]?.changes).toEqual([
+			{
+				table: "parts",
+				op: "update",
+				record: "BOX-LAMP",
+				fields: [{ field: "cost", before: "1.20", after: "1234.56" }],
+			},
+		]);
 		expect(po.text).toContain('"total":"9876.50"');
 
 		await letLowerRolesSeeCosts();

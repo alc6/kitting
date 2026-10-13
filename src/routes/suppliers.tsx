@@ -1,15 +1,14 @@
-import { and, ne, sql } from "drizzle-orm";
 import { Hono } from "hono";
-import { type Supplier, suppliers } from "../db/schema";
+import type { Supplier } from "../db/schema";
 import { poUnitPrice, supplierOffers } from "../domain/offers";
 import { can } from "../domain/permissions";
 import {
 	createSupplierStatement,
 	deleteSupplierStatement,
-	findSupplierByName,
 	getSupplier,
 	listSuppliers,
 	supplierInput,
+	supplierNameTaken,
 	supplierToForm,
 	updateSupplierStatement,
 } from "../domain/suppliers";
@@ -286,7 +285,7 @@ supplierRoutes.post("/", requirePermission("suppliers.edit"), async (c) => {
 	const body = await c.req.parseBody();
 	const result = validate(supplierInput, body);
 	let errors: FieldErrors = result.ok ? {} : result.errors;
-	if (result.ok && (await findSupplierByName(c.var.db, result.data.name))) errors = { name: "duplicate_name" };
+	if (result.ok && (await supplierNameTaken(c.var.db, result.data.name))) errors = { name: "duplicate_name" };
 	if (!result.ok || Object.keys(errors).length > 0) {
 		return page(
 			c,
@@ -376,14 +375,8 @@ supplierRoutes.post("/:id", requirePermission("suppliers.edit"), async (c) => {
 	const body = await c.req.parseBody();
 	const result = validate(supplierInput, body);
 	let errors: FieldErrors = result.ok ? {} : result.errors;
-	if (result.ok) {
-		const clash = await c.var.db
-			.select({ id: suppliers.id })
-			.from(suppliers)
-			.where(and(sql`lower(${suppliers.name}) = lower(${result.data.name})`, ne(suppliers.id, supplier.id)))
-			.limit(1);
-		if (clash.length > 0) errors = { name: "duplicate_name" };
-	}
+	if (result.ok && (await supplierNameTaken(c.var.db, result.data.name, supplier.id)))
+		errors = { name: "duplicate_name" };
 	if (!result.ok || Object.keys(errors).length > 0) {
 		return page(
 			c,

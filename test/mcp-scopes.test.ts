@@ -16,11 +16,63 @@ import { toWire } from "../src/mcp/wire";
 
 const viewer = { role: "viewer", seeCosts: false } as const;
 const operator = { role: "operator", seeCosts: false } as const;
+const READ = ["catalog:read", "stock:read", "builds:read", "purchasing:read"];
+
+/** Every tool, by scope (sorted): the list the README documents. */
+const TOOLS_BY_SCOPE: Record<string, string[]> = {
+	"catalog:read": ["explode_bom", "get_bom", "get_part", "list_recent_changes", "search_parts"],
+	"catalog:write": [
+		"activate_bom",
+		"create_bom",
+		"create_part",
+		"create_supplier",
+		"new_bom_revision",
+		"set_bom_lines",
+		"update_part",
+		"update_supplier",
+	],
+	"prices:write": ["set_sale_price", "set_standard_cost", "upsert_supplier_offer"],
+	"catalog:archive": ["archive_bom", "archive_part", "unarchive_part"],
+	"stock:read": ["list_moves", "stock_on_hand"],
+	"stock:write": ["adjust_stock", "count_stock"],
+	"builds:read": ["get_build", "list_builds"],
+	"builds:write": ["cancel_build", "complete_build", "plan_build"],
+	"purchasing:read": ["get_purchase_order", "get_shortages", "list_purchase_orders"],
+	"purchasing:write": ["cancel_po", "close_po", "create_draft_pos", "mark_po_sent", "receive_po", "update_draft_po"],
+};
 
 describe("MCP scopes", () => {
-	it("offers the read scopes to every role", () => {
-		for (const role of ROLES) expect(offeredScopes({ role, seeCosts: false })).toEqual(MCP_SCOPE_NAMES);
-		expect(MCP_SCOPE_NAMES).toEqual(["catalog:read", "stock:read", "builds:read", "purchasing:read"]);
+	it("offers the read scopes to every role, and the write scopes whose actions the role has", () => {
+		for (const role of ROLES) {
+			const offered = offeredScopes({ role, seeCosts: false });
+			for (const scope of READ) expect(offered, role).toContain(scope);
+		}
+		expect(offeredScopes(viewer)).toEqual(READ);
+		expect(offeredScopes(operator)).toEqual([
+			"catalog:read",
+			"stock:read",
+			"stock:write",
+			"builds:read",
+			"builds:write",
+			"purchasing:read",
+			"purchasing:write",
+		]);
+		expect(offeredScopes({ role: "planner", seeCosts: true })).toEqual(
+			MCP_SCOPE_NAMES.filter((s) => s !== "catalog:archive"),
+		);
+		expect(offeredScopes({ role: "admin", seeCosts: true })).toEqual(MCP_SCOPE_NAMES);
+		expect(MCP_SCOPE_NAMES).toEqual([
+			"catalog:read",
+			"catalog:write",
+			"prices:write",
+			"catalog:archive",
+			"stock:read",
+			"stock:write",
+			"builds:read",
+			"builds:write",
+			"purchasing:read",
+			"purchasing:write",
+		]);
 	});
 
 	it("allows a tool only with its scope on the token AND its action in the user's role", () => {
@@ -46,34 +98,60 @@ describe("MCP scopes", () => {
 		expect(isMcpScope("builds:read")).toBe(true);
 	});
 
-	it("never reaches user management, backups, imports or the connections themselves", () => {
+	it("never deletes permanently, undoes, manages users, backs up, imports, uploads images or manages connections", () => {
+		for (const a of [
+			"parts.delete",
+			"suppliers.delete",
+			"boms.delete",
+			"purchasing.delete",
+			"history.revert",
+			"users.manage",
+			"backup.download",
+			"backup.restore",
+			"import.preview",
+			"import.commit",
+			"apps.connect",
+			"apps.manage",
+		] as const)
+			expect(NEVER_OVER_MCP).toContain(a);
 		const actions: Action[] = [
 			...Object.values(MCP_SCOPES).flatMap((s) => [...s.actions]),
 			...TOOLS.flatMap((t) => (t.rule.action ? [t.rule.action] : [])),
 		];
 		for (const a of actions) expect(NEVER_OVER_MCP).not.toContain(a);
 		for (const t of TOOLS) {
-			expect(t.name).not.toMatch(/delete|purge|import|backup|restore|upload|image|user|role/);
+			expect(t.name).not.toMatch(/delete|remove|purge|import|backup|restore|upload|image|user|role|revert|undo/);
 			expect(MCP_SCOPE_NAMES).toContain(t.rule.scope);
 		}
 	});
 
-	it("has one tool per name, every read tool on a read scope", () => {
+	it("gives every write tool an action of its scope and annotations, and every read tool neither", () => {
+		for (const t of TOOLS) {
+			const scope = MCP_SCOPES[t.rule.scope];
+			if (scope.kind === "read") {
+				expect(t.rule.action, t.name).toBeUndefined();
+				expect(t.annotations, t.name).toBeUndefined();
+				continue;
+			}
+			expect(t.rule.action, t.name).toBeDefined();
+			expect(scope.actions as readonly string[], t.name).toContain(t.rule.action);
+			expect(t.annotations, t.name).toMatchObject({ readOnlyHint: false, openWorldHint: false });
+			expect(typeof t.annotations?.destructiveHint, t.name).toBe("boolean");
+			expect(typeof t.annotations?.idempotentHint, t.name).toBe("boolean");
+		}
+	});
+
+	it("has one tool per name, each on its scope", () => {
 		expect(new Set(TOOLS.map((t) => t.name)).size).toBe(TOOLS.length);
-		expect(TOOLS.map((t) => t.name).sort()).toEqual([
-			"explode_bom",
-			"get_bom",
-			"get_build",
-			"get_part",
-			"get_purchase_order",
-			"get_shortages",
-			"list_builds",
-			"list_moves",
-			"list_purchase_orders",
-			"search_parts",
-			"stock_on_hand",
-		]);
-		for (const t of TOOLS) expect(MCP_SCOPES[t.rule.scope].kind).toBe("read");
+		const byScope = Object.fromEntries(
+			MCP_SCOPE_NAMES.map((s) => [
+				s,
+				TOOLS.filter((t) => t.rule.scope === s)
+					.map((t) => t.name)
+					.sort(),
+			]),
+		);
+		expect(byScope).toEqual(TOOLS_BY_SCOPE);
 	});
 });
 

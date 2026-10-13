@@ -1,7 +1,9 @@
+import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
+import { MCP_SCOPE_NAMES } from "../src/domain/mcp-scopes";
 import { oauthOriginOk } from "../src/mcp/oauth";
 import { CONTENT_SECURITY_POLICY } from "../src/middleware/security";
-import { loadDemo, NOT_ADMIN, ORIGIN, postForm, request, setRole, TESTER } from "./helpers";
+import { loadDemo, NOT_ADMIN, ORIGIN, postForm, request, rows, seedSql, setRole, stmt, TESTER } from "./helpers";
 import {
 	authorizeQuery,
 	callTool,
@@ -21,7 +23,7 @@ import {
 } from "./mcp-helpers";
 
 const ALL = ["catalog:read", "stock:read", "builds:read", "purchasing:read"];
-const CATALOG_TOOLS = ["explode_bom", "get_bom", "get_part", "search_parts"];
+const CATALOG_TOOLS = ["explode_bom", "get_bom", "get_part", "list_recent_changes", "search_parts"];
 const STOCK_TOOLS = ["list_moves", "stock_on_hand"];
 
 beforeEach(async () => {
@@ -64,6 +66,11 @@ describe("connecting an AI assistant", () => {
 		expect(init.serverInfo).toMatchObject({ name: "kitting" });
 		expect(String(init.instructions)).toContain("decimal");
 		expect(String(init.instructions)).toContain("costs_hidden");
+		expect(String(init.instructions)).toContain("Confirm before writes");
+		expect(String(init.instructions)).toContain("BoM edits go through draft revisions");
+		expect(String(init.instructions)).toContain(
+			"except stock and build ledger operations (adjustments, counts, receipts, build completions), which are corrected with reverse movements",
+		);
 		expect(await toolNames(tokens.access_token)).toEqual([...CATALOG_TOOLS, ...STOCK_TOOLS].sort());
 		const found = await callTool(tokens.access_token, "search_parts", { query: "lamp" });
 		expect(found.isError, found.text).toBe(false);
@@ -293,14 +300,69 @@ describe("Access and the optional binding", () => {
 		expect(oauthOriginOk("http://localhost.example.com")).toBe(false);
 	});
 
-	it("advertises this deployment's /mcp as the protected resource and the read scopes", async () => {
+	it("advertises this deployment's /mcp as the protected resource and every scope", async () => {
 		const prm = (await (await request("/.well-known/oauth-protected-resource/mcp")).json()) as Record<string, unknown>;
 		expect(prm.resource).toBe(MCP_URL);
 		const as = (await (await request("/.well-known/oauth-authorization-server")).json()) as Record<string, unknown>;
 		expect(as.authorization_endpoint).toBe(`${ORIGIN}/authorize`);
 		expect(as.token_endpoint).toBe(`${ORIGIN}/token`);
 		expect(as.registration_endpoint).toBe(`${ORIGIN}/register`);
-		expect(as.scopes_supported).toEqual(ALL);
+		expect(as.scopes_supported).toEqual(MCP_SCOPE_NAMES);
 		expect(as.code_challenge_methods_supported).toEqual(["S256"]);
+	});
+});
+
+describe("offboarding (D130)", () => {
+	const OP = { ...NOT_ADMIN, DEV_AUTH_EMAIL: "op@example.com" };
+
+	it("lets only listed people connect: others are viewers in the app but get an explanation", async () => {
+		const clientId = await registerClient();
+		const { challenge } = await pkce();
+		const path = authorizeQuery(clientId, challenge, ["catalog:read"]);
+		const consent = await openConsent(path, OP);
+		expect(consent.res.status).toBe(403);
+		expect(consent.handle).toBe("");
+		expect(consent.html).toContain("op@example.com must be listed on the Users page");
+		const forged = await submitConsent(path, { handle: "x", cookie: "" }, "approve", ["catalog:read"], OP);
+		expect(forged.status).toBe(403);
+		expect(forged.headers.get("Location")).toBeNull();
+		expect((await env.OAUTH_KV.list({ prefix: "grant:" })).keys).toEqual([]);
+		// The web app is unchanged: an unlisted person is a viewer there.
+		expect((await request("/parts", {}, OP)).status).toBe(200);
+
+		await setRole("viewer", "op@example.com");
+		const token = await connect(["catalog:read"], { overrides: OP });
+		expect(await toolNames(token, OP)).toEqual(CATALOG_TOOLS);
+	});
+
+	it("refuses every call once the user is no longer listed, even with a valid token", async () => {
+		await loadDemo();
+		await setRole("operator", "op@example.com");
+		const token = await connect(["catalog:read", "stock:write"], { overrides: OP });
+		expect((await callTool(token, "search_parts", { query: "lamp" }, OP)).isError).toBe(false);
+		// Removed outside the Users page (no revocation): the per-call check alone stops it.
+		await seedSql(stmt("DELETE FROM users WHERE email = 'op@example.com'"));
+		for (const method of ["tools/list", "tools/call"]) {
+			const res = await mcpPost(token, method, { name: "adjust_stock", arguments: {} }, OP);
+			expect(res.status, method).toBe(403);
+			expect((await rpc(res)).error?.message).toContain("op@example.com is not listed on the Users page");
+		}
+	});
+
+	it("revokes all of a user's connections when they are removed on the Users page", async () => {
+		await setRole("operator", "op@example.com");
+		const one = await connect(["catalog:read"], { overrides: OP });
+		const two = await connect(["stock:read"], { overrides: OP });
+		const mine = await connect(["catalog:read"]);
+		const id = (await rows<{ id: number }>("SELECT id FROM users WHERE email = 'op@example.com'"))[0]?.id;
+		const removed = await postForm(`/users/${id}/delete`, {});
+		expect(removed.status).toBe(303);
+		expect((await mcpPost(one, "tools/list", {}, OP)).status).toBe(401);
+		expect((await mcpPost(two, "tools/list", {}, OP)).status).toBe(401);
+		const keys = (await env.OAUTH_KV.list({ prefix: `grant:${encodeURIComponent("op@example.com")}:` })).keys;
+		expect(keys).toEqual([]);
+		// Other people's connections are untouched.
+		expect(await toolNames(mine)).toEqual(CATALOG_TOOLS);
+		expect(await (await request("/connected-apps")).text()).not.toContain("op@example.com");
 	});
 });

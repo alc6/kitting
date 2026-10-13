@@ -12,25 +12,20 @@ import {
 	deleteOfferStatements,
 	getOffer,
 	offerInput,
-	offerTerms,
 	offerToForm,
 	type PartOffer,
 	partOffers,
 	poUnitPrice,
-	saveOfferStatements,
 	setPreferredStatement,
 } from "../domain/offers";
 import {
 	archivePartStatement,
+	checkPart,
 	deletePartStatement,
-	findRefClash,
 	getPart,
-	hasBoms,
-	hasStockMoves,
 	listParts,
+	offerFormStatements,
 	onHandOf,
-	partInput,
-	partRuleErrors,
 	partToForm,
 	savePartStatements,
 	setStandardCostStatements,
@@ -41,10 +36,9 @@ import { averageCosts } from "../domain/stock";
 import { getSupplier } from "../domain/suppliers";
 import { errorText, fmt } from "../i18n";
 import { cn } from "../lib/cn";
-import type { Statement } from "../lib/db";
 import { isConstraintError } from "../lib/sql";
 import { formatMoney, formatPercent, lineCostCents } from "../lib/units";
-import { type FieldErrors, validate } from "../lib/validation";
+import { validate } from "../lib/validation";
 import { requirePermission } from "../middleware/roles";
 import type { AppEnv } from "../types";
 import { CostView, StatusBadge } from "../views/bom";
@@ -281,21 +275,8 @@ function PartForm(props: {
 }
 
 /** Validates a part form, including uniqueness and kind/serial rules. */
-async function validatePart(c: Context<AppEnv>, body: Record<string, unknown>, existing?: Part) {
-	const result = validate(partInput, body);
-	if (!result.ok) return { ok: false as const, errors: result.errors };
-	const d = result.data;
-	const errors: FieldErrors = {};
-	const clash = await findRefClash(c.var.db, d.ref, existing?.id);
-	if (clash) {
-		if (clash.ref === d.ref) errors.ref = "duplicate_ref";
-		else errors.ref = "ref_case";
-	}
-	const hasMoves = existing ? await hasStockMoves(c.var.db, existing.id) : false;
-	const ownsBoms = existing ? await hasBoms(c.var.db, existing.id) : false;
-	Object.assign(errors, partRuleErrors({ kind: d.kind, trackSerial: d.track_serial }, { hasMoves, hasBoms: ownsBoms }));
-	if (Object.keys(errors).length > 0) return { ok: false as const, errors, clashRef: clash?.ref };
-	return { ok: true as const, data: d };
+function validatePart(c: Context<AppEnv>, body: Record<string, unknown>, existing?: Part) {
+	return checkPart(c.var.db, body, existing);
 }
 
 partRoutes.get("/", async (c) => {
@@ -432,6 +413,7 @@ function PartDetail(props: {
 	const view = useApp();
 	const { t, seeCosts } = view;
 	const canEdit = can(view, "parts.edit");
+	const canArchive = can(view, "parts.archive");
 	const canDelete = can(view, "parts.delete");
 	const p = props.part;
 	const stocked = isStocked(p.kind);
@@ -459,7 +441,7 @@ function PartDetail(props: {
 								{t.parts.adjustStock}
 							</Button>
 						) : null}
-						{canDelete ? (
+						{canArchive ? (
 							p.archived ? (
 								<PostButton
 									action={`/parts/${p.id}/unarchive`}
@@ -1669,33 +1651,23 @@ async function createOffer(c: Context<AppEnv>) {
 	}
 	const d = result.data;
 	const supplierId = result.data.supplier_id;
-	const user = c.var.user;
-	const now = nowIso();
-	const stmts: Statement[] = [
-		...saveOfferStatements(c.var.db, { partId: part.id }, supplierId, offerTerms(d), undefined, "form", user, now),
-	];
-	if (d.preferred) stmts.push(setPreferredStatement(c.var.db, part.id, supplierId, user, now));
-	stmts.push(...(await offerStandardStatements(c, part, supplierId, d)));
 	const supplier = await getSupplier(c.var.db, supplierId);
+	const supplierName = supplier?.name ?? String(supplierId);
 	await saveChanges(
 		c,
-		fmt(t.history.summaries.offerCreate, { supplier: supplier?.name ?? String(supplierId), ref: part.ref }),
-		stmts,
+		fmt(t.history.summaries.offerCreate, { supplier: supplierName, ref: part.ref }),
+		offerFormStatements(
+			c.var.db,
+			part,
+			supplierId,
+			d,
+			undefined,
+			fmt(t.parts.noteOffer, { supplier: supplierName }),
+			c.var.user,
+			nowIso(),
+		),
 	);
 	return redirectOk(c, `/parts/${part.id}`);
-}
-
-/** "Also use this price as the standard cost" (D99): the part's standard cost, with its history row. */
-async function offerStandardStatements(
-	c: Context<AppEnv>,
-	part: Part,
-	supplierId: number,
-	d: { price: number | null; set_standard_cost: boolean },
-): Promise<Statement[]> {
-	if (!d.set_standard_cost || d.price === null) return [];
-	const supplier = await getSupplier(c.var.db, supplierId);
-	const note = fmt(c.var.t.parts.noteOffer, { supplier: supplier?.name ?? String(supplierId) });
-	return setStandardCostStatements(c.var.db, part, d.price, "form", c.var.user, nowIso(), note);
 }
 
 partRoutes.post("/:id/offers", requirePermission("prices.edit"), createOffer);
@@ -1738,28 +1710,20 @@ partRoutes.post("/:id/offers/:supplierId", requirePermission("prices.edit"), asy
 			422,
 		);
 	}
-	const d = result.data;
-	const user = c.var.user;
-	const now = nowIso();
-	const stmts: Statement[] = [
-		...saveOfferStatements(
-			c.var.db,
-			{ partId: part.id },
-			found.supplier.id,
-			offerTerms(d),
-			found.offer,
-			"form",
-			user,
-			now,
-		),
-	];
 	// Unticking never clears the preferred supplier: another offer is made preferred instead.
-	if (d.preferred && !preferred) stmts.push(setPreferredStatement(c.var.db, part.id, found.supplier.id, user, now));
-	stmts.push(...(await offerStandardStatements(c, part, found.supplier.id, d)));
 	await saveChanges(
 		c,
 		fmt(c.var.t.history.summaries.offerEdit, { supplier: found.supplier.name, ref: part.ref }),
-		stmts,
+		offerFormStatements(
+			c.var.db,
+			part,
+			found.supplier.id,
+			result.data,
+			found.offer,
+			fmt(c.var.t.parts.noteOffer, { supplier: found.supplier.name }),
+			c.var.user,
+			nowIso(),
+		),
 	);
 	return redirectOk(c, `/parts/${part.id}`);
 });
@@ -1797,7 +1761,7 @@ for (const [action, archived] of [
 	["archive", true],
 	["unarchive", false],
 ] as const) {
-	partRoutes.post(`/:id/${action}`, requirePermission("parts.delete"), async (c) => {
+	partRoutes.post(`/:id/${action}`, requirePermission("parts.archive"), async (c) => {
 		const id = idParam(c);
 		const part = id ? await getPart(c.var.db, id) : undefined;
 		if (!part) return notFound(c);

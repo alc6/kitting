@@ -1,9 +1,11 @@
 // Stock: the append-only ledger of moves. On-hand is always SUM(qty_milli) per part.
 import { and, asc, desc, eq, gte, lte, type SQL, sql } from "drizzle-orm";
+import { z } from "zod";
 import { MOVE_REASONS, type MoveReason, type Part, type PartKind, parts, stockMoves } from "../db/schema";
 import type { Statement } from "../lib/db";
 import { likePattern } from "../lib/sql";
 import { MILLI } from "../lib/units";
+import { type FieldErrors, field } from "../lib/validation";
 import type { Db } from "../types";
 import { CostCalculator, centsOf } from "./bom-graph";
 import { loadGraph } from "./boms";
@@ -41,6 +43,35 @@ export function moveValues(
 		createdAt: ctx.now,
 		updatedAt: ctx.now,
 	};
+}
+
+export const adjustInput = z.object({
+	part: field.required(64),
+	qty: field.signedQty(),
+	serial: field.text(100),
+	note: field.required(500),
+});
+
+/**
+ * Errors of a manual adjustment, from the form or an MCP tool: a stocked part, a quantity other than zero, and
+ * one unit in or out when a serial of a serial-tracked part is given.
+ */
+export function adjustmentErrors(
+	part: Pick<Part, "kind" | "trackSerial"> | undefined,
+	d: { part: string; qty: number; serial: string },
+): { errors: FieldErrors; vars: Record<string, string> } {
+	const errors: FieldErrors = {};
+	const vars: Record<string, string> = {};
+	if (!part) {
+		errors.part = "unknown_part";
+		vars.ref = d.part;
+	} else if (!isStocked(part.kind)) {
+		errors.part = "not_stocked";
+		vars.kind = part.kind;
+	}
+	if (d.qty === 0) errors.qty = "zero_qty";
+	else if (d.serial && part?.trackSerial && Math.abs(d.qty) !== MILLI) errors.qty = "serial_one";
+	return { errors, vars };
 }
 
 /** A manual adjustment (signed quantity), valued at the part's standard cost. */
