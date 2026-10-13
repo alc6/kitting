@@ -694,3 +694,41 @@ Short log of choices made where the brief left room. Newest at the bottom of eac
   label, the import hint), it is a **component**, never an "assembly line" (French: composant, never "ligne
   d'assemblage"), which would read as a production line; the editor itself keeps "Lines".
   The skill and the MCP instructions still list "bill of materials", "BoM" and "nomenclature" as synonyms.
+- **D141. Installers pin a release and keep only their settings: release bundle, deploy script, Terraform module.**
+  A company that runs Kitting from its own private monorepo should not have to copy the code, and an upgrade
+  should be a version number. Three pieces:
+  - *The release bundle.* Pushing a `v*` tag (which must equal `v` + `package.json`'s version) runs `npm run check`
+    and the migrations-in-sync check, then `scripts/build-release.mjs` builds `kitting-<version>.tar.gz` and its
+    sha256: the Worker bundled by `wrangler deploy --dry-run --outdir` (`worker/index.js`, a single file; the build
+    fails if wrangler emits more, or if the code embeds the build path), `public/` with `app.css` built,
+    `migrations/*.sql`, the config template and generator, `deploy-release.mjs` and `release.json` (version and
+    the exact wrangler version). It holds no setting of any installation (bindings and vars live in the generated
+    `wrangler.jsonc`, not in the code). The archive is written by a small ustar writer in Node, so it is the same
+    bytes whatever the machine's `tar`; no dependency. The release job extracts the archive in an empty folder and
+    runs the deploy script with `--dry-run` as a smoke test. The release is published with `gh`, not a third-party
+    action.
+  - *The deploy script.* `scripts/deploy-release.mjs` reuses `buildConfig()` of `gen-wrangler-config.mjs` with
+    `prebuilt: true`: `main` is `worker/index.js`, `no_bundle` is set and the `build` command is dropped, so wrangler
+    uploads the file as is (checked: with a marker added to `worker/index.js`, the dry-run output is byte-identical)
+    and nothing needs `node_modules`. The forced production settings are the same code path as the other deploys.
+    It takes the Deploy workflow's variable names from the environment, or from a JSON file (`--settings`, the
+    shape of the module's `deploy_env` output; the environment wins), applies the migrations, then deploys.
+    wrangler runs through `npx` at the version recorded in `release.json`. `--dry-run` needs no credentials.
+  - *The Terraform module.* `infra/terraform` (Cloudflare provider `~> 5.27.0`: the v5 schemas change between minor
+    versions) creates the D1 database (`prevent_destroy`), the R2 bucket and the KV namespace behind booleans, the
+    Access application on the hostname with an Allow policy (emails and/or email domains, ORed), and with
+    `enable_mcp` the second application on `mcp`, `token`, `register` and `.well-known/*` with a Bypass policy
+    (D115 and docs/mcp.md). The policies are reusable account-level policies attached with `policies`. The bucket
+    also has `prevent_destroy`, because it holds photos; the KV namespace does not (tokens can be reissued). Outputs
+    are what the deploy script reads, plus `deploy_env` in its exact names; `team_domain` comes from the
+    `cloudflare_zero_trust_organization` data source, so the organization must already exist. The module creates no
+    DNS record or Worker: the custom domain is attached at deploy time. `manage_access = false` leaves Access to the
+    installer. The module is consumed with `source = "github.com/alc6/kitting//infra/terraform?ref=v<version>"`;
+    upgrading is changing that ref and the release version of the CI job together (a step and a test check that
+    they agree).
+  - *Rejected: the "Deploy to Cloudflare" button.* Cloudflare's button needs a public repository with a Wrangler
+    config, clones it into the user's own GitHub or GitLab account (the opposite of not copying the code) and runs
+    its build and deploy commands there. Kitting's repository tracks no `wrangler.jsonc` on purpose (CLAUDE.md), the
+    custom domain and Access application cannot come out of it, and the deployment would be unusable until Access
+    is set up: the Worker answers 403 to every request without an Access token. Terraform plus a release does
+    what the button cannot.

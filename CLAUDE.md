@@ -25,7 +25,8 @@ was built with; `npx skills update` refreshes it.
 
 ## Commands
 
-- `npm run check`: CSS build + typecheck (`tsc`, TypeScript 7) + lint (Biome) + tests. Run it before committing.
+- `npm run check`: CSS build + typecheck (`tsc`, TypeScript 7) + lint (Biome) + tests + the Node tests of the scripts.
+  Run it before committing.
 - `npm run css`: build `public/static/app.css` from `src/styles/app.css` (Tailwind v4; output gitignored).
   `npm run css:watch` while editing classes (`wrangler dev` with the example config also rebuilds it).
 - `npm test`: Vitest in workerd via `@cloudflare/vitest-plugin`, real local D1.
@@ -35,6 +36,9 @@ was built with; `npx skills update` refreshes it.
 - `npm run -s db:triggers >> migrations/<new migration>.sql`: after adding or removing a column of a tracked
   table (`HISTORY_TABLES`), re-creates the history triggers (Node 22.18+). `test/history.test.ts` fails until you do.
 - `npm run skill:zip`: packs the Kitting skill as `dist/kitting-skill.zip` for claude.ai (no dependency, D135).
+- `npm run test:scripts`: Node tests (`node --test`) of `scripts/` (`scripts/tests/*.node.mjs`; Vitest runs in workerd
+  and cannot load them).
+- `npm run release:bundle`: builds `dist/kitting-<version>.tar.gz` (+ sha256), the release bundle (D141).
 - `npm run format`: Biome formatting + safe fixes (tabs, double quotes, 120 columns).
 
 ## Layout
@@ -70,6 +74,10 @@ was built with; `npx skills update` refreshes it.
 - `plugins/kitting/`: the Claude plugin (D132): `.claude-plugin/plugin.json`, `.mcp.json` (connector URL from
   `KITTING_MCP_URL`), the skill in `skills/kitting/` (`SKILL.md` + `references/`) and `evals/`. The repository's
   `.claude-plugin/marketplace.json` lists it.
+- `scripts/`: `gen-wrangler-config.mjs` (wrangler.jsonc from variables; `prebuilt` mode for a bundle),
+  `build-release.mjs` and `deploy-release.mjs` (release bundle and its deploy, D141).
+  `infra/terraform/`: the Terraform module for the Cloudflare resources (provider pinned `~> 5.27.0`) and
+  `examples/basic` (a consumer, with the CI job for a private repository).
 - `public/static/`: built CSS, `app.js` (confirm, theme/sidebar toggles, search shortcut, diagram zoom,
   photo shrinking before upload),
   vendored `htmx.min.js` (`npm run vendor:htmx` to update).
@@ -212,6 +220,17 @@ was built with; `npx skills update` refreshes it.
 - The datasets in `examples/` are fixtures and must always import cleanly: `examples/demo/` is the small one for a
   first look, `examples/full/` the one most tests load (`loadDemo()`).
 
+## Releases
+
+A release is a `v<version>` tag (never push one unasked); `.github/workflows/release.yml` refuses a tag that
+differs from `package.json`'s version. Before tagging, bump the version together in `package.json`,
+`plugins/kitting/.claude-plugin/plugin.json` and `SERVER_INFO.version`, and the pinned `ref=v…` of
+`infra/terraform/examples/basic/main.tf` and `infra/terraform/README.md`, `KITTING_VERSION` of
+`infra/terraform/examples/basic/kitting-deploy.yml` and the snippets in `docs/deploy.md` (the workflow is pasted there
+verbatim). `scripts/tests/terraform-module.node.mjs` fails until the example and the docs agree. CI runs `terraform fmt
+-check` and `terraform validate` on the module. A setting the deploy script reads goes in `SETTINGS`
+(`deploy-release.mjs`) and in the module's `deploy_env`, and a module change is a release note.
+
 ## Git
 
 Small, focused commits following [Conventional Commits](https://www.conventionalcommits.org):
@@ -219,7 +238,7 @@ Small, focused commits following [Conventional Commits](https://www.conventional
 
 - Types: `feat`, `fix`, `docs`, `refactor`, `test`, `perf`, `style`, `build`, `ci`, `chore`.
 - Scopes are app areas, optional: `parts`, `suppliers`, `assemblies`, `stock`, `builds`, `purchasing`,
-  `pricing`, `import`, `auth`, `ui`, `db`, `mcp`, `plugin`.
+  `pricing`, `import`, `auth`, `ui`, `db`, `mcp`, `plugin`, `deploy`.
 - Examples: `feat(builds): allow cancelling a planned build`, `fix(import): accept semicolon CSVs`,
   `docs: explain the Access setup`, `chore: bump wrangler`.
 - Breaking changes (e.g. a migration that needs manual steps): `feat(db)!: …` plus a `BREAKING CHANGE:` line.

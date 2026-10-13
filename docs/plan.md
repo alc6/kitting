@@ -140,6 +140,19 @@ The know-how for assistants, installable with the tools (D132–D135).
 - [x] Evaluation prompts with expected tool sequences (`plugins/kitting/evals/`, run by hand)
 - [x] README "Use Kitting from Claude": Claude Code and Cowork, claude.ai, other clients, a company's private copy
 
+## M13: Releases and Terraform ✅
+
+Install and upgrade without copying the code (D141).
+
+- [x] Release workflow: a `v*` tag runs the checks, builds `kitting-<version>.tar.gz` (built Worker, assets,
+      migrations, deploy script) with its sha256, smoke-tests it in a dry run and attaches both to a GitHub release
+- [x] `scripts/deploy-release.mjs`: settings from environment variables or a JSON file, migrations, prebuilt Worker
+- [x] Terraform module `infra/terraform` (Cloudflare provider 5.27): D1, optional R2 and KV, Access applications and
+      policies, outputs for the deploy script; example and CI job for a private repository
+- [x] CI: `terraform fmt -check` and `terraform validate`, Node tests of the scripts
+- [x] Docs: "Install with Terraform and a release"
+- [ ] Deploy to Cloudflare button: declined (D141)
+
 ## After v1 (ideas, not planned)
 
 - MCP: Client ID Metadata Documents (needs the `global_fetch_strictly_public` compatibility flag, D123).

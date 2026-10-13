@@ -61,6 +61,11 @@ You can also deploy from GitHub Actions: the manual Deploy workflow builds `wran
 variables, so nothing about your account ends up in git. [docs/deploy.md](docs/deploy.md) covers both, step by
 step, along with the Access setup.
 
+To run Kitting without copying its code (for example from your company's private repository), pin a release: a
+Terraform module in [`infra/terraform`](infra/terraform) creates the database, the Access application and the
+other Cloudflare resources, and a script deploys the release bundle with your settings. Upgrading is changing a
+version number. See "Install with Terraform and a release" in [docs/deploy.md](docs/deploy.md).
+
 | Setting | Example | |
 | --- | --- | --- |
 | `TEAM_DOMAIN` | `acme.cloudflareaccess.com` | Your Cloudflare Zero Trust team domain. |

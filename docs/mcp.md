@@ -18,7 +18,8 @@ This is optional. Without the setup below, the MCP routes answer 404 and the res
    ```
 
    Put its ID in the `kv_namespaces` block of `wrangler.jsonc`, or in the `OAUTH_KV_ID` variable if you deploy
-   from GitHub Actions.
+   from GitHub Actions. The Terraform module creates it, and the Access application of the next step, with
+   `enable_mcp = true`.
 
 2. **Let the OAuth paths through Access.** These paths check OAuth tokens themselves, so Access must not block
    them. In Zero Trust, add a second self-hosted application, for example "Kitting MCP", on your hostname with
