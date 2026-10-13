@@ -28,6 +28,10 @@
 	// `npx wrangler r2 bucket create kitting-images`. Without this binding the app runs without images.
 	// The deploy workflow adds it only when the IMAGES_BUCKET variable is set.
 	"r2_buckets": [{ "binding": "IMAGES", "bucket_name": "kitting-images" }],
+	// Optional: the MCP server for AI assistants (OAuth clients, grants and tokens live in this KV namespace).
+	// Create it once with `npx wrangler kv namespace create OAUTH_KV` and put its id here. Without this binding
+	// /mcp and the OAuth routes answer 404. The deploy workflow adds it only when the OAUTH_KV_ID variable is set.
+	"kv_namespaces": [{ "binding": "OAUTH_KV", "id": "00000000000000000000000000000000" }],
 	"vars": {
 		"ENVIRONMENT": "production",
 		// Your Zero Trust team domain, e.g. "acme.cloudflareaccess.com".

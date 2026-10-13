@@ -8,6 +8,9 @@ export default defineConfig(async () => {
 			cloudflareTest({
 				wrangler: { configPath: "./wrangler.example.jsonc" },
 				miniflare: {
+					// The MCP server's OAuth store (optional in deployments, always present in tests; a test removes
+					// it with { OAUTH_KV: undefined } to check the app without it).
+					kvNamespaces: ["OAUTH_KV"],
 					// Every var is pinned so a local .dev.vars cannot change test results.
 					bindings: {
 						ENVIRONMENT: "development",

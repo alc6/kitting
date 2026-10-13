@@ -1,22 +1,32 @@
 import { createMiddleware } from "hono/factory";
 import type { AppEnv } from "../types";
 
-export const CONTENT_SECURITY_POLICY = [
-	"default-src 'self'",
-	"script-src 'self'",
-	"style-src 'self'",
-	"img-src 'self' data:",
-	"connect-src 'self'",
-	"form-action 'self'",
-	"frame-ancestors 'none'",
-	"base-uri 'none'",
-	"object-src 'none'",
-].join("; ");
+/**
+ * The policy of every page. `formActionOrigin` adds one origin a form on the page may end up at: the MCP consent
+ * form posts here, then redirects to the client's registered redirect URI, and browsers check form-action on
+ * that redirect too (D121). Only an origin parsed by URL is passed, never raw input.
+ */
+export function contentSecurityPolicy(formActionOrigin?: string): string {
+	return [
+		"default-src 'self'",
+		"script-src 'self'",
+		"style-src 'self'",
+		"img-src 'self' data:",
+		"connect-src 'self'",
+		formActionOrigin ? `form-action 'self' ${formActionOrigin}` : "form-action 'self'",
+		"frame-ancestors 'none'",
+		"base-uri 'none'",
+		"object-src 'none'",
+	].join("; ");
+}
+
+export const CONTENT_SECURITY_POLICY = contentSecurityPolicy();
 
 /** Security headers on every Worker response. Inline scripts and styles are never allowed. */
 export const securityHeaders = createMiddleware<AppEnv>(async (c, next) => {
 	await next();
-	c.header("Content-Security-Policy", CONTENT_SECURITY_POLICY);
+	const formAction = c.get("formActionOrigin");
+	c.header("Content-Security-Policy", formAction ? contentSecurityPolicy(formAction) : CONTENT_SECURITY_POLICY);
 	c.header("X-Content-Type-Options", "nosniff");
 	c.header("X-Frame-Options", "DENY");
 	c.header("Referrer-Policy", "same-origin");

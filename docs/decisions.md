@@ -33,6 +33,8 @@ Short log of choices made where the brief left room. Newest at the bottom of eac
 | `lucide` | Icons (shadcn/ui's default set), rendered as inline SVG on the server (D85). |
 | `tailwind-merge` | `cn()`: a caller's classes override a component's defaults, as in shadcn/ui (D86). |
 | dev: `tailwindcss`, `@tailwindcss/cli` | Build `public/static/app.css` from `src/styles/app.css` (D81). |
+| `@cloudflare/workers-oauth-provider` | OAuth 2.1 server for the MCP endpoint: client registration, PKCE, tokens, refresh, revocation, discovery metadata, grants in KV with hashed tokens and encrypted props (D115). Cloudflare's library, MIT. |
+| `@modelcontextprotocol/server` | The official MCP TypeScript SDK (v2 server package): protocol, tool schemas from zod, a stateless HTTP handler for both protocol revisions (D115). Apache-2.0; depends only on zod and its own core package. |
 
 ## Data model
 
@@ -441,3 +443,87 @@ Short log of choices made where the brief left room. Newest at the bottom of eac
   with `json_extract` on the snapshots). The Undo button shows only to those allowed (D112) on change sets
   that can be undone and are not undone already; a refused undo re-renders the page (409) with the reasons.
   The sidebar label lives in the `history` dictionary section (`NavItem.label`).
+
+## MCP server
+
+- **D115. An MCP server in the same Worker, stateless, on the official SDK v2.** AI assistants reach Kitting at
+  `/mcp` (Streamable HTTP) on the same Worker and D1 as the app. `@modelcontextprotocol/server` 2.x is the
+  current stable line of the official TypeScript SDK; its `createMcpHandler` builds a fresh `McpServer` per
+  request, answers 2026-07-28 clients (per-request envelope, `server/discover`) and 2025-era clients (an
+  `initialize` handshake served by its stateless fallback) from one factory, and needs no session, so no
+  Durable Object. v1 (`@modelcontextprotocol/sdk`) was ruled out: a single package that depends on Express,
+  cors, Hono and more, now superseded. The OAuth side is `@cloudflare/workers-oauth-provider` 1.x in its
+  one-Worker form (`OAuthProvider`): dynamic client registration at `/register`, S256 PKCE only, `/token` for
+  codes, refreshes and revocation, RFC 8414 and RFC 9728 metadata, everything in the `OAUTH_KV` namespace
+  (tokens and secrets hashed, props encrypted). Like the images bucket (D100), the binding is optional: the
+  config generator adds it only with `OAUTH_KV_ID`, and without it the app is unchanged. No migration: nothing
+  of MCP lives in D1.
+- **D116. A connection's scopes are a ceiling; the role decides on every request.** `src/domain/mcp-scopes.ts`
+  maps each scope to its kind (read or write) and to the permission actions its tools perform (D105); a tool
+  declares `{ scope, action? }`. A tool is listed and callable only when the token carries its scope AND the
+  user's current access allows it: `/mcp` runs `resolveAccess(email)` on every request, so a demotion or a
+  change of the cost option applies to the next call, and nothing about the role is stored in the token. The
+  consent page offers only the scopes the role allows (a scope with actions needs one of them; reading needs
+  none, as every page reads). This first part offers the four read scopes; write scopes (`catalog:write`,
+  `prices:write`, `catalog:archive`, `stock:write`, `builds:write`, `purchasing:write`) are added later as
+  table rows with their actions, without changing the checks. The server registers only the allowed tools
+  (the SDK's own scope challenge keeps a tool listed, which the rule forbids). A call to a known tool outside
+  the token's scopes gets the MCP step-up answer, `403 insufficient_scope` naming the granted scopes plus the
+  missing one, so a client can ask again; one the role forbids gets a JSON-RPC error saying so. Never over MCP,
+  now or later: user management, backup and restore, CSV import, the connections themselves
+  (`NEVER_OVER_MCP`, checked by a test), and no tool deletes permanently or uploads images.
+- **D117. Consent behind Access, with the provider's consent helpers.** `/authorize` is an ordinary page behind
+  Access (accessAuth says who the user is, there is no second login). It shows the client's name (marked
+  unverified, as dynamic registration lets a client pick any name), the redirect host, a warning for a
+  loopback redirect, one checkbox per offered scope, Allow and Deny. `beginConsent()` binds the form handle to
+  the browser with a cookie, single use, ten minutes; Allow re-filters the ticked scopes by role on the server
+  before `approveConsent()`. Requested scopes are pre-ticked; a client that requests none (MCP clients take
+  scopes from the challenge, and this server sets no required scope) gets the read scopes pre-ticked, never a
+  write scope. The grant's props, encrypted, hold the email and the granted scopes; its clear metadata holds
+  the email, client name and redirect host for the connected apps page; its user ID is the URI-encoded email
+  (the provider forbids `:` in IDs). Two permission actions: `apps.connect` (every role: connect an assistant
+  and revoke one's own) and `apps.manage` (admins: see and revoke everyone's). Errors follow the library's
+  rule: redirect to the client only when `parseAuthRequest()` validated the redirect URI, else render locally.
+- **D118. Only the OAuth paths skip Access, exactly.** `src/index.ts` sends `/mcp`, `/token`, `/register` and
+  `/.well-known/oauth-*` to the provider, and only when `OAUTH_KV` is bound; every other path, `/authorize`
+  and `/connected-apps` included, goes through the app's middleware as before (Access JWT, Origin check), so
+  `/mcp/x` or `/tokens` still fail closed. Those paths are protected by OAuth instead: the provider rejects a
+  missing or invalid bearer token with 401 and a `WWW-Authenticate` pointing at the resource metadata. The
+  provider is built per origin and cached, because its canonical resource (`<origin>/mcp`, every token's
+  audience) must be an absolute URL; the Worker only answers on its custom domain (D43), or on localhost.
+  OAuth runs only over HTTPS or on a loopback host (the library refuses anything else), so `wrangler dev`
+  needs `--local-upstream localhost:8787 --upstream-protocol http` (README).
+- **D119. Read tools reuse the domain code and speak in references.** Eleven tools over the existing queries
+  (`listParts`, `partBomSummary`, `whereUsed`, `explode`, `CostCalculator`, `listMoves`, `buildPickList`,
+  `computeShortages`, `listPos`…), all annotated `readOnlyHint`. Inputs are what a person would say: part
+  references (case-insensitive), a BoM by id or by the reference of the part it builds (+ variant code or
+  revision), build and PO numbers; quantities as decimal strings or numbers, parsed by `parseMilli` (never
+  floats); lists have a default and a maximum limit. zod validates every input; errors are sentences that say
+  what to do next ("Use search_parts to find it"); unexpected errors are logged and returned without details.
+- **D120. Results are redacted on the app's fields, then turned into decimals.** Tools return their data with
+  the app's integer names (`*Milli`, `*Cents`, `*Millicents`, `rateBp`), so `redactCosts()` (D105) works on
+  them unchanged; only then does `toWire()` turn quantities and amounts into decimal strings (`"1.5"`,
+  `"12.30"`) with snake_case keys. For a user who may not see costs, amount fields are dropped rather than
+  shown as null (null already means an unknown cost) and the result carries `costs_hidden: true`; the server
+  instructions say so. A test sweeps every tool as a viewer and an operator for seeded amounts.
+- **D121. One CSP exception: the consent form's redirect.** The consent form posts to `/authorize`, which
+  redirects the browser to the client's registered redirect URI, and browsers apply `form-action` to that
+  redirect. The consent page alone adds that origin (parsed by `URL`, never raw input) to `form-action`;
+  everything else in the policy is unchanged, and every other page keeps `form-action 'self'`.
+- **D122. Administrators list grants from the KV key layout.** The provider lists one user's grants only. To
+  show admins every connection (viewers, who are not in the `users` table, can connect too), the page lists
+  `grant:` keys and takes the user ID from `grant:{userId}:{grantId}`, the library's documented storage layout,
+  then reads each user's grants through the provider. An admin revoke looks the grant's owner up the same way.
+- **D123. Token lifetimes, and what Access removal does not do.** Access tokens last one hour; refresh tokens
+  rotate and the grant expires 30 days after the code exchange however often it is used (not sliding), so a
+  connection goes back through Access consent at least monthly; dynamically registered clients expire after
+  90 days unused; a consent page after ten minutes. Because `/mcp` skips Access, removing someone from the
+  Access policy does not stop their assistant until its grant expires: revoke it on the connected apps page
+  (the README says so). Client ID Metadata Documents, which the 2026 authorization spec prefers to dynamic
+  registration, are not enabled yet: they need the `global_fetch_strictly_public` compatibility flag, which
+  changes every `fetch()` of the Worker; the provider logs a notice about it once per isolate.
+- **D124. Testing MCP in workerd.** The vitest config adds an `OAUTH_KV` namespace; `test/mcp-helpers.ts`
+  empties it before each test (storage is shared by a file's tests, like D1) and plays a real client:
+  dynamic registration, the consent page with its binding cookie, the PKCE exchange, then JSON-RPC calls to
+  `/mcp` (answers may be JSON or SSE). `{ OAUTH_KV: undefined }` checks the app without the binding, and
+  `ENVIRONMENT: "production"` that every other route still needs the Access JWT.

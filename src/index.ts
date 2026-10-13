@@ -1,3 +1,22 @@
 import { createApp } from "./app";
+import { isOAuthPath, oauthKv, oauthOriginOk, oauthProvider } from "./mcp/oauth";
 
-export default createApp();
+const app = createApp();
+
+/**
+ * The Worker: the app behind Cloudflare Access, plus (only with the OAUTH_KV binding) the MCP endpoint and its
+ * OAuth server on a few exact paths, which are protected by OAuth tokens instead of Access (D118). Without the
+ * binding every request goes to the app, exactly as before, and those paths are not found.
+ */
+export default {
+	fetch(request: Request, env: Env, ctx: ExecutionContext): Response | Promise<Response> {
+		const url = new URL(request.url);
+		if (oauthKv(env) && isOAuthPath(url.pathname)) {
+			if (!oauthOriginOk(url.origin)) {
+				return new Response("Not found: MCP needs HTTPS, or http://localhost (see the README).", { status: 404 });
+			}
+			return oauthProvider(url.origin).fetch(request, env, ctx);
+		}
+		return app.fetch(request, env, ctx);
+	},
+} satisfies ExportedHandler<Env>;

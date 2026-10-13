@@ -107,6 +107,21 @@ After M2 the catalogue and BoMs can be loaded; after M4 real builds can run.
       conflict messages, History tab on parts, suppliers, BoMs and POs
 - [x] JSON backup includes the history; a restore suppresses the triggers and records itself
 
+## M11: MCP server
+
+AI assistants (Claude, ChatGPT or any MCP client) connect to `/mcp` with OAuth; optional (`OAUTH_KV` binding).
+
+- [x] OAuth 2.1 server in the same Worker (dynamic registration, PKCE, tokens and grants in KV), stateless
+      MCP endpoint on the official SDK; only `/mcp`, `/token`, `/register`, `/.well-known/oauth-*` skip Access
+- [x] Consent page behind Access (scopes the role allows, Allow / Deny), connected apps page with revoke
+      (admins see everyone's), token lifetimes documented
+- [x] Scope table mapped onto the permission actions; role read again and costs redacted on every request
+- [x] Read tools: parts, BoMs (tree, explosion), stock, moves, builds (serial search, pick list, as-built),
+      shortages, purchase orders
+- [x] README setup (KV namespace, Access bypass, custom connector, local testing with the MCP Inspector)
+- [ ] Write tools (catalogue, prices, archive, stock, builds, purchasing) with their scopes and actions
+- [ ] Client ID Metadata Documents (needs the `global_fetch_strictly_public` compatibility flag, D123)
+
 ## After v1 (ideas, not planned)
 
 - Serial inventory (which serials are in stock) enforced at build time, if the shop starts scanning receipts.

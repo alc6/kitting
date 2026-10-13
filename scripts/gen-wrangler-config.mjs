@@ -5,6 +5,7 @@
 // Required: KITTING_DOMAIN, D1_DATABASE_ID, TEAM_DOMAIN, ACCESS_AUD, ADMIN_EMAILS
 // Optional: WORKER_NAME (kitting), D1_DATABASE_NAME (kitting), DEFAULT_LOCALE (en), CURRENCY (EUR),
 //           IMAGES_BUCKET (an existing R2 bucket for product images; no images without it)
+//           OAUTH_KV_ID (id of an existing KV namespace for the MCP server's OAuth data; no MCP without it)
 //
 // The generated config always runs in production mode: ENVIRONMENT=production and an
 // empty DEV_AUTH_EMAIL, so the development auth bypass can never reach a deployment.
@@ -64,6 +65,11 @@ export function buildConfig(template, env) {
 	const bucket = env.IMAGES_BUCKET?.trim();
 	if (bucket) config.r2_buckets = [{ binding: "IMAGES", bucket_name: bucket }];
 	else delete config.r2_buckets;
+	const oauthKv = env.OAUTH_KV_ID?.trim();
+	if (oauthKv && !/^[0-9a-f]{32}$/i.test(oauthKv))
+		throw new Error("OAUTH_KV_ID must be a KV namespace id (32 hex digits)");
+	if (oauthKv) config.kv_namespaces = [{ binding: "OAUTH_KV", id: oauthKv }];
+	else delete config.kv_namespaces;
 	config.vars = {
 		...config.vars,
 		ENVIRONMENT: "production",

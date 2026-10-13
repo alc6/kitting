@@ -788,6 +788,48 @@ export const fr: Dict = {
 			admin: "Confirme aussi les imports, supprime, archive, restaure les sauvegardes et gère les utilisateurs.",
 		},
 	},
+	mcp: {
+		nav: "Applications connectées",
+		consentTitle: "Connecter {client}",
+		consentIntro: "{client} demande à utiliser Kitting en votre nom, en tant que {email}.",
+		unverified: "Cette application s’est enregistrée elle-même : son nom n’est pas vérifié.",
+		publishedBy: "Publiée par {domain}.",
+		sendsTo: "L’accès sera envoyé à {host}.",
+		loopback:
+			"L’accès sera envoyé à une application sur votre ordinateur. Ne continuez que si vous venez de lancer la connexion depuis celle-ci, quel que soit son nom.",
+		scopesLegend: "L’autoriser à",
+		scopesHint:
+			"Elle ne peut que consulter, jamais plus que ce que votre rôle permet, et vous pouvez la révoquer à tout moment.",
+		scopes: {
+			"catalog:read": "Consulter articles, nomenclatures et fournisseurs",
+			"stock:read": "Consulter le stock et ses mouvements",
+			"builds:read": "Consulter les fabrications, listes de prélèvement et numéros de série",
+			"purchasing:read": "Consulter les manquants et les commandes fournisseurs",
+		},
+		notOffered: "Demandé mais non disponible pour vous : {scopes}",
+		costsHidden: "Les coûts et prix restent masqués : votre rôle ne les affiche pas.",
+		allow: "Autoriser",
+		deny: "Refuser",
+		noScope: "Cochez au moins une autorisation, ou refusez.",
+		invalidRequest: "Cette demande de connexion n’est pas valide",
+		invalidRequestHint: "Relancez la connexion depuis l’application. Détail : {reason}",
+		appsTitle: "Applications connectées",
+		appsIntro:
+			"Les assistants IA que vous avez autorisés à utiliser Kitting via MCP. En révoquer un le déconnecte aussitôt ; il pourra redemander.",
+		appsAllIntro: "En tant qu’administrateur, vous voyez les connexions de tous et pouvez révoquer chacune.",
+		app: "Application",
+		user: "Utilisateur",
+		permissions: "Autorisations",
+		connected: "Connectée le",
+		expires: "Expire le",
+		revoke: "Révoquer",
+		confirmRevoke: "Déconnecter cette application ? Il faudra la reconnecter.",
+		revoked: "Déconnectée.",
+		empty: "Aucune application connectée",
+		emptyHint: "Ajoutez {url} comme connecteur personnalisé dans votre assistant IA, puis autorisez-le ici.",
+		lifetimes:
+			"Une application reçoit des jetons d’accès d’une heure, renouvelés automatiquement pendant 30 jours après votre autorisation ; elle redemande ensuite. Votre rôle est vérifié à chaque requête.",
+	},
 	users: {
 		title: "Utilisateurs",
 		intro:

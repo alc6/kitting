@@ -63,6 +63,9 @@ const CALLS: Record<Action, (ids: Ids) => Call> = {
 	"backup.restore": () => ({ path: "/import/restore/preview", form: { json: "{}" } }),
 	"users.manage": () => ({ path: "/users", form: { email: "new@example.com", role: "operator" } }),
 	"history.revert": (i) => ({ path: `/history/${i.planning}/revert` }),
+	// MCP connected apps (an unknown grant: the revoke is a no-op that still redirects).
+	"apps.connect": () => ({ path: "/connected-apps/unknown-grant/revoke" }),
+	"apps.manage": () => ({ path: "/connected-apps/all/unknown-grant/revoke" }),
 };
 
 async function send(call: Call) {

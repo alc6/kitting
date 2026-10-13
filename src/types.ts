@@ -18,6 +18,8 @@ export type AppVariables = {
 	db: Db;
 	theme: Theme;
 	sidebarCollapsed: boolean;
+	/** Set by the MCP consent page only: the client's redirect origin, allowed in the CSP form-action (D121). */
+	formActionOrigin?: string;
 };
 
 export type AppEnv = { Bindings: Env; Variables: AppVariables };

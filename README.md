@@ -54,6 +54,9 @@ tiers cover a small workshop. Deployment is one command.
   from the header (`/` or Ctrl/Cmd+K).
 - **History and undo**: every change to the catalogue, documents, users and settings is kept, field by
   field, with who made it and from where; any change can be reviewed and undone (see below).
+- **AI assistants** (optional): an MCP server lets Claude, ChatGPT or any MCP client read parts,
+  BoMs, stock, builds and purchasing, with the permissions each person grants and their role
+  checked on every request (see [Connect an AI assistant](#connect-an-ai-assistant-mcp)).
 - Modern, tablet-first UI built on the [shadcn/ui](https://ui.shadcn.com) design system: left
   sidebar, light / dark / system theme, French and English.
 
@@ -142,7 +145,8 @@ You need a Cloudflare account with a domain on it, Node.js 20+, and this reposit
    hostname you will use (for example `kitting.example.com`). `wrangler.jsonc` is
    gitignored: it never ends up in the repository. The R2 bucket holds product images and is
    optional: without it, delete the `r2_buckets` block from `wrangler.jsonc` and the app runs
-   without images.
+   without images. Likewise the `kv_namespaces` block is for the optional MCP server
+   ([Connect an AI assistant](#connect-an-ai-assistant-mcp)): create its namespace or delete the block.
 
 2. **Apply the migrations**
 
@@ -191,7 +195,9 @@ committed. In *Settings → Secrets and variables → Actions*, add:
 - variables `KITTING_DOMAIN`, `D1_DATABASE_ID`, `TEAM_DOMAIN`, `ACCESS_AUD`,
   `ADMIN_EMAILS` and, optionally, `DEFAULT_LOCALE`, `CURRENCY`, `WORKER_NAME`,
   `D1_DATABASE_NAME`, `IMAGES_BUCKET` (the name of an R2 bucket created beforehand with
-  `npx wrangler r2 bucket create`; product images are off without it).
+  `npx wrangler r2 bucket create`; product images are off without it), `OAUTH_KV_ID` (the id
+  of a KV namespace for the MCP server, see [Connect an AI assistant](#connect-an-ai-assistant-mcp);
+  MCP is off without it).
 
 Then run *Actions → Deploy → Run workflow*. It runs the checks, applies migrations and
 deploys. You can generate the same file locally with
@@ -222,6 +228,64 @@ Why the Worker is safe even if Access is misconfigured: it only accepts requests
 a valid `Cf-Access-Jwt-Assertion` signed by your team's keys for your AUD. Anything else
 gets a 403. `workers_dev` and preview URLs are disabled so the app is only reachable on the
 domain Access protects.
+
+## Connect an AI assistant (MCP)
+
+Optional. Kitting can serve an [MCP](https://modelcontextprotocol.io) server at `https://<your-domain>/mcp`,
+so an AI assistant (Claude, ChatGPT or any MCP client) can look things up for you: parts, BoMs, stock, builds,
+shortages and purchase orders. For now it only reads.
+
+| Permission (scope) | Tools |
+| --- | --- |
+| `catalog:read` | `search_parts`, `get_part` (details, offers, on hand, BoMs, where-used), `get_bom` (tree with per-parent and cumulative quantities, cost roll-up), `explode_bom` (flat list for a quantity, optionally using sub-assemblies in stock) |
+| `stock:read` | `stock_on_hand` (below zero, below MOQ, in stock), `list_moves` |
+| `builds:read` | `list_builds` (also finds the build that used a component serial), `get_build` (pick list, or the as-built record) |
+| `purchasing:read` | `get_shortages`, `list_purchase_orders`, `get_purchase_order` |
+
+How it stays safe:
+
+- Each person connects their own assistant. The assistant opens a consent page on your domain, behind Access
+  like every page, where the person ticks what it may read (only what their role allows) and clicks Allow.
+  The assistant gets OAuth tokens for that, never the Access session.
+- Every MCP request checks the person's role again: a demotion applies to the next call, and costs, prices
+  and margins stay hidden from roles that may not see them. Quantities and amounts are decimals.
+- Never over MCP: user management, backups, imports, image uploads, permanent deletes.
+- **Connected apps** (bottom of the sidebar) lists your connections with *Revoke*; administrators see and
+  revoke everyone's. Revoking stops the assistant at once.
+- Lifetimes: access tokens last one hour and are renewed automatically for 30 days after consent; then the
+  assistant asks again, through Access. Unused client registrations expire after 90 days.
+- `/mcp`, `/token`, `/register` and `/.well-known/oauth-*` skip Access (they check OAuth tokens instead), so
+  **removing someone from the Access policy does not disconnect their assistant**: revoke it on Connected apps.
+  `/register` is public by design: registering gives an app nothing until someone signs in and allows it.
+
+Set it up:
+
+1. **Create the KV namespace** that holds clients, grants and tokens (hashed):
+
+   ```bash
+   npx wrangler kv namespace create OAUTH_KV
+   ```
+
+   Put the printed id in the `kv_namespaces` block of `wrangler.jsonc` (or set the `OAUTH_KV_ID` variable for
+   the GitHub workflow, whose API token then also needs *Workers KV Storage: Edit*). Without this binding the
+   MCP routes answer 404 and the app works as before; delete the block if you do not want MCP.
+2. **Let the OAuth paths through Access.** In Zero Trust, *Access → Applications → Add an application →
+   Self-hosted*, named e.g. *Kitting MCP*, on your hostname with four paths: `mcp`, `token`, `register` and
+   `.well-known/*`. Give it one policy with action **Bypass** and *Include → Everyone*. Access applies the most
+   specific path, so everything else (including `/authorize`, the consent page) stays behind your main
+   application.
+3. **Deploy** (`npm run deploy`, or the workflow).
+4. **Add the connector** in your AI client: a custom connector (remote MCP server) with the URL
+   `https://kitting.example.com/mcp`. The client registers itself, opens your browser on the consent page, and
+   is connected once you click Allow.
+
+To try it locally, start the Worker so that it sees `http://localhost` (OAuth runs only over HTTPS or on
+localhost), then point the [MCP Inspector](https://github.com/modelcontextprotocol/inspector) at it:
+
+```bash
+npm run css && npx wrangler dev --local-upstream localhost:8787 --upstream-protocol http
+npx @modelcontextprotocol/inspector   # Streamable HTTP, URL http://localhost:8787/mcp, then connect
+```
 
 ## Local development
 

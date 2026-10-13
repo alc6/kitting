@@ -39,6 +39,9 @@ export const PERMISSIONS = {
 	// History: anyone may read it (amounts redacted); undoing a change also needs the edit permission of every
 	// area it touched (TABLE_ACTIONS in src/domain/revert.ts), so this is only the floor.
 	"history.revert": { min: "operator" },
+	// AI assistants (MCP, D117): connect one and revoke one's own connections; see and revoke everyone's.
+	"apps.connect": { min: "viewer" },
+	"apps.manage": { min: "admin" },
 } as const satisfies Record<string, Rule>;
 
 export type Action = keyof typeof PERMISSIONS;

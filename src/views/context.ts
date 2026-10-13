@@ -27,6 +27,8 @@ export type AppView = {
 	theme: Theme;
 	/** Desktop sidebar collapsed to icons (kitting_sidebar cookie). */
 	sidebarCollapsed: boolean;
+	/** The deployment has the MCP server (OAUTH_KV binding): show the connected apps link. */
+	mcp: boolean;
 };
 
 export const AppViewContext = createContext<AppView>({
@@ -39,6 +41,7 @@ export const AppViewContext = createContext<AppView>({
 	path: "/",
 	theme: "system",
 	sidebarCollapsed: false,
+	mcp: false,
 });
 
 export const useApp = (): AppView => useContext(AppViewContext);
@@ -55,5 +58,6 @@ export function viewFor(c: Context<AppEnv>): AppView {
 		path: url.pathname + url.search,
 		theme: c.var.theme,
 		sidebarCollapsed: c.var.sidebarCollapsed,
+		mcp: (c.env as Partial<Env>).OAUTH_KV !== undefined,
 	};
 }

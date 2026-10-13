@@ -133,6 +133,7 @@ function pages(s: Awaited<ReturnType<typeof seed>>): string[] {
 		`/suppliers/${s.supplier}/history`,
 		`/boms/${s.lampBom}/history`,
 		`/purchasing/po/${s.poId}/history`,
+		"/connected-apps",
 		// Closed to these roles: refused without leaking anything.
 		"/margins",
 		`/margins/boms/${s.lampBom}`,

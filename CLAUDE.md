@@ -163,6 +163,21 @@ was built with; `npx skills update` refreshes it.
 - Destructive actions (import commit, delete, archive) are admin actions in the table, and only shown to
   those who `can()` do them.
 
+## MCP (AI assistants)
+
+- Optional (D115–D124): `src/mcp/` holds the OAuth provider setup (`oauth.ts`), the stateless MCP endpoint
+  (`server.ts`), the tools (`tools.ts`) and the wire format (`wire.ts`); `src/domain/mcp-scopes.ts` maps scopes
+  to permission actions; `src/routes/connect.tsx` is the consent page and the connected apps page. Everything is
+  off (404) without the `OAUTH_KV` binding. Only `/mcp`, `/token`, `/register` and `/.well-known/oauth-*` skip
+  Access (`isOAuthPath`, exact paths): never widen it.
+- **Adding an MCP tool = scope + permission check + redaction + test.** Give it a `rule` (`{ scope, action }`:
+  a scope from `MCP_SCOPES`, plus the `PERMISSIONS` action for anything that changes data), return data with the
+  app's integer field names (`*Milli`, `*Cents`) so `toWire()` redacts costs then converts to decimals, and add a
+  test in `test/mcp-tools.test.ts` (`connect(scopes)` and `callTool()` from `test/mcp-helpers.ts`), including the
+  cost sweep's `calls()` list. Write tools go through the same
+  domain functions as the routes. Never over MCP: user management, backups, imports, image uploads, permanent
+  deletes (`NEVER_OVER_MCP`).
+
 ## Tests
 
 - Tests call the app through `test/helpers.ts` (`request`, `postForm`), which adds a

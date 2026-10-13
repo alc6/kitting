@@ -84,7 +84,7 @@ const THEME_ICONS = { system: icons.monitor, light: icons.sun, dark: icons.moon 
 /** Labels hidden when the desktop sidebar is collapsed to icons. */
 const WHEN_EXPANDED = "in-data-[sidebar=collapsed]:lg:hidden";
 
-function SidebarMenuButton(props: { item: NavItem; active: boolean; label: string }) {
+function SidebarMenuButton(props: { item: Pick<NavItem, "href" | "icon">; active: boolean; label: string }) {
 	return (
 		<a
 			href={props.item.href}
@@ -178,6 +178,13 @@ function Sidebar(props: { view: AppView }) {
 				))}
 			</nav>
 			<div data-slot="sidebar-footer" class="flex flex-col gap-2 border-t border-sidebar-border p-2">
+				{props.view.mcp ? (
+					<SidebarMenuButton
+						item={{ href: "/connected-apps", icon: icons.shieldCheck }}
+						active={isActive(path, "/connected-apps")}
+						label={t.mcp.nav}
+					/>
+				) : null}
 				<div class={cn("flex flex-col gap-2", WHEN_EXPANDED)}>
 					<SegmentedLinks
 						label={t.app.theme}

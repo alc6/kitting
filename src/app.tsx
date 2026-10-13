@@ -9,6 +9,7 @@ import { assertWritesHavePermissions, loadRole } from "./middleware/roles";
 import { originCheck, securityHeaders } from "./middleware/security";
 import { bomRoutes } from "./routes/boms";
 import { buildRoutes } from "./routes/builds";
+import { authorizeRoutes, connectedAppRoutes } from "./routes/connect";
 import { dashboardRoutes } from "./routes/dashboard";
 import { historyRoutes } from "./routes/history";
 import { imageRoutes } from "./routes/images";
@@ -92,6 +93,9 @@ export function createApp() {
 	app.route("/search", searchRoutes);
 	app.route("/users", userRoutes);
 	app.route("/history", historyRoutes);
+	// MCP (optional, D117): consent and connected apps, behind Access like every page.
+	app.route("/authorize", authorizeRoutes);
+	app.route("/connected-apps", connectedAppRoutes);
 
 	// Fails closed: refuse to start while a write route has no requirePermission() (D105).
 	assertWritesHavePermissions(app.routes);
