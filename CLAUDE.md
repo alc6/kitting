@@ -7,7 +7,7 @@ Record every new non-obvious choice in `docs/decisions.md`.
 ## Public repository hygiene (non-negotiable)
 
 - No company data, no secrets, no account IDs, no real emails or domains anywhere.
-  Use `example.com` / `.example` and the fictional dataset in `examples/demo/`.
+  Use `example.com` / `.example` and the fictional datasets in `examples/`.
 - `wrangler.jsonc` and `.dev.vars` are gitignored. Only `wrangler.example.jsonc` and
   `.dev.vars.example` (placeholders) are committed.
 - Keep `workers_dev: false` and `preview_urls: false`.
@@ -209,7 +209,8 @@ was built with; `npx skills update` refreshes it.
 - Tests run as `TESTER`, an admin through `ADMIN_EMAILS`. For another role: `await setRole("operator")`, then
   pass `NOT_ADMIN` as env overrides (both in `test/helpers.ts`).
 - Every domain rule (explosion, costs, shortages, completion, receiving, imports) gets tests.
-- The demo dataset is a fixture: `examples/demo/*.csv` must always import cleanly.
+- The datasets in `examples/` are fixtures and must always import cleanly: `examples/demo/` is the small one for a
+  first look, `examples/full/` the one most tests load (`loadDemo()`).
 
 ## Git
 

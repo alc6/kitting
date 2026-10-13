@@ -1,7 +1,7 @@
 # Evaluations (not run in CI)
 
 Three prompts that check the skill leads Claude to the right tool sequence on the fictional demo dataset
-(`examples/demo/`). The case files use the layout of [`claude plugin eval`](https://code.claude.com/docs/en/plugin-evals) (one
+(`examples/full/`). The case files use the layout of [`claude plugin eval`](https://code.claude.com/docs/en/plugin-evals) (one
 directory per case with a `prompt.md` and `graders/`), but nobody runs them in CI: they need a Kitting deployment
 loaded with the demo data and every scope (a throwaway one, the cases write), reached through OAuth.
 

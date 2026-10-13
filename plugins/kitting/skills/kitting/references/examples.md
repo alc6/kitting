@@ -1,6 +1,6 @@
 # Worked examples
 
-All on the fictional demo dataset (`examples/demo/`: the modular desk lamp `LAMP-DESK`, variants `std` and
+All on the fictional demo dataset (`examples/full/`: the modular desk lamp `LAMP-DESK`, variants `std` and
 `warm`). Numbers are illustrative; always read the real ones from the tools.
 
 ## 1. Plan five warm lamps and order what is missing

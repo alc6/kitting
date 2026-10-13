@@ -7,7 +7,7 @@ people who have outgrown spreadsheets but don't need an ERP.
 It runs on Cloudflare: a Worker, a D1 database, and Cloudflare Access for sign-in. There is no server to
 maintain, and a small workshop fits in the free plans.
 
-![The tree of a desk lamp assembly, with its sub-assemblies, kits, quantities and costs](docs/images/assembly-tree.png)
+![The diagram of a desk lamp assembly: a base sub-assembly and two parts, with quantities and costs](docs/images/assembly-diagram.png)
 
 ## Features
 
@@ -43,8 +43,8 @@ npm run dev
 Then open http://localhost:8787. Locally you are signed in as the email in `.dev.vars`, without Access.
 
 To get some data, open **Import / Export** and import the files in [`examples/demo/`](examples/demo/) in this
-order: suppliers, parts, part_suppliers, assemblies, stock. The demo is a fictional desk lamp with
-sub-assemblies, nested kits and serial-numbered parts.
+order: suppliers, parts, assemblies, stock. The demo is a fictional desk lamp: a base sub-assembly plus two
+parts. [`examples/full/`](examples/full/) has a larger version with variants, kits and serial numbers.
 
 ## Deploy
 

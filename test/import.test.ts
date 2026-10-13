@@ -1,10 +1,25 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import demoAssemblies from "../examples/demo/assemblies.csv?raw";
-import demoOffers from "../examples/demo/part_suppliers.csv?raw";
-import demoParts from "../examples/demo/parts.csv?raw";
-import demoStock from "../examples/demo/stock.csv?raw";
-import demoSuppliers from "../examples/demo/suppliers.csv?raw";
-import { insertMove, insertPart, insertSupplier, NOT_ADMIN, one, postForm, request, rows, setRole } from "./helpers";
+import smallAssemblies from "../examples/demo/assemblies.csv?raw";
+import smallParts from "../examples/demo/parts.csv?raw";
+import smallStock from "../examples/demo/stock.csv?raw";
+import smallSuppliers from "../examples/demo/suppliers.csv?raw";
+import demoAssemblies from "../examples/full/assemblies.csv?raw";
+import demoOffers from "../examples/full/part_suppliers.csv?raw";
+import demoParts from "../examples/full/parts.csv?raw";
+import demoStock from "../examples/full/stock.csv?raw";
+import demoSuppliers from "../examples/full/suppliers.csv?raw";
+import {
+	assemblyId,
+	insertMove,
+	insertPart,
+	insertSupplier,
+	NOT_ADMIN,
+	one,
+	postForm,
+	request,
+	rows,
+	setRole,
+} from "./helpers";
 
 // NOT_ADMIN requests run as a planner, so admin-only actions are refused by requireAdmin itself.
 beforeEach(() => setRole("planner"));
@@ -217,7 +232,22 @@ describe("stock import", () => {
 	});
 });
 
-describe("demo dataset", () => {
+describe("small demo dataset", () => {
+	it("imports cleanly in order", async () => {
+		await importOk("suppliers", smallSuppliers);
+		await importOk("parts", smallParts);
+		await importOk("assemblies", smallAssemblies);
+		await importOk("stock", smallStock);
+		expect(await one("SELECT count(*) AS n FROM parts")).toEqual({ n: 6 });
+		expect(await one("SELECT count(*) AS n FROM assembly_lines")).toEqual({ n: 5 });
+		expect(await one("SELECT count(*) AS n FROM part_suppliers")).toEqual({ n: 4 });
+		// The README's numbers: the lamp costs 17.60 (base 6.60 + LED 4.20 + shade 6.80) and sells for 49.00.
+		const tree = await (await request(`/assemblies/${await assemblyId("DESK-LAMP")}/tree`)).text();
+		expect(tree).toContain("€17.60");
+	});
+});
+
+describe("full dataset", () => {
 	it("imports cleanly in order", async () => {
 		await importOk("suppliers", demoSuppliers);
 		await importOk("parts", demoParts);

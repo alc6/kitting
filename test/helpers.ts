@@ -1,11 +1,11 @@
 import { createExecutionContext } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { drizzle } from "drizzle-orm/d1";
-import demoAssemblies from "../examples/demo/assemblies.csv?raw";
-import demoOffers from "../examples/demo/part_suppliers.csv?raw";
-import demoParts from "../examples/demo/parts.csv?raw";
-import demoStock from "../examples/demo/stock.csv?raw";
-import demoSuppliers from "../examples/demo/suppliers.csv?raw";
+import demoAssemblies from "../examples/full/assemblies.csv?raw";
+import demoOffers from "../examples/full/part_suppliers.csv?raw";
+import demoParts from "../examples/full/parts.csv?raw";
+import demoStock from "../examples/full/stock.csv?raw";
+import demoSuppliers from "../examples/full/suppliers.csv?raw";
 import type { Role } from "../src/db/schema";
 import * as schema from "../src/db/schema";
 import { runChangeSet } from "../src/domain/history";
