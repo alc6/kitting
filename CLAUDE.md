@@ -149,5 +149,15 @@ was built with; `npx skills update` refreshes it.
 
 ## Git
 
-Small, focused commits with imperative messages. Justify any new dependency in the
-PR description and in `docs/decisions.md`.
+Small, focused commits following [Conventional Commits](https://www.conventionalcommits.org):
+`type(scope): summary`, imperative, lower case, no final period.
+
+- Types: `feat`, `fix`, `docs`, `refactor`, `test`, `perf`, `style`, `build`, `ci`, `chore`.
+- Scopes are app areas, optional: `parts`, `suppliers`, `boms`, `stock`, `builds`, `purchasing`,
+  `pricing`, `import`, `auth`, `ui`, `db`.
+- Examples: `feat(builds): allow cancelling a planned build`, `fix(import): accept semicolon CSVs`,
+  `docs: explain the Access setup`, `chore: bump wrangler`.
+- Breaking changes (e.g. a migration that needs manual steps): `feat(db)!: …` plus a `BREAKING CHANGE:` line.
+
+Commit as the repository's configured identity (a GitHub noreply address): never set a personal
+email. Justify any new dependency in the PR description and in `docs/decisions.md`.
