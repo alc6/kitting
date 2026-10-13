@@ -23,7 +23,7 @@ import {
 } from "./mcp-helpers";
 
 const ALL = ["catalog:read", "stock:read", "builds:read", "purchasing:read"];
-const CATALOG_TOOLS = ["explode_bom", "get_bom", "get_part", "list_recent_changes", "search_parts"];
+const CATALOG_TOOLS = ["explode_assembly", "get_assembly", "get_part", "list_recent_changes", "search_parts"];
 const STOCK_TOOLS = ["list_moves", "stock_on_hand"];
 
 beforeEach(async () => {
@@ -67,7 +67,7 @@ describe("connecting an AI assistant", () => {
 		expect(String(init.instructions)).toContain("decimal");
 		expect(String(init.instructions)).toContain("costs_hidden");
 		expect(String(init.instructions)).toContain("Confirm before writes");
-		expect(String(init.instructions)).toContain("BoM edits go through draft revisions");
+		expect(String(init.instructions)).toContain("Assembly edits go through draft revisions");
 		expect(String(init.instructions)).toContain(
 			"except stock and build ledger operations (adjustments, counts, receipts, build completions), which are corrected with reverse movements",
 		);

@@ -1,4 +1,4 @@
-// Change history views (D114): the History tab of parts, suppliers, BoMs and POs, the Recent changes page
+// Change history views (D114): the History tab of parts, suppliers, assemblies and POs, the Recent changes page
 // and a change set's details. Amounts in row snapshots are redacted by entryView() and shown through Money.
 import { getTableColumns, getTableName } from "drizzle-orm";
 import { type ChangeSet, HISTORY_TABLES } from "../db/schema";
@@ -67,10 +67,10 @@ function recordHref(table: string, rowId: number, row: Row): string | null {
 			return `/parts/${rowId}`;
 		case "suppliers":
 			return `/suppliers/${rowId}`;
-		case "boms":
-			return `/boms/${rowId}`;
-		case "bom_lines":
-			return num(row.bom_id) ? `/boms/${row.bom_id}` : null;
+		case "assemblies":
+			return `/assemblies/${rowId}`;
+		case "assembly_lines":
+			return num(row.assembly_id) ? `/assemblies/${row.assembly_id}` : null;
 		case "part_suppliers":
 			return num(row.part_id) ? `/parts/${row.part_id}` : null;
 		case "purchase_orders":
@@ -102,7 +102,7 @@ function FieldValue(props: { table: string; column: string; value: unknown; labe
 	if (column === "role") return <span>{(t.roles.names as Record<string, string>)[text] ?? text}</span>;
 	if (column === "status") {
 		const statuses: Record<string, Record<string, string>> = {
-			boms: t.boms.statuses,
+			assemblies: t.assemblies.statuses,
 			purchase_orders: t.purchasing.statuses,
 			builds: t.builds.statuses,
 		};

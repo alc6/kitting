@@ -3,7 +3,7 @@ import type { Child } from "hono/jsx";
 import { globalSearch, SEARCH_GROUP_LIMIT, type SearchResults } from "../domain/search";
 import { fmt } from "../i18n";
 import type { AppEnv } from "../types";
-import { StatusBadge } from "../views/bom";
+import { StatusBadge } from "../views/assembly";
 import { useApp } from "../views/context";
 import { Icon, type IconNode, icons } from "../views/icons";
 import { page } from "../views/render";
@@ -57,7 +57,7 @@ function Results(props: { q: string; r: SearchResults }) {
 	const { t } = useApp();
 	const { r, q } = props;
 	const enc = encodeURIComponent(q);
-	const total = r.parts.length + r.boms.length + r.builds.length + r.pos.length + r.suppliers.length;
+	const total = r.parts.length + r.assemblies.length + r.builds.length + r.pos.length + r.suppliers.length;
 	if (total === 0) {
 		return <EmptyState icon={icons.search} title={fmt(t.search.none, { q })} description={t.search.prompt} />;
 	}
@@ -79,10 +79,15 @@ function Results(props: { q: string; r: SearchResults }) {
 					/>
 				))}
 			</Group>
-			<Group title={t.nav.boms} icon={icons.listTree} count={r.boms.length} all={`/boms?q=${enc}&status=all`}>
-				{top(r.boms).map((b) => (
+			<Group
+				title={t.nav.assemblies}
+				icon={icons.listTree}
+				count={r.assemblies.length}
+				all={`/assemblies?q=${enc}&status=all`}
+			>
+				{top(r.assemblies).map((b) => (
 					<Row
-						href={`/boms/${b.id}`}
+						href={`/assemblies/${b.id}`}
 						primary={b.partRef}
 						secondary={`${b.partName} · ${b.code} ${b.revision}`}
 						extra={<StatusBadge status={b.status} />}

@@ -11,7 +11,7 @@ describe("layout and preferences", () => {
 		for (const href of [
 			"/",
 			"/parts",
-			"/boms",
+			"/assemblies",
 			"/suppliers",
 			"/margins",
 			"/builds",
@@ -23,7 +23,7 @@ describe("layout and preferences", () => {
 			expect(html).toContain(`href="${href}"`);
 		}
 		expect(html).toMatch(/href="\/parts" data-slot="sidebar-menu-button" data-active="true"/);
-		expect(html).toMatch(/href="\/boms" data-slot="sidebar-menu-button" data-active="false"/);
+		expect(html).toMatch(/href="\/assemblies" data-slot="sidebar-menu-button" data-active="false"/);
 		expect(html).toContain('popover="auto"');
 	});
 
@@ -68,7 +68,7 @@ describe("layout and preferences", () => {
 });
 
 describe("global search", () => {
-	it("prompts when empty and finds parts, BoMs and suppliers", async () => {
+	it("prompts when empty and finds parts, assemblies and suppliers", async () => {
 		const empty = await (await request("/search")).text();
 		expect(empty).toContain("A part reference or name");
 
@@ -76,7 +76,7 @@ describe("global search", () => {
 		const html = await (await request("/search?q=lamp")).text();
 		expect(html).toContain("LAMP-DESK");
 		expect(html).toMatch(/href="\/parts\/\d+"/);
-		expect(html).toMatch(/href="\/boms\/\d+"/);
+		expect(html).toMatch(/href="\/assemblies\/\d+"/);
 
 		const supplier = await (await request("/search?q=Ironleaf")).text();
 		expect(supplier).toMatch(/href="\/suppliers\/\d+"/);

@@ -28,8 +28,8 @@ import { type Access, type Action, can } from "./permissions";
 export const TABLE_ACTIONS: Record<string, Action> = {
 	parts: "parts.edit",
 	suppliers: "suppliers.edit",
-	boms: "boms.edit",
-	bom_lines: "boms.edit",
+	assemblies: "assemblies.edit",
+	assembly_lines: "assemblies.edit",
 	part_suppliers: "prices.edit",
 	purchase_orders: "purchasing.order",
 	po_lines: "purchasing.order",
@@ -44,7 +44,7 @@ const PRICE_COLUMNS: Record<string, { column: string; kind: PriceKind }[]> = {
 		{ column: "cost_cents", kind: "standard" },
 		{ column: "sale_price_cents", kind: "sale" },
 	],
-	boms: [{ column: "sale_price_cents", kind: "sale" }],
+	assemblies: [{ column: "sale_price_cents", kind: "sale" }],
 	part_suppliers: [{ column: "price_cents", kind: "purchase" }],
 };
 
@@ -164,8 +164,8 @@ function foreignKeys() {
 type Fk = ReturnType<typeof foreignKeys>[number];
 
 /**
- * Whether rows of `fk.childName` keep the parent from being deleted. The price history of a part or a BoM
- * goes with it (ON DELETE CASCADE), as when deleting the part or BoM from its page.
+ * Whether rows of `fk.childName` keep the parent from being deleted. The price history of a part or an assembly
+ * goes with it (ON DELETE CASCADE), as when deleting the part or assembly from its page.
  */
 const blocksDelete = (fk: Fk) => !(fk.childName === getTableName(priceHistory) && fk.onDelete === "cascade");
 
@@ -354,7 +354,7 @@ function priceStatements(db: Db, rows: Touched[], setId: number, user: string, n
 			if (r.after !== null && price === current) continue;
 			if (r.after === null && price === null) continue;
 			const partId = (
-				r.name === "parts" ? r.rowId : r.name === "boms" ? restored.parent_part_id : restored.part_id
+				r.name === "parts" ? r.rowId : r.name === "assemblies" ? restored.parent_part_id : restored.part_id
 			) as number;
 			stmts.push(
 				db.insert(priceHistory).values({
@@ -362,7 +362,7 @@ function priceStatements(db: Db, rows: Touched[], setId: number, user: string, n
 					kind: p.kind,
 					priceCents: price,
 					supplierId: r.name === "part_suppliers" ? (restored.supplier_id as number) : null,
-					bomId: r.name === "boms" ? r.rowId : null,
+					assemblyId: r.name === "assemblies" ? r.rowId : null,
 					validFrom: now.slice(0, 10),
 					source: "revert",
 					note: `#${setId}`,
@@ -402,7 +402,7 @@ export function revertStatements(db: Db, set: ChangeSet, entries: ChangeLogRow[]
 			stmts.push(restoreUpdate(db, table, e.rowId, old, user, now));
 		else if (e.op === "delete" && old) stmts.push(reinsert(db, table, old));
 		else if (e.op === "insert") {
-			// A cascade would silently delete rows added since (lines of a BoM or PO, offers of a part): the rows
+			// A cascade would silently delete rows added since (lines of an assembly or PO, offers of a part): the rows
 			// this change set created after this one were deleted just before, so any left are someone else's.
 			// Other references fail the deferred foreign key check at commit.
 			for (const fk of fks.filter((f) => f.parentName === e.tableName && f.onDelete === "cascade" && blocksDelete(f))) {
@@ -487,7 +487,7 @@ function batchConflict(err: unknown, rows: Touched[]): RevertConflict | null {
 			? "concurrent"
 			: null;
 	if (!reason) return null;
-	// "UNIQUE constraint failed: parts.ref" or "… failed: index 'boms_one_active_per_code'": find the table.
+	// "UNIQUE constraint failed: parts.ref" or "… failed: index 'assemblies_one_active_per_code'": find the table.
 	const index = /index '(\w+)'/.exec(message)?.[1];
 	const table =
 		/constraint failed: (\w+)\./.exec(message)?.[1] ??

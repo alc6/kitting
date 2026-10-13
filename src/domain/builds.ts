@@ -1,14 +1,23 @@
-// Builds: planned production of a `make` part from an exact BoM, completed atomically.
+// Builds: planned production of a `make` part from an exact assembly, completed atomically.
 import { and, asc, desc, eq, inArray, ne, type SQL, sql } from "drizzle-orm";
 import { z } from "zod";
-import { BUILD_STATUSES, type BuildStatus, boms, buildLines, builds, type Part, parts, stockMoves } from "../db/schema";
+import {
+	assemblies,
+	BUILD_STATUSES,
+	type BuildStatus,
+	buildLines,
+	builds,
+	type Part,
+	parts,
+	stockMoves,
+} from "../db/schema";
 import type { Statement } from "../lib/db";
 import { likePattern } from "../lib/sql";
 import { MILLI, roundDiv } from "../lib/units";
 import { type FieldErrors, field } from "../lib/validation";
 import type { Db } from "../types";
 import {
-	type BomGraph,
+	type AssemblyGraph,
 	CostCalculator,
 	centsOf,
 	type Explosion,
@@ -16,14 +25,14 @@ import {
 	type MakeChoice,
 	type Requirement,
 	walkTree,
-} from "./bom-graph";
+} from "./assembly-graph";
 import { moveValues } from "./stock";
 
 export const OPEN_STATUSES: BuildStatus[] = ["planned", "in_progress"];
 
 export const buildInput = z.object({
 	part_id: field.id(),
-	bom_id: field.id(),
+	assembly_id: field.id(),
 	qty: field.qty({ positive: true, empty: MILLI }),
 	serial: field.text(100),
 	planned_for: field.date(),
@@ -47,10 +56,10 @@ export async function nextBuildNumber(db: Db): Promise<string> {
 
 export async function getBuild(db: Db, id: number) {
 	const rows = await db
-		.select({ build: builds, part: parts, bom: boms })
+		.select({ build: builds, part: parts, assembly: assemblies })
 		.from(builds)
 		.innerJoin(parts, eq(builds.partId, parts.id))
-		.innerJoin(boms, eq(builds.bomId, boms.id))
+		.innerJoin(assemblies, eq(builds.assemblyId, assemblies.id))
 		.where(eq(builds.id, id))
 		.limit(1);
 	return rows[0];
@@ -59,17 +68,17 @@ export async function getBuild(db: Db, id: number) {
 // ---------------------------------------------------------------------------
 // Planning: checks, then statements to run in one batch (completion is completionStatements below).
 
-/** The product of a new build (a make part, else undefined) and its active BoMs, the choices of the form. */
+/** The product of a new build (a make part, else undefined) and its active assemblies, the choices of the form. */
 export async function buildableProduct(db: Db, partId: number | null) {
 	const product = partId ? (await db.select().from(parts).where(eq(parts.id, partId)).limit(1))[0] : undefined;
-	const bomOptions = product
+	const assemblyOptions = product
 		? await db
-				.select({ id: boms.id, code: boms.code, revision: boms.revision })
-				.from(boms)
-				.where(and(eq(boms.parentPartId, product.id), eq(boms.status, "active")))
-				.orderBy(asc(boms.code))
+				.select({ id: assemblies.id, code: assemblies.code, revision: assemblies.revision })
+				.from(assemblies)
+				.where(and(eq(assemblies.parentPartId, product.id), eq(assemblies.status, "active")))
+				.orderBy(asc(assemblies.code))
 		: [];
-	return { product: product?.kind === "make" ? product : undefined, bomOptions };
+	return { product: product?.kind === "make" ? product : undefined, assemblyOptions };
 }
 
 /** Whether another build of this product, not cancelled, already has this serial. */
@@ -85,21 +94,22 @@ export async function buildSerialTaken(db: Db, partId: number, serial: string, e
 }
 
 /**
- * Errors of a build to plan, from the form or an MCP tool: a make part, one of its active BoMs, and for a
+ * Errors of a build to plan, from the form or an MCP tool: a make part, one of its active assemblies, and for a
  * serial-tracked product one unit with a serial no other build uses.
  */
 export async function buildPlanErrors(
 	db: Db,
-	d: Pick<BuildInput, "part_id" | "bom_id" | "qty" | "serial">,
+	d: Pick<BuildInput, "part_id" | "assembly_id" | "qty" | "serial">,
 	product: Part | undefined,
-	bomOptions: { id: number }[],
+	assemblyOptions: { id: number }[],
 ): Promise<FieldErrors> {
 	const errors: FieldErrors = {};
 	if (!product) {
 		errors.part_id = d.part_id ? "build_part_kind" : "required";
 		return errors;
 	}
-	if (!d.bom_id || !bomOptions.some((b) => b.id === d.bom_id)) errors.bom_id = "build_bom_mismatch";
+	if (!d.assembly_id || !assemblyOptions.some((b) => b.id === d.assembly_id))
+		errors.assembly_id = "build_assembly_mismatch";
 	if (product.trackSerial) {
 		if (d.qty !== MILLI) errors.qty = "build_serial_qty";
 		if (!d.serial) errors.serial = "build_serial_required";
@@ -113,7 +123,7 @@ export function createBuildStatement(
 	b: {
 		number: string;
 		partId: number;
-		bomId: number;
+		assemblyId: number;
 		qtyMilli: number;
 		serial: string | null;
 		plannedFor: string | null;
@@ -185,12 +195,12 @@ export async function listBuilds(db: Db, f: BuildFilters = {}) {
 			partRef: parts.ref,
 			partName: parts.name,
 			unit: parts.unit,
-			bomCode: boms.code,
-			bomRevision: boms.revision,
+			assemblyCode: assemblies.code,
+			assemblyRevision: assemblies.revision,
 		})
 		.from(builds)
 		.innerJoin(parts, eq(builds.partId, parts.id))
-		.innerJoin(boms, eq(builds.bomId, boms.id))
+		.innerJoin(assemblies, eq(builds.assemblyId, assemblies.id))
 		.where(conds.length ? and(...conds) : undefined)
 		.orderBy(desc(builds.id))
 		.limit(f.limit ?? 500);
@@ -267,19 +277,19 @@ export const serialCount = (r: Requirement): number => Math.floor(r.qtyMilli / M
  * submitted serials. Used to render the pick list and, unchanged, to complete the build.
  */
 export function buildPickList(
-	graph: BomGraph,
+	graph: AssemblyGraph,
 	onHand: Map<number, number>,
-	build: { bomId: number; qtyMilli: number; serial: string | null },
+	build: { assemblyId: number; qtyMilli: number; serial: string | null },
 	product: { trackSerial: boolean },
 	form: Record<string, unknown>,
 	validateSerials: boolean,
 ): PickList {
-	const explosion = explode(graph, build.bomId, build.qtyMilli, { stock: onHand, choices: parseChoices(form) });
+	const explosion = explode(graph, build.assemblyId, build.qtyMilli, { stock: onHand, choices: parseChoices(form) });
 	const serials = new Map<number, string[]>();
 	const errors: Record<string, string> = {};
 	const problems: PickList["problems"] = [];
 	for (const r of explosion.requirements) {
-		if (r.missingBom) problems.push({ key: "missing_bom_build", vars: { ref: r.part.ref } });
+		if (r.missingAssembly) problems.push({ key: "missing_assembly_build", vars: { ref: r.part.ref } });
 		if (!r.part.trackSerial) continue;
 		const list: string[] = [];
 		const seen = new Set<string>();
@@ -309,7 +319,7 @@ export function buildPickList(
  */
 export function completionStatements(
 	db: Db,
-	graph: BomGraph,
+	graph: AssemblyGraph,
 	build: { id: number; partId: number; qtyMilli: number; serial: string | null; number: string },
 	pick: PickList,
 	user: string,

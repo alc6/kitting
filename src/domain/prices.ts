@@ -2,7 +2,7 @@
 // Prices actually paid are not copied here: they are the receipt moves of the ledger (PO price).
 import { and, asc, desc, eq, sql } from "drizzle-orm";
 import {
-	boms,
+	assemblies,
 	type PriceKind,
 	type PriceSource,
 	parts,
@@ -19,7 +19,7 @@ export type PriceRecord = {
 	priceCents: number | null;
 	source: PriceSource;
 	supplierId?: number | null;
-	bomId?: number | null;
+	assemblyId?: number | null;
 	note?: string;
 };
 
@@ -30,7 +30,7 @@ export function priceRecordStatement(db: Db, r: PriceRecord, user: string, now: 
 		kind: r.kind,
 		priceCents: r.priceCents,
 		supplierId: r.supplierId ?? null,
-		bomId: r.bomId ?? null,
+		assemblyId: r.assemblyId ?? null,
 		validFrom: now.slice(0, 10),
 		source: r.source,
 		note: r.note ?? "",
@@ -51,12 +51,12 @@ export function priceRecordForRefStatement(
 ) {
 	// INSERT ... SELECT over every column of price_history, in table order (id is assigned).
 	return db.insert(priceHistory).select(sql`
-		SELECT NULL, id, ${r.kind}, ${r.supplierId ?? null}, ${r.bomId ?? null}, ${r.priceCents}, ${now.slice(0, 10)},
+		SELECT NULL, id, ${r.kind}, ${r.supplierId ?? null}, ${r.assemblyId ?? null}, ${r.priceCents}, ${now.slice(0, 10)},
 			${r.source}, ${r.note ?? ""}, ${now}, ${now}, ${user}, ${user}
 		FROM parts WHERE ref = ${ref}`);
 }
 
-/** The history of a part, newest first, with supplier names and BoM variants. */
+/** The history of a part, newest first, with supplier names and assembly variants. */
 export async function partPriceHistory(db: Db, partId: number) {
 	return db
 		.select({
@@ -70,12 +70,12 @@ export async function partPriceHistory(db: Db, partId: number) {
 			createdBy: priceHistory.createdBy,
 			supplierId: priceHistory.supplierId,
 			supplierName: suppliers.name,
-			bomId: priceHistory.bomId,
-			bomCode: boms.code,
+			assemblyId: priceHistory.assemblyId,
+			assemblyCode: assemblies.code,
 		})
 		.from(priceHistory)
 		.leftJoin(suppliers, eq(priceHistory.supplierId, suppliers.id))
-		.leftJoin(boms, eq(priceHistory.bomId, boms.id))
+		.leftJoin(assemblies, eq(priceHistory.assemblyId, assemblies.id))
 		.where(eq(priceHistory.partId, partId))
 		.orderBy(desc(priceHistory.validFrom), desc(priceHistory.id));
 }

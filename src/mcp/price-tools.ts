@@ -1,9 +1,9 @@
-// prices:write tools (D127): standard costs, selling prices (of a part or a BoM variant) and supplier offers. Every
+// prices:write tools (D127): standard costs, selling prices (of a part or an assembly variant) and supplier offers. Every
 // price change appends its row to the price history in the same change set, exactly as the pages do.
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
-import { boms } from "../db/schema";
-import { bomLabel, bomSalePriceStatements, getBom } from "../domain/boms";
+import { assemblies } from "../db/schema";
+import { assemblyLabel, assemblySalePriceStatements, getAssembly } from "../domain/assemblies";
 import { getOffer, offerInput, offerToForm } from "../domain/offers";
 import { getPart, offerFormStatements, setSalePriceStatements, setStandardCostStatements } from "../domain/parts";
 import { isStocked } from "../domain/stock";
@@ -66,13 +66,13 @@ const setSalePrice = tool({
 	name: "set_sale_price",
 	title: "Set a selling price",
 	description:
-		"Sets the selling price of a part, or of one of its BoM variants (code, and revision when not the active one) which then overrides the part's price for that variant. Appended to the price history. Archived BoMs are read-only.",
+		"Sets the selling price of a part, or of one of its assembly variants (code, and revision when not the active one) which then overrides the part's price for that variant. Appended to the price history. Archived assemblies are read-only.",
 	rule: { scope: "prices:write", action: "prices.edit" },
 	annotations: writes({ destructive: true, idempotent: true }),
 	input: z.object({
 		ref: partRef,
 		price: amount('The selling price, e.g. "89.00".'),
-		code: z.string().trim().min(1).max(64).optional().describe("A BoM variant code, to price that variant."),
+		code: z.string().trim().min(1).max(64).optional().describe("An assembly variant code, to price that variant."),
 		revision: z
 			.string()
 			.trim()
@@ -85,7 +85,7 @@ const setSalePrice = tool({
 		const part = await partByRef(ctx.db, a.ref);
 		const cents = parseAmount(a.price, "price");
 		if (a.revision !== undefined && a.code === undefined)
-			throw new ToolError("revision needs code: give the BoM's variant code too (get_part lists them).");
+			throw new ToolError("revision needs code: give the assembly's variant code too (get_part lists them).");
 		if (a.code === undefined) {
 			const { change } = await saveChange(
 				ctx,
@@ -94,33 +94,34 @@ const setSalePrice = tool({
 			);
 			return { ...change, part: part.ref, salePriceCents: cents, previousSalePriceCents: part.salePriceCents };
 		}
-		const conds = [eq(boms.parentPartId, part.id), eq(boms.code, a.code)];
-		conds.push(a.revision ? eq(boms.revision, a.revision) : eq(boms.status, "active"));
+		const conds = [eq(assemblies.parentPartId, part.id), eq(assemblies.code, a.code)];
+		conds.push(a.revision ? eq(assemblies.revision, a.revision) : eq(assemblies.status, "active"));
 		const hit = (
 			await ctx.db
-				.select({ id: boms.id })
-				.from(boms)
+				.select({ id: assemblies.id })
+				.from(assemblies)
 				.where(and(...conds))
 				.limit(1)
 		)[0];
-		const found = hit ? await getBom(ctx.db, hit.id) : undefined;
+		const found = hit ? await getAssembly(ctx.db, hit.id) : undefined;
 		if (!found)
 			throw new ToolError(
-				`${part.ref} has no ${a.revision ? `revision ${a.revision} of` : "active"} BoM "${a.code}". Use get_part to list its BoMs.`,
+				`${part.ref} has no ${a.revision ? `revision ${a.revision} of` : "active"} assembly "${a.code}". Use get_part to list its assemblies.`,
 			);
-		const label = bomLabel(part.ref, found.bom);
-		if (found.bom.status === "archived") throw new ToolError(`BoM ${label}: ${errorMessage("bom_archived")}`);
+		const label = assemblyLabel(part.ref, found.assembly);
+		if (found.assembly.status === "archived")
+			throw new ToolError(`Assembly ${label}: ${errorMessage("assembly_archived")}`);
 		const { change } = await saveChange(
 			ctx,
-			fmt(ctx.t.history.summaries.bomSalePrice, { bom: label }),
-			bomSalePriceStatements(ctx.db, found.bom, cents, ctx.user, now()),
+			fmt(ctx.t.history.summaries.assemblySalePrice, { assembly: label }),
+			assemblySalePriceStatements(ctx.db, found.assembly, cents, ctx.user, now()),
 		);
 		return {
 			...change,
 			part: part.ref,
-			bom: { bomId: found.bom.id, code: found.bom.code, revision: found.bom.revision },
+			assembly: { assemblyId: found.assembly.id, code: found.assembly.code, revision: found.assembly.revision },
 			salePriceCents: cents,
-			previousSalePriceCents: found.bom.salePriceCents,
+			previousSalePriceCents: found.assembly.salePriceCents,
 		};
 	},
 });

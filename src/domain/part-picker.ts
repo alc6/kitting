@@ -1,6 +1,6 @@
 // Part picker (D138): the search behind the "Browse" dialog of the forms that pick a part. One query per page of
 // results (count + 20 rows), filtered and ordered in SQL. The forms keep their own rules (stock adjustments and
-// purchase orders take stocked parts, a new BoM a make or kit part, a BoM line anything but its own product):
+// purchase orders take stocked parts, a new assembly a make or kit part, an assembly line anything but its own product):
 // each form passes the same restriction to the picker so it never offers a part the form then rejects.
 import { and, asc, eq, inArray, ne, type SQL, sql } from "drizzle-orm";
 import { z } from "zod";
@@ -35,7 +35,7 @@ export const pickerInput = z.object({
 		.trim()
 		.refine((v) => v === "" || (PART_KINDS as readonly string[]).includes(v.toLowerCase()), "invalid_kind")
 		.transform((v) => (v === "" ? null : (v.toLowerCase() as PartKind))),
-	/** A part id the form refuses (a BoM's own product). */
+	/** A part id the form refuses (an assembly's own product). */
 	exclude: field.id(),
 });
 

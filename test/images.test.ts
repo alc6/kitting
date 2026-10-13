@@ -74,7 +74,7 @@ describe("product images", () => {
 		const page = await (await request(`/parts/${id}?err=image_type`)).text();
 		expect(page).toContain("Use a JPEG, PNG or WebP image.");
 		// Only known error keys are shown.
-		expect(await (await request(`/parts/${id}?err=bom_cycle`)).text()).not.toContain("This would create a cycle");
+		expect(await (await request(`/parts/${id}?err=assembly_cycle`)).text()).not.toContain("This would create a cycle");
 	});
 
 	it("replaces an image and deletes the previous file", async () => {

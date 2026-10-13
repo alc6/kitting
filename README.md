@@ -1,12 +1,12 @@
 # Kitting
 
-A lightweight, open-source mini-MRP for small hardware makers: parts, bills of materials,
-stock, purchasing and builds with per-serial traceability.
+A lightweight, open-source mini-MRP for small hardware makers: parts, assemblies (bills of
+materials), stock, purchasing and builds with per-serial traceability.
 
 It runs entirely on Cloudflare (Workers + D1 + Access): no server to manage, and the free
 tiers cover a small workshop. Deployment is one command.
 
-> **Status:** v1 is feature-complete (milestones M1–M5): catalogue, BoMs, stock, builds
+> **Status:** v1 is feature-complete (milestones M1–M5): catalogue, assemblies, stock, builds
 > with per-serial traceability, and purchasing. See [docs/plan.md](docs/plan.md).
 
 ## What it does
@@ -19,13 +19,13 @@ tiers cover a small workshop. Deployment is one command.
   reference, price, MOQ, pack size and lead time; one is preferred and drives purchasing.
 - **Prices**: an append-only history of standard costs, supplier prices and selling prices
   (who, when, from where), plus the prices actually paid on receipts, charted on each part.
-- **Margins**: selling price per product, optionally per BoM variant; planned margin against
+- **Margins**: selling price per product, optionally per assembly variant; planned margin against
   the cost roll-up and actual margin of completed builds, as an amount, a rate on the selling
   price and a markup on cost. Each item has a **margin history**: a chart and a list of every
   day a component cost or the selling price moved it, plus the actual margin of each build.
   Planned margins follow standard costs; saving a supplier price can update the standard cost too.
-- **Bills of materials** with variants (e.g. `std`, `warm`) and revisions: line editor,
-  "new revision" copies, one active BoM per variant, cycle protection, expandable tree with
+- **Assemblies** with variants (e.g. `std`, `warm`) and revisions: line editor,
+  "new revision" copies, one active assembly per variant, cycle protection, expandable tree with
   cumulative quantities and cost roll-up (flagged incomplete when a cost is missing), a
   **structure diagram** (nested sub-assemblies and kits drawn as boxes and links, with
   quantities and costs, by depth or assemblies only, zoom and pan), flat exploded list for
@@ -36,7 +36,7 @@ tiers cover a small workshop. Deployment is one command.
   (standard cost valid on the "as of" date, and weighted average of the prices paid) and CSV
   exports for year-end.
 - **Builds** of finished products or sub-assemblies: pick the variant, plan a date, enter the
-  serial; the pick list explodes the BoM, takes sub-assemblies from stock when available (or
+  serial; the pick list explodes the assembly, takes sub-assemblies from stock when available (or
   "build now"), asks one serial per serial-tracked unit, and completion posts everything in one
   transaction. The as-built record answers "what exactly is inside serial #0042", and search
   answers "which build used LED serial X".
@@ -46,16 +46,16 @@ tiers cover a small workshop. Deployment is one command.
   receipts (with serials), closing short-shipped POs, CSV for the supplier.
 - **Dashboard**: shortages, parts below zero or below MOQ, open POs (overdue flagged), planned
   and last builds, stock value.
-- **CSV import** for suppliers, parts, supplier offers, BoMs and initial stock, with a dry-run preview and
+- **CSV import** for suppliers, parts, supplier offers, assemblies and initial stock, with a dry-run preview and
   row-level errors. Nothing is written until you confirm, and the commit is atomic.
   Works with Excel files from French or English locales (`;` or `,`, decimal comma or point).
 - **CSV export** in the same formats, for round-trips and backups.
-- **Search** across parts, BoMs, builds (including component serials), POs and suppliers
+- **Search** across parts, assemblies, builds (including component serials), POs and suppliers
   from the header (`/` or Ctrl/Cmd+K).
 - **History and undo**: every change to the catalogue, documents, users and settings is kept, field by
   field, with who made it and from where; any change can be reviewed and undone (see below).
 - **AI assistants** (optional): an MCP server lets Claude, ChatGPT or any MCP client read parts,
-  BoMs, stock, builds and purchasing, with the permissions each person grants and their role
+  assemblies, stock, builds and purchasing, with the permissions each person grants and their role
   checked on every request (see [Connect an AI assistant](#connect-an-ai-assistant-mcp)).
 - Modern, tablet-first UI built on the [shadcn/ui](https://ui.shadcn.com) design system: left
   sidebar, light / dark / system theme, French and English.
@@ -86,7 +86,7 @@ Cloudflare Access decides who can sign in; Kitting decides what each person may 
 | --- | --- |
 | Viewer | Look at everything and change nothing. Anyone not listed on the Users page is a viewer (and cannot connect an AI assistant). |
 | Operator | Shop floor: run builds, adjust and count stock, receive deliveries. |
-| Planner | Office: also edit parts, BoMs, suppliers, offers, prices and purchase orders; Import / Export. |
+| Planner | Office: also edit parts, assemblies, suppliers, offers, prices and purchase orders; Import / Export. |
 | Administrator | Also confirm imports, delete, archive, restore backups and manage users. |
 
 - The emails in `ADMIN_EMAILS` are always administrators. They give roles to everyone else on
@@ -105,7 +105,7 @@ over MCP) and every row it touched, before and after.
 
 - **Recent changes** (sidebar, everyone) lists them, newest first, filtered by origin, person, dates or text.
   A change's page shows each row it touched field by field ("quantity: 1 → 3").
-- Parts, suppliers, BoMs and purchase orders have a **History** tab with their own changes and those of their
+- Parts, suppliers, assemblies and purchase orders have a **History** tab with their own changes and those of their
   offers or lines. Records that existed before the history was installed (migration 0005) have no creation
   entry; everything done to them since is recorded and can be undone.
 - **Undo** puts the previous values back as a new change (which can itself be undone). It is refused, and
@@ -181,7 +181,7 @@ You need a Cloudflare account with a domain on it, Node.js 20+, and this reposit
    Run the same command for every update.
 
 Then open your hostname, sign in through Access, and load your data from
-**Import / Export** (suppliers → parts → supplier offers → BoMs → stock). To try the app first, import the
+**Import / Export** (suppliers → parts → supplier offers → assemblies → stock). To try the app first, import the
 fictional dataset in [`examples/demo/`](examples/demo/).
 
 ### Deploy from GitHub Actions instead
@@ -234,15 +234,15 @@ domain Access protects.
 
 Optional. Kitting can serve an [MCP](https://modelcontextprotocol.io) server at `https://<your-domain>/mcp`,
 so an AI assistant (Claude, ChatGPT or any MCP client) can look things up and, if you allow it, do the paperwork:
-create parts and BoMs, update prices, adjust stock, plan and complete builds, draft and receive purchase orders.
+create parts and assemblies, update prices, adjust stock, plan and complete builds, draft and receive purchase orders.
 It acts in your name, with your role, and every change it makes is in **Recent changes**.
 
 | Permission (scope) | Tools |
 | --- | --- |
-| `catalog:read` | `search_parts`, `get_part` (details, offers, on hand, BoMs, where-used), `get_bom` (tree with per-parent and cumulative quantities, cost roll-up), `explode_bom` (flat list for a quantity, optionally using sub-assemblies in stock), `list_recent_changes` (the change history with field diffs) |
-| `catalog:write` | `create_part`, `update_part` (never prices), `create_supplier`, `update_supplier`, `create_bom` (a draft, empty or copied), `set_bom_lines` (replaces all lines at once; on an active BoM it creates a new draft revision instead), `new_bom_revision`, `activate_bom` |
-| `prices:write` | `set_standard_cost`, `set_sale_price` (of a part or a BoM variant), `upsert_supplier_offer` (also: make it preferred, use its price as the standard cost) |
-| `catalog:archive` | `archive_part`, `unarchive_part`, `archive_bom` |
+| `catalog:read` | `search_parts`, `get_part` (details, offers, on hand, assemblies, where-used), `get_assembly` (tree with per-parent and cumulative quantities, cost roll-up), `explode_assembly` (flat list for a quantity, optionally using sub-assemblies in stock), `list_recent_changes` (the change history with field diffs) |
+| `catalog:write` | `create_part`, `update_part` (never prices), `create_supplier`, `update_supplier`, `create_assembly` (a draft, empty or copied), `set_assembly_lines` (replaces all lines at once; on an active assembly it creates a new draft revision instead), `new_assembly_revision`, `activate_assembly` |
+| `prices:write` | `set_standard_cost`, `set_sale_price` (of a part or an assembly variant), `upsert_supplier_offer` (also: make it preferred, use its price as the standard cost) |
+| `catalog:archive` | `archive_part`, `unarchive_part`, `archive_assembly` |
 | `stock:read` | `stock_on_hand` (below zero, below MOQ, in stock), `list_moves` |
 | `stock:write` | `adjust_stock`, `count_stock` |
 | `builds:read` | `list_builds` (also finds the build that used a component serial), `get_build` (pick list, or the as-built record) |
@@ -267,9 +267,9 @@ How it stays safe:
 - The assistant is told to confirm with you before any change. Every change is one entry in **Recent changes**,
   marked with the assistant's name, and each tool's answer gives its link: undo it there like any other change.
   Stock and build ledger operations (adjustments, counts, receipts, build completions) cannot be undone, as in
-  the app: they are corrected with reverse movements. BoMs are only changed through draft revisions: an active
-  BoM stays as it is until you activate the new revision.
-- Never over MCP: permanent deletes (parts, suppliers, BoMs, purchase orders, offers, images), undoing a change
+  the app: they are corrected with reverse movements. Assemblies are only changed through draft revisions: an active
+  assembly stays as it is until you activate the new revision.
+- Never over MCP: permanent deletes (parts, suppliers, assemblies, purchase orders, offers, images), undoing a change
   (undo stays in the app), user management, backups and restores, CSV imports, image uploads.
 - **Connected apps** (bottom of the sidebar) lists your connections with *Revoke*; administrators see and
   revoke everyone's. Revoking stops the assistant at once.
@@ -315,7 +315,7 @@ npx @modelcontextprotocol/inspector   # Streamable HTTP, URL http://localhost:87
 ## Use Kitting from Claude
 
 An assistant needs two things: the **tools** (the MCP connector above) and the **know-how** (the Kitting skill: what
-a kit or a revision is, which tools to chain to plan a build or change a BoM, when to ask before writing). This
+a kit or a revision is, which tools to chain to plan a build or change an assembly, when to ask before writing). This
 repository ships both as a Claude plugin, `plugins/kitting`, listed in a plugin marketplace
 (`.claude-plugin/marketplace.json`). Pick the path that matches your client; the connector is the same everywhere
 and still needs the setup above (`https://<your-domain>/mcp`).
@@ -340,7 +340,7 @@ and still needs the setup above (`https://<your-domain>/mcp`).
    ```
 
 3. Run `/mcp`, pick `plugin:kitting:kitting` and sign in: the browser opens Kitting's consent page, where you tick
-   what the assistant may do. The skill is `kitting:kitting` and loads on its own when you talk about parts, BoMs,
+   what the assistant may do. The skill is `kitting:kitting` and loads on its own when you talk about parts, assemblies,
    stock, builds or purchase orders.
 
 Claude Code expands `${KITTING_MCP_URL}` in the plugin's `.mcp.json` (checked against a local server: it connects to
@@ -362,7 +362,7 @@ Alternatively, zip the whole `plugins/kitting` folder and upload it with *Custom
 plugin*: you get the skill and the connector entry in one step (with the URL fixed in your private copy).
 
 **Other MCP clients (ChatGPT, Inspector, your own).** Add the connector only. The server sends instructions when a
-client connects (read before write, confirm before changing anything, BoMs through draft revisions, costs can be
+client connects (read before write, confirm before changing anything, assemblies through draft revisions, costs can be
 hidden) and mentions the skill. To give such a client the full know-how, paste `plugins/kitting/skills/kitting/SKILL.md`
 and its `references/` into its project instructions.
 
@@ -423,11 +423,11 @@ current data.
 - `stock.csv`: `ref,qty,serial,unit_cost`. Sets on-hand to the counted `qty` with a
   `count` move for the difference. For serial-tracked parts that have no stock yet, use one
   row per serial with `qty` 1.
-- `boms.csv`: `parent_ref,code,revision,status,component_ref,qty` (+ optional `sale_price`, `notes`).
-  One row per line, grouped by `parent_ref` + `code` + `revision`; each BoM mentioned gets
+- `assemblies.csv`: `parent_ref,code,revision,status,component_ref,qty` (+ optional `sale_price`, `notes`).
+  One row per line, grouped by `parent_ref` + `code` + `revision`; each assembly mentioned gets
   exactly the lines in the file. `code` defaults to `std`, `revision` to `Rev1`, `status` to
-  `draft`. Importing a BoM as `active` archives the previously active one of the same variant.
-  `sale_price` (one value per BoM) is that variant's selling price, overriding the part's.
+  `draft`. Importing an assembly as `active` archives the previously active one of the same variant.
+  `sale_price` (one value per assembly) is that variant's selling price, overriding the part's.
 
 ## Backups
 

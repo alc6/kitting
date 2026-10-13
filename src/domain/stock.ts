@@ -7,8 +7,8 @@ import { likePattern } from "../lib/sql";
 import { MILLI } from "../lib/units";
 import { type FieldErrors, field } from "../lib/validation";
 import type { Db } from "../types";
-import { CostCalculator, centsOf } from "./bom-graph";
-import { loadGraph } from "./boms";
+import { loadGraph } from "./assemblies";
+import { CostCalculator, centsOf } from "./assembly-graph";
 import { averageUnitCents, centsOfMillicents, replayAverageCosts } from "./costing";
 import type { RowIssue } from "./import/types";
 import { historyStart, standardCostsAt } from "./prices";
@@ -265,7 +265,7 @@ export async function valuation(db: Db, date?: string | null) {
 		historyStart(db),
 	]);
 	if (dated) {
-		// Value with the standard costs of that day (the BoM structure is today's).
+		// Value with the standard costs of that day (the assembly structure is today's).
 		for (const [id, part] of graph.parts) {
 			if (dated.costs.has(id)) graph.parts.set(id, { ...part, costCents: dated.costs.get(id) ?? null });
 		}
@@ -276,14 +276,15 @@ export async function valuation(db: Db, date?: string | null) {
 		const part = graph.parts.get(partId);
 		if (!part || qty === 0 || !isStocked(part.kind)) continue;
 		const cost = calc.part(partId);
-		const hasBom =
-			part.kind === "make" && [...graph.boms.values()].some((b) => b.parentPartId === partId && b.status === "active");
+		const hasAssembly =
+			part.kind === "make" &&
+			[...graph.assemblies.values()].some((b) => b.parentPartId === partId && b.status === "active");
 		const avg = average.costs.get(partId);
 		rows.push({
 			part,
 			onHandMilli: qty,
 			unitMillicents: cost.millicents,
-			source: hasBom ? "rollup" : "standard",
+			source: hasAssembly ? "rollup" : "standard",
 			incomplete: cost.incomplete,
 			valueCents: centsOf(calc.extended(partId, qty)),
 			fallback: dated?.fallback.has(partId) ?? false,

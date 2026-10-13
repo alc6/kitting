@@ -1,25 +1,25 @@
 // Margin history of one sellable item, derived (never stored, D98):
 // - planned: replayed from the price history, one point per day on which the standard cost of a component
-//   of its roll-up or its selling price changed. The BoM structure is today's (as for valuation, D91);
+//   of its roll-up or its selling price changed. The assembly structure is today's (as for valuation, D91);
 // - actual: one point per completed build, its output at weighted average cost against the selling price
 //   valid on the day it was completed (there is no sales record).
 import { and, asc, eq } from "drizzle-orm";
-import { boms, builds, parts, priceHistory } from "../db/schema";
+import { assemblies, builds, parts, priceHistory } from "../db/schema";
 import type { Db } from "../types";
-import { type BomGraph, CostCalculator, centsOf, defaultBom } from "./bom-graph";
-import { loadGraph } from "./boms";
+import { loadGraph } from "./assemblies";
+import { type AssemblyGraph, CostCalculator, centsOf, defaultAssembly } from "./assembly-graph";
 import { buildUnitCents } from "./costing";
 import { type Margin, marginOf } from "./margins";
 import { resolveCostsAt } from "./prices";
 import { averageCosts } from "./stock";
 
-/** What is priced: a BoM variant of a part, or a part sold without BoM (`bomId` null). */
-export type MarginTarget = { partId: number; bomId: number | null };
+/** What is priced: an assembly variant of a part, or a part sold without assembly (`assemblyId` null). */
+export type MarginTarget = { partId: number; assemblyId: number | null };
 
 /** Standard cost rows, sorted by part, date, id. */
 export type StandardRow = { partId: number; priceCents: number | null; validFrom: string };
-/** Selling price rows of the target part, sorted by date, id (`bomId` set for a variant's own price). */
-export type SaleRow = { bomId: number | null; priceCents: number | null; validFrom: string };
+/** Selling price rows of the target part, sorted by date, id (`assemblyId` set for a variant's own price). */
+export type SaleRow = { assemblyId: number | null; priceCents: number | null; validFrom: string };
 
 export type CostChange = { partId: number; fromCents: number | null; toCents: number | null };
 
@@ -51,29 +51,29 @@ export type ActualPoint = {
 
 /**
  * Parts whose standard cost feeds the planned cost of the target: the leaves of its roll-up (buy and fee
- * parts, make and kit parts without an active BoM). A make part with a BoM is rolled up, so its own
+ * parts, make and kit parts without an active assembly). A make part with an assembly is rolled up, so its own
  * standard cost does not count.
  */
-export function costInputs(graph: BomGraph, target: MarginTarget): Set<number> {
+export function costInputs(graph: AssemblyGraph, target: MarginTarget): Set<number> {
 	const inputs = new Set<number>();
 	const visiting = new Set<number>();
-	const visitBom = (bomId: number) => {
-		for (const line of graph.boms.get(bomId)?.lines ?? []) visitPart(line.componentPartId);
+	const visitAssembly = (assemblyId: number) => {
+		for (const line of graph.assemblies.get(assemblyId)?.lines ?? []) visitPart(line.componentPartId);
 	};
 	const visitPart = (partId: number) => {
 		const part = graph.parts.get(partId);
-		const bom = part && (part.kind === "make" || part.kind === "kit") ? defaultBom(graph, partId) : undefined;
-		if (!bom) {
+		const assembly = part && (part.kind === "make" || part.kind === "kit") ? defaultAssembly(graph, partId) : undefined;
+		if (!assembly) {
 			inputs.add(partId);
 			return;
 		}
 		if (visiting.has(partId)) return; // a cycle: prevented on save, guarded here anyway
 		visiting.add(partId);
-		visitBom(bom.id);
+		visitAssembly(assembly.id);
 		visiting.delete(partId);
 	};
-	if (target.bomId === null) visitPart(target.partId);
-	else visitBom(target.bomId);
+	if (target.assemblyId === null) visitPart(target.partId);
+	else visitAssembly(target.assemblyId);
 	return inputs;
 }
 
@@ -83,34 +83,34 @@ export function costInputs(graph: BomGraph, target: MarginTarget): Set<number> {
  */
 export function salePriceAt(
 	rows: SaleRow[],
-	bomId: number | null,
+	assemblyId: number | null,
 	date: string,
-	current: { part: number | null; bom: number | null },
+	current: { part: number | null; assembly: number | null },
 ): number | null {
-	const level = (forBom: number | null, now: number | null) => {
+	const level = (forAssembly: number | null, now: number | null) => {
 		let seen = false;
 		let price: number | null = null;
 		for (const r of rows) {
-			if (r.bomId !== forBom) continue;
+			if (r.assemblyId !== forAssembly) continue;
 			seen = true;
 			if (r.validFrom <= date) price = r.priceCents;
 		}
 		return seen ? price : now;
 	};
-	return (bomId === null ? null : level(bomId, current.bom)) ?? level(null, current.part);
+	return (assemblyId === null ? null : level(assemblyId, current.assembly)) ?? level(null, current.part);
 }
 
 /** Planned margin over time (oldest first). Pure: the caller loads the graph and the history. */
 export function plannedMarginSeries(
-	graph: BomGraph,
+	graph: AssemblyGraph,
 	target: MarginTarget,
 	standardRows: StandardRow[],
 	saleRows: SaleRow[],
-	currentSale: { part: number | null; bom: number | null },
+	currentSale: { part: number | null; assembly: number | null },
 ): PlannedPoint[] {
 	const inputs = costInputs(graph, target);
 	const relevant = standardRows.filter((r) => inputs.has(r.partId));
-	const sales = saleRows.filter((r) => r.bomId === null || r.bomId === target.bomId);
+	const sales = saleRows.filter((r) => r.assemblyId === null || r.assemblyId === target.assemblyId);
 	const dates = [...new Set([...relevant.map((r) => r.validFrom), ...sales.map((r) => r.validFrom)])].sort();
 	const current = [...inputs].map((id) => ({ id, costCents: graph.parts.get(id)?.costCents ?? null }));
 
@@ -118,15 +118,15 @@ export function plannedMarginSeries(
 	let previous: Map<number, number | null> | null = null;
 	for (const date of dates) {
 		const { costs, fallback } = resolveCostsAt(relevant, current, date);
-		const dated: BomGraph = { parts: new Map(graph.parts), boms: graph.boms };
+		const dated: AssemblyGraph = { parts: new Map(graph.parts), assemblies: graph.assemblies };
 		for (const id of inputs) {
 			const part = dated.parts.get(id);
 			if (part) dated.parts.set(id, { ...part, costCents: costs.get(id) ?? null });
 		}
 		const calc = new CostCalculator(dated);
-		const cost = target.bomId === null ? calc.part(target.partId) : calc.bom(target.bomId);
+		const cost = target.assemblyId === null ? calc.part(target.partId) : calc.assembly(target.assemblyId);
 		const costCents = centsOf(cost.millicents);
-		const priceCents = salePriceAt(sales, target.bomId, date, currentSale);
+		const priceCents = salePriceAt(sales, target.assemblyId, date, currentSale);
 		const last = points.at(-1);
 		const costChanges: CostChange[] = [];
 		if (previous) {
@@ -156,7 +156,7 @@ export function plannedMarginSeries(
 	return points;
 }
 
-/** Loads everything the margin history of a sellable item needs; null when the part or BoM does not exist. */
+/** Loads everything the margin history of a sellable item needs; null when the part or assembly does not exist. */
 export async function marginHistory(db: Db, target: MarginTarget) {
 	const [part] = await db
 		.select({
@@ -170,18 +170,18 @@ export async function marginHistory(db: Db, target: MarginTarget) {
 		.from(parts)
 		.where(eq(parts.id, target.partId));
 	if (!part) return null;
-	const partBoms = await db
+	const partAssemblies = await db
 		.select({
-			id: boms.id,
-			code: boms.code,
-			revision: boms.revision,
-			status: boms.status,
-			salePriceCents: boms.salePriceCents,
+			id: assemblies.id,
+			code: assemblies.code,
+			revision: assemblies.revision,
+			status: assemblies.status,
+			salePriceCents: assemblies.salePriceCents,
 		})
-		.from(boms)
-		.where(eq(boms.parentPartId, part.id));
-	const bom = target.bomId === null ? null : partBoms.find((b) => b.id === target.bomId);
-	if (bom === undefined) return null;
+		.from(assemblies)
+		.where(eq(assemblies.parentPartId, part.id));
+	const assembly = target.assemblyId === null ? null : partAssemblies.find((b) => b.id === target.assemblyId);
+	if (assembly === undefined) return null;
 
 	const [graph, standardRows, saleRows, done] = await Promise.all([
 		loadGraph(db),
@@ -191,7 +191,11 @@ export async function marginHistory(db: Db, target: MarginTarget) {
 			.where(eq(priceHistory.kind, "standard"))
 			.orderBy(asc(priceHistory.partId), asc(priceHistory.validFrom), asc(priceHistory.id)),
 		db
-			.select({ bomId: priceHistory.bomId, priceCents: priceHistory.priceCents, validFrom: priceHistory.validFrom })
+			.select({
+				assemblyId: priceHistory.assemblyId,
+				priceCents: priceHistory.priceCents,
+				validFrom: priceHistory.validFrom,
+			})
 			.from(priceHistory)
 			.where(and(eq(priceHistory.partId, part.id), eq(priceHistory.kind, "sale")))
 			.orderBy(asc(priceHistory.validFrom), asc(priceHistory.id)),
@@ -199,7 +203,7 @@ export async function marginHistory(db: Db, target: MarginTarget) {
 			.select({
 				id: builds.id,
 				number: builds.number,
-				bomId: builds.bomId,
+				assemblyId: builds.assemblyId,
 				qtyMilli: builds.qtyMilli,
 				doneAt: builds.doneAt,
 			})
@@ -210,21 +214,21 @@ export async function marginHistory(db: Db, target: MarginTarget) {
 
 	const planned = plannedMarginSeries(graph, target, standardRows, saleRows, {
 		part: part.salePriceCents,
-		bom: bom?.salePriceCents ?? null,
+		assembly: assembly?.salePriceCents ?? null,
 	});
 
-	// Builds of this variant, any revision (as on the margins page); of any BoM for a part without one.
-	const codeOf = new Map(partBoms.map((b) => [b.id, b]));
-	const mine = done.filter((b) => bom === null || codeOf.get(b.bomId)?.code === bom.code);
+	// Builds of this variant, any revision (as on the margins page); of any assembly for a part without one.
+	const codeOf = new Map(partAssemblies.map((b) => [b.id, b]));
+	const mine = done.filter((b) => assembly === null || codeOf.get(b.assemblyId)?.code === assembly.code);
 	const average = mine.length ? await averageCosts(db) : null;
 	const actual: ActualPoint[] = mine.map((b) => {
 		const date = (b.doneAt ?? "").slice(0, 10);
 		const cost = average?.builds.get(b.id);
 		const unitCents = buildUnitCents(cost);
 		const incomplete = !cost || cost.incomplete;
-		const priceCents = salePriceAt(saleRows, b.bomId, date, {
+		const priceCents = salePriceAt(saleRows, b.assemblyId, date, {
 			part: part.salePriceCents,
-			bom: codeOf.get(b.bomId)?.salePriceCents ?? null,
+			assembly: codeOf.get(b.assemblyId)?.salePriceCents ?? null,
 		});
 		return {
 			buildId: b.id,
@@ -238,5 +242,5 @@ export async function marginHistory(db: Db, target: MarginTarget) {
 		};
 	});
 
-	return { part, bom, planned, actual, refs: new Map([...graph.parts].map(([id, p]) => [id, p.ref])) };
+	return { part, assembly, planned, actual, refs: new Map([...graph.parts].map(([id, p]) => [id, p.ref])) };
 }

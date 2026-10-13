@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { valuation } from "../src/domain/stock";
 import { formatCentsInput, formatMoney } from "../src/lib/units";
 import {
-	bomId,
+	assemblyId,
 	insertPart,
 	insertSupplier,
 	loadDemo,
@@ -28,7 +28,7 @@ async function planLamps(n: number) {
 	for (let i = 1; i <= n; i++) {
 		const res = await postForm("/builds", {
 			part_id: String(await partId("LAMP-DESK")),
-			bom_id: String(await bomId("LAMP-DESK")),
+			assembly_id: String(await assemblyId("LAMP-DESK")),
 			qty: "1",
 			serial: `L-${i}`,
 			planned_for: "",
@@ -185,14 +185,20 @@ describe("shortages: ordering from another supplier", () => {
 		);
 		await insertPart("BARE", "buy", { costCents: 50 });
 		const top = await insertPart("TOP", "make");
-		await postForm("/boms", { parent_part_id: String(top), code: "std", revision: "Rev1", notes: "", copy_from: "" });
-		const b = (await one<{ id: number }>("SELECT id FROM boms")).id;
-		await postForm(`/boms/${b}/lines`, { component: "LOOSE", qty: "2", notes: "" });
-		await postForm(`/boms/${b}/lines`, { component: "BARE", qty: "1", notes: "" });
-		await postForm(`/boms/${b}/activate`, {});
+		await postForm("/assemblies", {
+			parent_part_id: String(top),
+			code: "std",
+			revision: "Rev1",
+			notes: "",
+			copy_from: "",
+		});
+		const b = (await one<{ id: number }>("SELECT id FROM assemblies")).id;
+		await postForm(`/assemblies/${b}/lines`, { component: "LOOSE", qty: "2", notes: "" });
+		await postForm(`/assemblies/${b}/lines`, { component: "BARE", qty: "1", notes: "" });
+		await postForm(`/assemblies/${b}/activate`, {});
 		await postForm("/builds", {
 			part_id: String(top),
-			bom_id: String(b),
+			assembly_id: String(b),
 			qty: "1",
 			serial: "",
 			planned_for: "",

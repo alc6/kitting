@@ -28,9 +28,9 @@ build with a serial first when a case needs history (case 2 assumes `B-0007` mad
 
 | Case | Prompt | Expected sequence | Must not |
 | --- | --- | --- | --- |
-| `plan-warm-lamps` | Plan 3 warm lamps and tell me what to order (go-ahead given for builds and drafts) | `search_parts` or `get_part` (find the `warm` BoM) → `explode_bom` (qty 3, `use_stock`) → `plan_build` x3 (one serial each) → `get_shortages` → `create_draft_pos` (only if something is short; the demo may need nothing for 3 lamps) | `mark_po_sent`, inventing serials, planning with the `std` BoM |
+| `plan-warm-lamps` | Plan 3 warm lamps and tell me what to order (go-ahead given for builds and drafts) | `search_parts` or `get_part` (find the `warm` Assembly) → `explode_assembly` (qty 3, `use_stock`) → `plan_build` x3 (one serial each) → `get_shortages` → `create_draft_pos` (only if something is short; the demo may need nothing for 3 lamps) | `mark_po_sent`, inventing serials, planning with the `std` Assembly |
 | `trace-faulty-led` | The LED in lamp L-0042 is faulty: which other lamps used the same batch? | `list_builds` (query `L-0042`) → `get_build` (as-built: LED serial) → `list_moves` (receipt of that serial, then the same part's receipts) → `list_builds` per neighbouring serial | any write (`adjust_stock`...); claiming a supplier lot Kitting does not record |
-| `add-felt-pads` | Add 2 felt pads to the base, safely (do not activate) | `search_parts` → `get_part` (where-used) → `get_bom` → `set_bom_lines` (complete list, `PAD-FELT` 6) → `get_bom` with the new `revision` | `activate_bom`, editing the active revision, sending only the changed line |
+| `add-felt-pads` | Add 2 felt pads to the base, safely (do not activate) | `search_parts` → `get_part` (where-used) → `get_assembly` → `set_assembly_lines` (complete list, `PAD-FELT` 6) → `get_assembly` with the new `revision` | `activate_assembly`, editing the active revision, sending only the changed line |
 
 In a real conversation each write is confirmed first; the cases give the go-ahead in the prompt so one turn can
 reach the writes. A second run without that sentence should stop before the first write and ask.

@@ -4,8 +4,8 @@
   "id": "45089231-3c59-4baf-948f-2129f1ae6a78",
   "prevId": "2c9475a4-00f3-4fc2-b0cf-7af912906bd1",
   "tables": {
-    "bom_lines": {
-      "name": "bom_lines",
+    "assembly_lines": {
+      "name": "assembly_lines",
       "columns": {
         "id": {
           "name": "id",
@@ -14,8 +14,8 @@
           "notNull": true,
           "autoincrement": true
         },
-        "bom_id": {
-          "name": "bom_id",
+        "assembly_id": {
+          "name": "assembly_id",
           "type": "integer",
           "primaryKey": false,
           "notNull": true,
@@ -83,16 +83,16 @@
         }
       },
       "indexes": {
-        "bom_lines_bom_idx": {
-          "name": "bom_lines_bom_idx",
+        "assembly_lines_assembly_idx": {
+          "name": "assembly_lines_assembly_idx",
           "columns": [
-            "bom_id",
+            "assembly_id",
             "position"
           ],
           "isUnique": false
         },
-        "bom_lines_component_idx": {
-          "name": "bom_lines_component_idx",
+        "assembly_lines_component_idx": {
+          "name": "assembly_lines_component_idx",
           "columns": [
             "component_part_id"
           ],
@@ -100,12 +100,12 @@
         }
       },
       "foreignKeys": {
-        "bom_lines_bom_id_boms_id_fk": {
-          "name": "bom_lines_bom_id_boms_id_fk",
-          "tableFrom": "bom_lines",
-          "tableTo": "boms",
+        "assembly_lines_assembly_id_assemblies_id_fk": {
+          "name": "assembly_lines_assembly_id_assemblies_id_fk",
+          "tableFrom": "assembly_lines",
+          "tableTo": "assemblies",
           "columnsFrom": [
-            "bom_id"
+            "assembly_id"
           ],
           "columnsTo": [
             "id"
@@ -113,9 +113,9 @@
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
-        "bom_lines_component_part_id_parts_id_fk": {
-          "name": "bom_lines_component_part_id_parts_id_fk",
-          "tableFrom": "bom_lines",
+        "assembly_lines_component_part_id_parts_id_fk": {
+          "name": "assembly_lines_component_part_id_parts_id_fk",
+          "tableFrom": "assembly_lines",
           "tableTo": "parts",
           "columnsFrom": [
             "component_part_id"
@@ -130,14 +130,14 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {
-        "bom_lines_qty_check": {
-          "name": "bom_lines_qty_check",
-          "value": "\"bom_lines\".\"qty_milli\" > 0"
+        "assembly_lines_qty_check": {
+          "name": "assembly_lines_qty_check",
+          "value": "\"assembly_lines\".\"qty_milli\" > 0"
         }
       }
     },
-    "boms": {
-      "name": "boms",
+    "assemblies": {
+      "name": "assemblies",
       "columns": {
         "id": {
           "name": "id",
@@ -217,8 +217,8 @@
         }
       },
       "indexes": {
-        "boms_parent_code_revision_unique": {
-          "name": "boms_parent_code_revision_unique",
+        "assemblies_parent_code_revision_unique": {
+          "name": "assemblies_parent_code_revision_unique",
           "columns": [
             "parent_part_id",
             "code",
@@ -226,8 +226,8 @@
           ],
           "isUnique": true
         },
-        "boms_one_active_per_code": {
-          "name": "boms_one_active_per_code",
+        "assemblies_one_active_per_code": {
+          "name": "assemblies_one_active_per_code",
           "columns": [
             "parent_part_id",
             "code"
@@ -237,9 +237,9 @@
         }
       },
       "foreignKeys": {
-        "boms_parent_part_id_parts_id_fk": {
-          "name": "boms_parent_part_id_parts_id_fk",
-          "tableFrom": "boms",
+        "assemblies_parent_part_id_parts_id_fk": {
+          "name": "assemblies_parent_part_id_parts_id_fk",
+          "tableFrom": "assemblies",
           "tableTo": "parts",
           "columnsFrom": [
             "parent_part_id"
@@ -254,8 +254,8 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {
-        "boms_status_check": {
-          "name": "boms_status_check",
+        "assemblies_status_check": {
+          "name": "assemblies_status_check",
           "value": "status IN ('draft', 'active', 'archived')"
         }
       }
@@ -417,8 +417,8 @@
           "notNull": true,
           "autoincrement": false
         },
-        "bom_id": {
-          "name": "bom_id",
+        "assembly_id": {
+          "name": "assembly_id",
           "type": "integer",
           "primaryKey": false,
           "notNull": true,
@@ -539,12 +539,12 @@
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "builds_bom_id_boms_id_fk": {
-          "name": "builds_bom_id_boms_id_fk",
+        "builds_assembly_id_assemblies_id_fk": {
+          "name": "builds_assembly_id_assemblies_id_fk",
           "tableFrom": "builds",
-          "tableTo": "boms",
+          "tableTo": "assemblies",
           "columnsFrom": [
-            "bom_id"
+            "assembly_id"
           ],
           "columnsTo": [
             "id"

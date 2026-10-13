@@ -1,12 +1,12 @@
-import type { BomStatus } from "../db/schema";
-import { type Cost, centsOf } from "../domain/bom-graph";
+import type { AssemblyStatus } from "../db/schema";
+import { type Cost, centsOf } from "../domain/assembly-graph";
 import { fmt } from "../i18n";
 import { useApp } from "./context";
 import { Money } from "./ui";
 
-export function StatusBadge(props: { status: BomStatus }) {
+export function StatusBadge(props: { status: AssemblyStatus }) {
 	const { t } = useApp();
-	return <span class={`status status-${props.status}`}>{t.boms.statuses[props.status]}</span>;
+	return <span class={`status status-${props.status}`}>{t.assemblies.statuses[props.status]}</span>;
 }
 
 /** Cost with an "incomplete" marker listing the parts without cost. */
@@ -19,11 +19,11 @@ export function CostView(props: { cost: Cost; refs: Map<number, string>; long?: 
 			<Money cents={centsOf(props.cost.millicents)} />
 			{props.cost.incomplete ? (
 				props.long ? (
-					<small class="font-medium text-warning"> {fmt(t.boms.incomplete, { refs: missing.join(", ") })}</small>
+					<small class="font-medium text-warning"> {fmt(t.assemblies.incomplete, { refs: missing.join(", ") })}</small>
 				) : (
 					<abbr
 						class="cursor-help font-medium text-warning no-underline"
-						title={fmt(t.boms.incomplete, { refs: missing.join(", ") })}
+						title={fmt(t.assemblies.incomplete, { refs: missing.join(", ") })}
 					>
 						{" "}
 						*

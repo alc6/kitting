@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-	bomId,
+	assemblyId,
 	insertMove,
 	insertPart,
 	insertSupplier,
@@ -181,12 +181,12 @@ describe("forms with the part picker", () => {
 		return html.slice(start, html.indexOf("</dialog>", start));
 	};
 
-	it("adds a BoM line: datalist baseline, Browse button, dialog outside the form, own product excluded", async () => {
+	it("adds an assembly line: datalist baseline, Browse button, dialog outside the form, own product excluded", async () => {
 		await loadDemo();
-		const id = await bomId("LAMP-DESK");
+		const id = await assemblyId("LAMP-DESK");
 		const lamp = await partId("LAMP-DESK");
-		const html = await (await request(`/boms/${id}`)).text();
-		const form = formOf(html, `/boms/${id}/lines`);
+		const html = await (await request(`/assemblies/${id}`)).text();
+		const form = formOf(html, `/assemblies/${id}/lines`);
 		expect(form).toContain('name="component"');
 		expect(form).toContain('list="part-refs"');
 		expect(form).toContain('<datalist id="part-refs">');
@@ -199,13 +199,13 @@ describe("forms with the part picker", () => {
 		expect(dialog).not.toContain('name="kinds"');
 		expect(dialog).toContain('name="kind" value="fee"');
 		// A typed reference still posts.
-		const post = await postForm(`/boms/${id}/lines`, { component: "BOX-LAMP", qty: "1", notes: "" });
+		const post = await postForm(`/assemblies/${id}/lines`, { component: "BOX-LAMP", qty: "1", notes: "" });
 		expect(post.status).toBe(303);
 	});
 
-	it("creates a BoM: the product select stays, with a picker for make and kit parts", async () => {
+	it("creates an assembly: the product select stays, with a picker for make and kit parts", async () => {
 		await insertPart("TOP", "make");
-		const html = await (await request("/boms/new")).text();
+		const html = await (await request("/assemblies/new")).text();
 		expect(html).toContain('<select id="f-parent_part_id"');
 		expect(html).toContain('data-picker-open="picker-parent_part_id"');
 		const dialog = dialogOf(html, "picker-parent_part_id");

@@ -1,11 +1,23 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { bomId, DEMO, insertPart, loadDemo, NOT_ADMIN, one, partId, postForm, request, rows, setRole } from "./helpers";
+import {
+	assemblyId,
+	DEMO,
+	insertPart,
+	loadDemo,
+	NOT_ADMIN,
+	one,
+	partId,
+	postForm,
+	request,
+	rows,
+	setRole,
+} from "./helpers";
 
 // NOT_ADMIN requests run as a planner, so admin-only actions are refused by requireAdmin itself.
 beforeEach(() => setRole("planner"));
 
-async function createBom(parentId: number, code = "std", revision = "Rev1", copyFrom = "") {
-	const res = await postForm("/boms", {
+async function createAssembly(parentId: number, code = "std", revision = "Rev1", copyFrom = "") {
+	const res = await postForm("/assemblies", {
 		parent_part_id: String(parentId),
 		code,
 		revision,
@@ -17,81 +29,81 @@ async function createBom(parentId: number, code = "std", revision = "Rev1", copy
 
 const lines = (id: number) =>
 	rows<{ ref: string; qty_milli: number; position: number }>(
-		"SELECT p.ref, l.qty_milli, l.position FROM bom_lines l JOIN parts p ON p.id = l.component_part_id WHERE l.bom_id = ? ORDER BY l.position",
+		"SELECT p.ref, l.qty_milli, l.position FROM assembly_lines l JOIN parts p ON p.id = l.component_part_id WHERE l.assembly_id = ? ORDER BY l.position",
 		id,
 	);
 
-describe("BoM editor", () => {
-	it("creates a BoM for make/kit parts only", async () => {
+describe("Assembly editor", () => {
+	it("creates an assembly for make/kit parts only", async () => {
 		const make = await insertPart("ASSY", "make");
 		const buy = await insertPart("BOLT", "buy");
-		const res = await createBom(make);
+		const res = await createAssembly(make);
 		expect(res.status).toBe(303);
-		const bom = await one<{ id: number; status: string; code: string }>("SELECT id, status, code FROM boms");
-		expect(bom).toMatchObject({ status: "draft", code: "std" });
-		expect(res.headers.get("Location")).toBe(`/boms/${bom.id}?ok=saved`);
-		const bad = await createBom(buy);
+		const assembly = await one<{ id: number; status: string; code: string }>("SELECT id, status, code FROM assemblies");
+		expect(assembly).toMatchObject({ status: "draft", code: "std" });
+		expect(res.headers.get("Location")).toBe(`/assemblies/${assembly.id}?ok=saved`);
+		const bad = await createAssembly(buy);
 		expect(bad.status).toBe(422);
-		expect(await bad.text()).toContain("Only make and kit parts can have a BoM.");
-		const dup = await createBom(make);
-		expect(await dup.text()).toContain("already has a BoM with this variant code and revision");
+		expect(await bad.text()).toContain("Only make and kit parts can have an assembly.");
+		const dup = await createAssembly(make);
+		expect(await dup.text()).toContain("already has an assembly with this variant code and revision");
 	});
 
 	it("adds, updates, reorders and removes lines", async () => {
 		const make = await insertPart("ASSY", "make");
 		await insertPart("BOLT", "buy", { costCents: 10 });
 		await insertPart("NUT", "buy", { costCents: 5 });
-		await createBom(make);
-		const id = (await one<{ id: number }>("SELECT id FROM boms")).id;
-		expect((await postForm(`/boms/${id}/lines`, { component: "BOLT", qty: "4", notes: "" })).status).toBe(303);
-		await postForm(`/boms/${id}/lines`, { component: "NUT — Part NUT", qty: "2,5", notes: "" });
+		await createAssembly(make);
+		const id = (await one<{ id: number }>("SELECT id FROM assemblies")).id;
+		expect((await postForm(`/assemblies/${id}/lines`, { component: "BOLT", qty: "4", notes: "" })).status).toBe(303);
+		await postForm(`/assemblies/${id}/lines`, { component: "NUT — Part NUT", qty: "2,5", notes: "" });
 		expect(await lines(id)).toEqual([
 			{ ref: "BOLT", qty_milli: 4000, position: 1 },
 			{ ref: "NUT", qty_milli: 2500, position: 2 },
 		]);
-		const nutLine = (await one<{ id: number }>("SELECT id FROM bom_lines WHERE qty_milli = 2500")).id;
-		await postForm(`/boms/${id}/lines/${nutLine}/move`, { dir: "up" });
+		const nutLine = (await one<{ id: number }>("SELECT id FROM assembly_lines WHERE qty_milli = 2500")).id;
+		await postForm(`/assemblies/${id}/lines/${nutLine}/move`, { dir: "up" });
 		expect((await lines(id)).map((l) => l.ref)).toEqual(["NUT", "BOLT"]);
-		await postForm(`/boms/${id}/lines/${nutLine}`, { qty: "3" });
+		await postForm(`/assemblies/${id}/lines/${nutLine}`, { qty: "3" });
 		expect((await lines(id))[0]).toEqual({ ref: "NUT", qty_milli: 3000, position: 1 });
-		const html = await (await request(`/boms/${id}`)).text();
+		const html = await (await request(`/assemblies/${id}`)).text();
 		expect(html).toContain("€0.55"); // 3 x 0.05 + 4 x 0.10
-		await postForm(`/boms/${id}/lines/${nutLine}/delete`, {});
+		await postForm(`/assemblies/${id}/lines/${nutLine}/delete`, {});
 		expect((await lines(id)).map((l) => l.ref)).toEqual(["BOLT"]);
 	});
 
 	it("validates lines: unknown part, zero quantity, self and cycles", async () => {
 		await loadDemo({ stock: false });
-		const arm = await bomId("ARM-ASSY");
-		const unknown = await postForm(`/boms/${arm}/lines`, { component: "NOPE", qty: "1", notes: "" });
+		const arm = await assemblyId("ARM-ASSY");
+		const unknown = await postForm(`/assemblies/${arm}/lines`, { component: "NOPE", qty: "1", notes: "" });
 		expect(unknown.status).toBe(422);
 		expect(await unknown.text()).toContain("Unknown part reference “NOPE”.");
 		expect(
-			await (await postForm(`/boms/${arm}/lines`, { component: "PAD-FELT", qty: "0", notes: "" })).text(),
+			await (await postForm(`/assemblies/${arm}/lines`, { component: "PAD-FELT", qty: "0", notes: "" })).text(),
 		).toContain("Must be more than zero.");
-		const self = await postForm(`/boms/${arm}/lines`, { component: "ARM-ASSY", qty: "1", notes: "" });
+		const self = await postForm(`/assemblies/${arm}/lines`, { component: "ARM-ASSY", qty: "1", notes: "" });
 		expect(await self.text()).toContain("This would create a cycle");
-		const cycle = await postForm(`/boms/${arm}/lines`, { component: "LAMP-DESK", qty: "1", notes: "" });
+		const cycle = await postForm(`/assemblies/${arm}/lines`, { component: "LAMP-DESK", qty: "1", notes: "" });
 		expect(cycle.status).toBe(422);
 		expect(await cycle.text()).toContain("This would create a cycle: LAMP-DESK already contains ARM-ASSY");
-		expect(await one("SELECT count(*) AS n FROM bom_lines WHERE bom_id = ?", arm)).toEqual({ n: 5 });
-		const half = await postForm(`/boms/${arm}/lines`, { component: "LED-5W-CW", qty: "0.5", notes: "" });
+		expect(await one("SELECT count(*) AS n FROM assembly_lines WHERE assembly_id = ?", arm)).toEqual({ n: 5 });
+		const half = await postForm(`/assemblies/${arm}/lines`, { component: "LED-5W-CW", qty: "0.5", notes: "" });
 		expect(await half.text()).toContain("A serial-tracked component must be used in whole units.");
 	});
 
 	it("activates a revision and archives the previous active one", async () => {
 		await loadDemo({ stock: false });
-		const rev2 = await bomId("LAMP-DESK", "std", "Rev2");
-		const res = await postForm(`/boms/${rev2}/revision`, {});
-		const rev3 = await bomId("LAMP-DESK", "std", "Rev3");
-		expect(res.headers.get("Location")).toBe(`/boms/${rev3}?ok=saved`);
+		const rev2 = await assemblyId("LAMP-DESK", "std", "Rev2");
+		const res = await postForm(`/assemblies/${rev2}/revision`, {});
+		const rev3 = await assemblyId("LAMP-DESK", "std", "Rev3");
+		expect(res.headers.get("Location")).toBe(`/assemblies/${rev3}?ok=saved`);
 		expect((await lines(rev3)).map((l) => [l.ref, l.qty_milli])).toEqual(
 			(await lines(rev2)).map((l) => [l.ref, l.qty_milli]),
 		);
-		expect(await one("SELECT status FROM boms WHERE id = ?", rev3)).toEqual({ status: "draft" });
-		await postForm(`/boms/${rev3}/activate`, {});
+		expect(await one("SELECT status FROM assemblies WHERE id = ?", rev3)).toEqual({ status: "draft" });
+		await postForm(`/assemblies/${rev3}/activate`, {});
 		const statuses = await rows<{ revision: string; code: string; status: string }>(
-			"SELECT b.code, b.revision, b.status FROM boms b JOIN parts p ON p.id = b.parent_part_id WHERE p.ref = 'LAMP-DESK' ORDER BY b.code, b.revision",
+			"SELECT b.code, b.revision, b.status FROM assemblies b JOIN parts p ON p.id = b.parent_part_id WHERE p.ref = 'LAMP-DESK' ORDER BY b.code, b.revision",
 		);
 		expect(statuses).toEqual([
 			{ code: "std", revision: "Rev1", status: "archived" },
@@ -103,32 +115,32 @@ describe("BoM editor", () => {
 
 	it("copies lines into a new variant", async () => {
 		await loadDemo({ stock: false });
-		const std = await bomId("LAMP-DESK");
-		const res = await createBom(await partId("LAMP-DESK"), "3-3-3-4-4", "Rev1", String(std));
+		const std = await assemblyId("LAMP-DESK");
+		const res = await createAssembly(await partId("LAMP-DESK"), "3-3-3-4-4", "Rev1", String(std));
 		expect(res.status).toBe(303);
-		expect((await lines(await bomId("LAMP-DESK", "3-3-3-4-4", "Rev1"))).length).toBe(7);
+		expect((await lines(await assemblyId("LAMP-DESK", "3-3-3-4-4", "Rev1"))).length).toBe(7);
 	});
 
-	it("keeps archived BoMs read-only and archive/delete admin-only", async () => {
+	it("keeps archived assemblies read-only and archive/delete admin-only", async () => {
 		await loadDemo({ stock: false });
-		const rev1 = await bomId("LAMP-DESK", "std", "Rev1");
-		const add = await postForm(`/boms/${rev1}/lines`, { component: "PAD-FELT", qty: "1", notes: "" });
+		const rev1 = await assemblyId("LAMP-DESK", "std", "Rev1");
+		const add = await postForm(`/assemblies/${rev1}/lines`, { component: "PAD-FELT", qty: "1", notes: "" });
 		expect(add.status).toBe(422);
-		expect(await add.text()).toContain("Archived BoMs are read-only.");
-		const rev2 = await bomId("LAMP-DESK", "std", "Rev2");
-		expect((await postForm(`/boms/${rev2}/archive`, {}, NOT_ADMIN)).status).toBe(403);
-		expect((await postForm(`/boms/${rev2}/delete`, {}, NOT_ADMIN)).status).toBe(403);
-		expect((await postForm(`/boms/${rev2}/archive`, {})).status).toBe(303);
-		expect(await one("SELECT status FROM boms WHERE id = ?", rev2)).toEqual({ status: "archived" });
-		expect((await postForm(`/boms/${rev1}/delete`, {})).headers.get("Location")).toContain("ok=deleted");
-		expect(await rows("SELECT id FROM bom_lines WHERE bom_id = ?", rev1)).toEqual([]);
+		expect(await add.text()).toContain("Archived assemblies are read-only.");
+		const rev2 = await assemblyId("LAMP-DESK", "std", "Rev2");
+		expect((await postForm(`/assemblies/${rev2}/archive`, {}, NOT_ADMIN)).status).toBe(403);
+		expect((await postForm(`/assemblies/${rev2}/delete`, {}, NOT_ADMIN)).status).toBe(403);
+		expect((await postForm(`/assemblies/${rev2}/archive`, {})).status).toBe(303);
+		expect(await one("SELECT status FROM assemblies WHERE id = ?", rev2)).toEqual({ status: "archived" });
+		expect((await postForm(`/assemblies/${rev1}/delete`, {})).headers.get("Location")).toContain("ok=deleted");
+		expect(await rows("SELECT id FROM assembly_lines WHERE assembly_id = ?", rev1)).toEqual([]);
 	});
 });
 
-describe("BoM views", () => {
+describe("Assembly views", () => {
 	it("renders the tree with cumulative quantities and the roll-up", async () => {
 		await loadDemo({ stock: false });
-		const html = await (await request(`/boms/${await bomId("LAMP-DESK")}/tree?qty=2`)).text();
+		const html = await (await request(`/assemblies/${await assemblyId("LAMP-DESK")}/tree?qty=2`)).text();
 		expect(html).toContain("ARM-ASSY");
 		expect(html).toContain("<details open=");
 		expect(html).toContain("€37.83");
@@ -139,8 +151,8 @@ describe("BoM views", () => {
 
 	it("draws the structure diagram down to the nested kit, with links and totals", async () => {
 		await loadDemo({ stock: false });
-		const id = await bomId("LAMP-DESK");
-		const html = await (await request(`/boms/${id}/diagram?qty=2`)).text();
+		const id = await assemblyId("LAMP-DESK");
+		const html = await (await request(`/assemblies/${id}/diagram?qty=2`)).text();
 		expect(html).toContain("<svg");
 		expect(html).toContain("Structure of LAMP-DESK");
 		// Root, a kit, the kit inside it, and its leaves; each box links to its part.
@@ -149,51 +161,51 @@ describe("BoM views", () => {
 		}
 		expect(html).toMatch(/data-kind="kit" data-mode="kit"/);
 		// Sub-assemblies and kits open their own diagram.
-		expect(html).toContain(`href="/boms/${await bomId("FIX-KIT-HEAD")}/diagram"`);
+		expect(html).toContain(`href="/assemblies/${await assemblyId("FIX-KIT-HEAD")}/diagram"`);
 		// Totals for 2 lamps: 2 × 1 head kit × 1 fixing kit × 3 washers = 6, and the roll-up.
 		expect(html).toMatch(/WASHER-M3.*?6 pcs/s);
 		expect(html).toContain("€75.66 *");
-		// The tab is there on every BoM page; strict CSP: no inline styles.
-		expect(await (await request(`/boms/${id}`)).text()).toContain(`href="/boms/${id}/diagram"`);
+		// The tab is there on every assembly page; strict CSP: no inline styles.
+		expect(await (await request(`/assemblies/${id}`)).text()).toContain(`href="/assemblies/${id}/diagram"`);
 		expect(html).not.toMatch(/\sstyle=/);
 	});
 
 	it("limits the diagram by depth or to sub-assemblies and kits", async () => {
 		await loadDemo({ stock: false });
-		const id = await bomId("LAMP-DESK");
-		const top = await (await request(`/boms/${id}/diagram?depth=1`)).text();
+		const id = await assemblyId("LAMP-DESK");
+		const top = await (await request(`/assemblies/${id}/diagram?depth=1`)).text();
 		expect(top).toContain("HEAD-KIT-CW");
 		expect(top).not.toContain("FIX-KIT-HEAD");
 		// HEAD-KIT-CW hides 4 components plus the 2 inside the fixing kit; the pill opens one more level.
 		expect(top).toContain(">+6</text>");
-		expect(top).toContain(`href="/boms/${id}/diagram?depth=2"`);
+		expect(top).toContain(`href="/assemblies/${id}/diagram?depth=2"`);
 
-		const structure = await (await request(`/boms/${id}/diagram?only=assemblies`)).text();
+		const structure = await (await request(`/assemblies/${id}/diagram?only=assemblies`)).text();
 		expect(structure).toContain("FIX-KIT-HEAD");
 		expect(structure).not.toContain("SCREW-M4X10");
-		expect(structure).toContain(`href="/boms/${id}/diagram"`); // "+N" shows everything again
+		expect(structure).toContain(`href="/assemblies/${id}/diagram"`); // "+N" shows everything again
 	});
 
 	it("lists the flat explosion, optionally using sub-assembly stock, and exports CSV", async () => {
 		await loadDemo();
-		const id = await bomId("LAMP-DESK");
-		const html = await (await request(`/boms/${id}/explode?qty=3`)).text();
+		const id = await assemblyId("LAMP-DESK");
+		const html = await (await request(`/assemblies/${id}/explode?qty=3`)).text();
 		expect(html).toMatch(/SCREW-M3X8<\/a>.*?<span class="num">33<\/span>/s);
 		// A sub-assembly row (marked "from stock") only appears when taking sub-assemblies from stock.
 		const fromStock = /ARM-ASSY<\/a><\/td><td[^>]*>Arm sub-assembly<span data-slot="badge"[^>]*>from stock</;
 		expect(html).not.toMatch(fromStock);
-		expect(html).toContain(`href="/boms/${id}/explode?qty=3&amp;format=csv"`);
-		const withStock = await (await request(`/boms/${id}/explode?qty=3&stock=on`)).text();
+		expect(html).toContain(`href="/assemblies/${id}/explode?qty=3&amp;format=csv"`);
+		const withStock = await (await request(`/assemblies/${id}/explode?qty=3&stock=on`)).text();
 		expect(withStock).toMatch(fromStock);
-		const csv = await (await request(`/boms/${id}/explode?qty=3&format=csv`)).text();
+		const csv = await (await request(`/assemblies/${id}/explode?qty=3&format=csv`)).text();
 		expect(csv).toContain("SCREW-M3X8,Screw M3x8,buy,pcs,33,350,0,0.02,0.66");
 		expect(csv).toContain("FEE-WEEE,WEEE eco-fee,fee,pcs,3,,,0.25,0.75");
 	});
 
-	it("shows BoMs, roll-up and where-used on the part page", async () => {
+	it("shows assemblies, roll-up and where-used on the part page", async () => {
 		await loadDemo({ stock: false });
 		const lamp = await (await request(`/parts/${await partId("LAMP-DESK")}`)).text();
-		expect(lamp).toContain("Bills of materials");
+		expect(lamp).toContain("Assemblies");
 		expect(lamp).toContain("Rev2");
 		expect(lamp).toContain("Incomplete: no cost for MANUAL.");
 		const screw = await (await request(`/parts/${await partId("SCREW-M3X8")}`)).text();
@@ -201,29 +213,29 @@ describe("BoM views", () => {
 		expect(screw).toContain("via ARM-ASSY");
 	});
 
-	it("lists and searches BoMs", async () => {
+	it("lists and searches assemblies", async () => {
 		await loadDemo({ stock: false });
-		const html = await (await request("/boms?q=assy")).text();
+		const html = await (await request("/assemblies?q=assy")).text();
 		expect(html).toContain("ARM-ASSY");
 		expect(html).toContain("BASE-ASSY");
 		expect(html).not.toContain(">LAMP-DESK<");
-		expect(html).toContain(`href="/boms/${await bomId("ARM-ASSY")}/diagram"`);
-		// Archived BoMs are hidden unless asked for (only StatusBadge renders "status-archived").
-		expect(await (await request("/boms")).text()).not.toContain("status-archived");
-		expect(await (await request("/boms?status=archived")).text()).toContain("status-archived");
+		expect(html).toContain(`href="/assemblies/${await assemblyId("ARM-ASSY")}/diagram"`);
+		// Archived assemblies are hidden unless asked for (only StatusBadge renders "status-archived").
+		expect(await (await request("/assemblies")).text()).not.toContain("status-archived");
+		expect(await (await request("/assemblies?status=archived")).text()).toContain("status-archived");
 	});
 });
 
-describe("boms.csv import", () => {
-	const preview = (csv: string) => postForm("/import/boms/preview", { csv });
+describe("assemblies.csv import", () => {
+	const preview = (csv: string) => postForm("/import/assemblies/preview", { csv });
 
-	it("imports the demo BoMs and is idempotent", async () => {
+	it("imports the demo assemblies and is idempotent", async () => {
 		await loadDemo();
-		expect(await one("SELECT count(*) AS n FROM boms")).toEqual({ n: 8 });
-		expect(await one("SELECT count(*) AS n FROM boms WHERE status = 'active'")).toEqual({ n: 7 });
-		const html = await (await preview(DEMO.boms)).text();
+		expect(await one("SELECT count(*) AS n FROM assemblies")).toEqual({ n: 8 });
+		expect(await one("SELECT count(*) AS n FROM assemblies WHERE status = 'active'")).toEqual({ n: 7 });
+		const html = await (await preview(DEMO.assemblies)).text();
 		expect(html).toContain("0 to create, 0 to update, 8 unchanged.");
-		const exported = await (await request("/import/boms/export.csv")).text();
+		const exported = await (await request("/import/assemblies/export.csv")).text();
 		expect(exported.startsWith("parent_ref,code,revision,status,sale_price,component_ref,qty,notes")).toBe(true);
 		// The warm variant's own selling price survives the round trip.
 		expect(exported).toContain("LAMP-DESK,warm,Rev1,active,94.00,");
@@ -237,13 +249,15 @@ describe("boms.csv import", () => {
 		const html = await (await preview(csv)).text();
 		expect(html).toContain("1 to create");
 		expect(html).toContain("Rev1: active → archived");
-		expect((await postForm("/import/boms/commit", { csv })).status).toBe(303);
-		const rev2 = await bomId("ARM-ASSY", "std", "Rev2");
+		expect((await postForm("/import/assemblies/commit", { csv })).status).toBe(303);
+		const rev2 = await assemblyId("ARM-ASSY", "std", "Rev2");
 		expect((await lines(rev2)).map((l) => [l.ref, l.qty_milli])).toEqual([
 			["ARM-TUBE-300", 1000],
 			["JOINT-KNOB", 3000],
 		]);
-		expect(await one("SELECT status FROM boms WHERE id = ?", await bomId("ARM-ASSY", "std", "Rev1"))).toEqual({
+		expect(
+			await one("SELECT status FROM assemblies WHERE id = ?", await assemblyId("ARM-ASSY", "std", "Rev1")),
+		).toEqual({
 			status: "archived",
 		});
 		const update = "parent_ref,code,revision,status,component_ref,qty\nARM-ASSY,std,Rev2,active,ARM-TUBE-300,2\n";
@@ -268,10 +282,10 @@ describe("boms.csv import", () => {
 		const res = await preview(csv);
 		expect(res.status).toBe(422);
 		const html = await res.text();
-		expect(html).toContain("BoM cycle: ");
-		expect(html).toContain("Only make and kit parts can have a BoM.");
-		expect(html).toContain("All lines of a BoM must have the same status.");
-		expect(html).toContain("Two active BoMs for the same part and variant code (line 6).");
+		expect(html).toContain("Assembly cycle: ");
+		expect(html).toContain("Only make and kit parts can have an assembly.");
+		expect(html).toContain("All lines of an assembly must have the same status.");
+		expect(html).toContain("Two active assemblies for the same part and variant code (line 6).");
 		expect(html).toContain("Unknown part reference “NOPE”.");
 		expect(html).toContain("A serial-tracked component must be used in whole units.");
 	});

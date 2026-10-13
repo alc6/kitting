@@ -1,7 +1,7 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import type { PartKind } from "../src/db/schema";
-import { buildGraph, type GraphPart } from "../src/domain/bom-graph";
+import { buildGraph, type GraphPart } from "../src/domain/assembly-graph";
 import { runChangeSet } from "../src/domain/history";
 import { planImport } from "../src/domain/import";
 import {
@@ -11,7 +11,19 @@ import {
 	type StandardRow,
 	salePriceAt,
 } from "../src/domain/margin-history";
-import { bomId, changeSql, importCsv, loadDemo, one, partId, postForm, request, rows, stmt, testDb } from "./helpers";
+import {
+	assemblyId,
+	changeSql,
+	importCsv,
+	loadDemo,
+	one,
+	partId,
+	postForm,
+	request,
+	rows,
+	stmt,
+	testDb,
+} from "./helpers";
 
 const part = (id: number, kind: PartKind, costCents: number | null): GraphPart => ({
 	id,
@@ -35,7 +47,7 @@ function tenComponents(costs: (number | null)[] = Array(10).fill(400)) {
 		[{ id: STD, parentPartId: PRODUCT, code: "std", revision: "A", status: "active" }],
 		components.map((c, i) => ({
 			id: i + 1,
-			bomId: STD,
+			assemblyId: STD,
 			componentPartId: c.id,
 			qtyMilli: 1000,
 			position: i,
@@ -58,8 +70,11 @@ describe("planned margin history", () => {
 			...Array.from({ length: 10 }, (_, i) => standard(i + 1, 200, "2026-01-05")),
 			standard(3, 400, "2026-03-01"),
 		].sort((a, b) => a.partId - b.partId || a.validFrom.localeCompare(b.validFrom));
-		const sales: SaleRow[] = [{ bomId: null, priceCents: 5000, validFrom: "2026-01-05" }];
-		const points = plannedMarginSeries(graph, { partId: PRODUCT, bomId: STD }, rows, sales, { part: 5000, bom: null });
+		const sales: SaleRow[] = [{ assemblyId: null, priceCents: 5000, validFrom: "2026-01-05" }];
+		const points = plannedMarginSeries(graph, { partId: PRODUCT, assemblyId: STD }, rows, sales, {
+			part: 5000,
+			assembly: null,
+		});
 
 		expect(points).toHaveLength(2);
 		expect(points[0]).toMatchObject({
@@ -87,10 +102,13 @@ describe("planned margin history", () => {
 		const graph = tenComponents(Array(10).fill(200));
 		const rows = Array.from({ length: 10 }, (_, i) => standard(i + 1, 200, "2026-01-05"));
 		const sales: SaleRow[] = [
-			{ bomId: null, priceCents: 5000, validFrom: "2026-01-05" },
-			{ bomId: null, priceCents: 4000, validFrom: "2026-06-01" },
+			{ assemblyId: null, priceCents: 5000, validFrom: "2026-01-05" },
+			{ assemblyId: null, priceCents: 4000, validFrom: "2026-06-01" },
 		];
-		const points = plannedMarginSeries(graph, { partId: PRODUCT, bomId: STD }, rows, sales, { part: 4000, bom: null });
+		const points = plannedMarginSeries(graph, { partId: PRODUCT, assemblyId: STD }, rows, sales, {
+			part: 4000,
+			assembly: null,
+		});
 		expect(points.map((p) => [p.date, p.costCents, p.priceCents, p.margin?.rateBp])).toEqual([
 			["2026-01-05", 2000, 5000, 6000],
 			["2026-06-01", 2000, 4000, 5000],
@@ -102,12 +120,15 @@ describe("planned margin history", () => {
 		const graph = tenComponents(Array(10).fill(200));
 		const rows = Array.from({ length: 10 }, (_, i) => standard(i + 1, 200, "2026-01-05"));
 		const sales: SaleRow[] = [
-			{ bomId: null, priceCents: 5000, validFrom: "2026-01-05" },
-			{ bomId: STD, priceCents: 6000, validFrom: "2026-02-01" }, // the variant gets its own price
-			{ bomId: null, priceCents: 5500, validFrom: "2026-03-01" }, // hidden by the variant's price
-			{ bomId: STD, priceCents: null, validFrom: "2026-04-01" }, // own price cleared: back to the part's
+			{ assemblyId: null, priceCents: 5000, validFrom: "2026-01-05" },
+			{ assemblyId: STD, priceCents: 6000, validFrom: "2026-02-01" }, // the variant gets its own price
+			{ assemblyId: null, priceCents: 5500, validFrom: "2026-03-01" }, // hidden by the variant's price
+			{ assemblyId: STD, priceCents: null, validFrom: "2026-04-01" }, // own price cleared: back to the part's
 		];
-		const points = plannedMarginSeries(graph, { partId: PRODUCT, bomId: STD }, rows, sales, { part: 5500, bom: null });
+		const points = plannedMarginSeries(graph, { partId: PRODUCT, assemblyId: STD }, rows, sales, {
+			part: 5500,
+			assembly: null,
+		});
 		expect(points.map((p) => [p.date, p.priceCents])).toEqual([
 			["2026-01-05", 5000],
 			["2026-02-01", 6000],
@@ -123,7 +144,10 @@ describe("planned margin history", () => {
 			...Array.from({ length: 8 }, (_, i) => standard(i + 2, 200, "2026-01-05")),
 		];
 		rows.sort((a, b) => a.partId - b.partId || a.validFrom.localeCompare(b.validFrom));
-		const points = plannedMarginSeries(graph, { partId: PRODUCT, bomId: STD }, rows, [], { part: 5000, bom: null });
+		const points = plannedMarginSeries(graph, { partId: PRODUCT, assemblyId: STD }, rows, [], {
+			part: 5000,
+			assembly: null,
+		});
 		expect(points[0]).toMatchObject({ date: "2026-01-05", costCents: 1900, incomplete: true, fallback: true });
 		expect(points[0]?.margin?.marginCents).toBe(3100);
 		// On 2026-05-01 component 1 records 3.00, the value already used as its fallback: nothing moves.
@@ -138,30 +162,30 @@ describe("planned margin history", () => {
 				{ id: 2, parentPartId: 10, code: "std", revision: "A", status: "active" },
 			],
 			[
-				{ id: 1, bomId: STD, componentPartId: 10, qtyMilli: 2000, position: 0, notes: "" },
-				{ id: 2, bomId: STD, componentPartId: 12, qtyMilli: 1000, position: 1, notes: "" },
-				{ id: 3, bomId: 2, componentPartId: 11, qtyMilli: 3000, position: 0, notes: "" },
+				{ id: 1, assemblyId: STD, componentPartId: 10, qtyMilli: 2000, position: 0, notes: "" },
+				{ id: 2, assemblyId: STD, componentPartId: 12, qtyMilli: 1000, position: 1, notes: "" },
+				{ id: 3, assemblyId: 2, componentPartId: 11, qtyMilli: 3000, position: 0, notes: "" },
 			],
 		);
-		expect([...costInputs(graph, { partId: PRODUCT, bomId: STD })].sort()).toEqual([11, 12]);
-		expect([...costInputs(graph, { partId: 11, bomId: null })]).toEqual([11]);
+		expect([...costInputs(graph, { partId: PRODUCT, assemblyId: STD })].sort()).toEqual([11, 12]);
+		expect([...costInputs(graph, { partId: 11, assemblyId: null })]).toEqual([11]);
 	});
 });
 
 describe("selling price on a day", () => {
 	const rows: SaleRow[] = [
-		{ bomId: null, priceCents: 8900, validFrom: "2026-02-01" },
-		{ bomId: 7, priceCents: 9400, validFrom: "2026-03-01" },
+		{ assemblyId: null, priceCents: 8900, validFrom: "2026-02-01" },
+		{ assemblyId: 7, priceCents: 9400, validFrom: "2026-03-01" },
 	];
 
 	it("has no price before the first recorded one", () => {
-		expect(salePriceAt(rows, null, "2026-01-15", { part: 8900, bom: null })).toBeNull();
-		expect(salePriceAt(rows, 7, "2026-02-15", { part: 8900, bom: 9400 })).toBe(8900);
-		expect(salePriceAt(rows, 7, "2026-03-01", { part: 8900, bom: 9400 })).toBe(9400);
+		expect(salePriceAt(rows, null, "2026-01-15", { part: 8900, assembly: null })).toBeNull();
+		expect(salePriceAt(rows, 7, "2026-02-15", { part: 8900, assembly: 9400 })).toBe(8900);
+		expect(salePriceAt(rows, 7, "2026-03-01", { part: 8900, assembly: 9400 })).toBe(9400);
 	});
 
 	it("uses the current price of a level without any history", () => {
-		expect(salePriceAt([], 7, "2026-03-01", { part: 8900, bom: null })).toBe(8900);
+		expect(salePriceAt([], 7, "2026-03-01", { part: 8900, assembly: null })).toBe(8900);
 	});
 });
 
@@ -177,7 +201,7 @@ describe("margin history page", () => {
 			lines.push(`KIT-10,std,A,active,${ref},1`);
 		}
 		await importCsv("parts", parts.join("\n"));
-		await importCsv("boms", lines.join("\n"));
+		await importCsv("assemblies", lines.join("\n"));
 		// The imports dated their history today: move it back to t1, then record the t2 increase.
 		await env.DB.prepare("UPDATE price_history SET valid_from = '2026-01-05'").run();
 		const c03 = await partId("C03");
@@ -190,12 +214,12 @@ describe("margin history page", () => {
 				c03,
 			),
 		);
-		return { product: await partId("KIT-10"), bom: await bomId("KIT-10"), c03 };
+		return { product: await partId("KIT-10"), assembly: await assemblyId("KIT-10"), c03 };
 	}
 
 	it("shows each change of the planned margin, with what moved it", async () => {
-		const { bom, c03 } = await tenComponentProduct();
-		const res = await request(`/margins/boms/${bom}`);
+		const { assembly, c03 } = await tenComponentProduct();
+		const res = await request(`/margins/assemblies/${assembly}`);
 		expect(res.status).toBe(200);
 		const page = await res.text();
 		expect(page).not.toMatch(/\sstyle=/);
@@ -217,9 +241,11 @@ describe("margin history page", () => {
 	});
 
 	it("is linked from the margins page, and speaks French", async () => {
-		const { bom } = await tenComponentProduct();
-		expect(await (await request("/margins")).text()).toContain(`href="/margins/boms/${bom}"`);
-		const fr = await (await request(`/margins/boms/${bom}`, { headers: { Cookie: "kitting_lang=fr" } })).text();
+		const { assembly } = await tenComponentProduct();
+		expect(await (await request("/margins")).text()).toContain(`href="/margins/assemblies/${assembly}"`);
+		const fr = await (
+			await request(`/margins/assemblies/${assembly}`, { headers: { Cookie: "kitting_lang=fr" } })
+		).text();
 		expect(fr).toContain("Historique de marge: KIT-10");
 		expect(fr).toContain("56,0 %");
 		expect(fr).toMatch(/−4,0 pts/);
@@ -228,15 +254,15 @@ describe("margin history page", () => {
 	it("lists completed builds at their actual cost against the price of the day", async () => {
 		await loadDemo();
 		const lamp = await partId("LAMP-DESK");
-		const std = await bomId("LAMP-DESK");
+		const std = await assemblyId("LAMP-DESK");
 		await completeLampBuild();
-		const page = await (await request(`/margins/boms/${std}`)).text();
+		const page = await (await request(`/margins/assemblies/${std}`)).text();
 		const builds = page.slice(page.indexOf("Completed builds</h2>"));
 		expect(builds).toMatch(/href="\/builds\/\d+"[^>]*>B-0001<\/a>/);
 		expect(builds).toContain("€89.00");
-		// A product sold without BoM has a history too; unknown ids are 404.
+		// A product sold without assembly has a history too; unknown ids are 404.
 		expect((await request(`/margins/parts/${lamp}`)).status).toBe(200);
-		expect((await request("/margins/boms/999999")).status).toBe(404);
+		expect((await request("/margins/assemblies/999999")).status).toBe(404);
 		expect((await request("/margins/parts/999999")).status).toBe(404);
 	});
 });
@@ -245,7 +271,7 @@ describe("margin history page", () => {
 async function completeLampBuild(): Promise<number> {
 	const res = await postForm("/builds", {
 		part_id: String(await partId("LAMP-DESK")),
-		bom_id: String(await bomId("LAMP-DESK")),
+		assembly_id: String(await assemblyId("LAMP-DESK")),
 		qty: "1",
 		serial: "L-1",
 		planned_for: "",
@@ -271,11 +297,11 @@ describe("a supplier price that becomes the standard cost (D99)", () => {
 		}
 		await importCsv("suppliers", "name\nAcme Example\nOther Example");
 		await importCsv("parts", parts.join("\n"));
-		await importCsv("boms", lines.join("\n"));
+		await importCsv("assemblies", lines.join("\n"));
 		await importCsv("part_suppliers", "ref,supplier,price,preferred\nC03,Acme Example,2.00,yes");
 		await env.DB.prepare("UPDATE price_history SET valid_from = '2026-01-05'").run();
 		const supplier = await one<{ id: number }>("SELECT id FROM suppliers WHERE name = 'Acme Example'");
-		return { c03: await partId("C03"), bom: await bomId("KIT-10"), supplier: supplier.id };
+		return { c03: await partId("C03"), assembly: await assemblyId("KIT-10"), supplier: supplier.id };
 	}
 
 	const offerForm = (over: Record<string, string> = {}) => ({
@@ -289,7 +315,7 @@ describe("a supplier price that becomes the standard cost (D99)", () => {
 	});
 
 	it("updates the standard cost from the offer form when asked, and the margin history follows", async () => {
-		const { c03, bom, supplier } = await setup();
+		const { c03, assembly, supplier } = await setup();
 		// Unticked: the offer price changes, the standard cost does not.
 		expect((await postForm(`/parts/${c03}/offers/${supplier}`, offerForm({ price: "3.00" }))).status).toBe(303);
 		expect(await one("SELECT cost_cents FROM parts WHERE id = ?", c03)).toEqual({ cost_cents: 200 });
@@ -306,7 +332,7 @@ describe("a supplier price that becomes the standard cost (D99)", () => {
 			{ price_cents: 200, note: "" },
 			{ price_cents: 400, note: "From the offer of Acme Example" },
 		]);
-		const page = await (await request(`/margins/boms/${bom}`)).text();
+		const page = await (await request(`/margins/assemblies/${assembly}`)).text();
 		const today = new Date().toISOString().slice(0, 10);
 		const t2 = page.slice(page.indexOf(today, page.indexOf("Planned margin changes")));
 		for (const v of ["€2.00", "€4.00", "€22.00", "56.0 %"]) expect(t2).toContain(v);

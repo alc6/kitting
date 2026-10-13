@@ -1,9 +1,9 @@
-// Left-to-right tree layout for diagrams (the BoM structure diagram). Pure: no I/O, no DOM.
+// Left-to-right tree layout for diagrams (the assembly structure diagram). Pure: no I/O, no DOM.
 //
 // Columns are depths. Leaves take consecutive rows in depth-first order and every parent is
 // centred on its first and last visible child, so subtrees occupy disjoint bands of rows and
 // no two nodes can overlap. Parts used in several places appear once per use (it is a tree,
-// like the exploded BoM), which keeps quantities per branch readable.
+// like the exploded assembly), which keeps quantities per branch readable.
 
 export type TreeInput<T> = { data: T; children: TreeInput<T>[] };
 

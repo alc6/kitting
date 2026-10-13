@@ -75,7 +75,7 @@ export function PartPicker(
 	);
 }
 
-/** A part chosen in a <select> whose values are part ids (the new BoM form), with the Browse button next to it. */
+/** A part chosen in a <select> whose values are part ids (the new assembly form), with the Browse button next to it. */
 export function PartSelectPicker(props: FieldBase & { options: { id: number; ref: string; name: string }[] }) {
 	const { t } = useApp();
 	const current = props.values[props.name] ?? "";

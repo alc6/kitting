@@ -1,7 +1,7 @@
 import { createExecutionContext } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { drizzle } from "drizzle-orm/d1";
-import demoBoms from "../examples/demo/boms.csv?raw";
+import demoAssemblies from "../examples/demo/assemblies.csv?raw";
 import demoOffers from "../examples/demo/part_suppliers.csv?raw";
 import demoParts from "../examples/demo/parts.csv?raw";
 import demoStock from "../examples/demo/stock.csv?raw";
@@ -28,8 +28,8 @@ const TABLES = [
 	"stock_moves",
 	"price_history",
 	"part_suppliers",
-	"bom_lines",
-	"boms",
+	"assembly_lines",
+	"assemblies",
 	"parts",
 	"suppliers",
 ];
@@ -205,7 +205,7 @@ export const DEMO = {
 	suppliers: demoSuppliers,
 	parts: demoParts,
 	part_suppliers: demoOffers,
-	boms: demoBoms,
+	assemblies: demoAssemblies,
 	stock: demoStock,
 };
 
@@ -215,7 +215,7 @@ export function testDb(): Db {
 
 /** Imports CSV text through the real importer; throws on validation errors. */
 export async function importCsv(
-	type: "suppliers" | "parts" | "part_suppliers" | "boms" | "stock",
+	type: "suppliers" | "parts" | "part_suppliers" | "assemblies" | "stock",
 	csv: string,
 ): Promise<void> {
 	const db = testDb();
@@ -234,7 +234,7 @@ export async function loadDemo(opts: { stock?: boolean } = {}): Promise<void> {
 	await importCsv("suppliers", DEMO.suppliers);
 	await importCsv("parts", DEMO.parts);
 	await importCsv("part_suppliers", DEMO.part_suppliers);
-	await importCsv("boms", DEMO.boms);
+	await importCsv("assemblies", DEMO.assemblies);
 	if (opts.stock !== false) await importCsv("stock", DEMO.stock);
 }
 
@@ -242,9 +242,9 @@ export async function partId(ref: string): Promise<number> {
 	return (await one<{ id: number }>("SELECT id FROM parts WHERE ref = ?", ref)).id;
 }
 
-export async function bomId(parentRef: string, code = "std", revision?: string): Promise<number> {
+export async function assemblyId(parentRef: string, code = "std", revision?: string): Promise<number> {
 	const row = await one<{ id: number }>(
-		`SELECT b.id FROM boms b JOIN parts p ON p.id = b.parent_part_id
+		`SELECT b.id FROM assemblies b JOIN parts p ON p.id = b.parent_part_id
 		 WHERE p.ref = ? AND b.code = ? AND (? IS NULL AND b.status = 'active' OR b.revision = ?)`,
 		parentRef,
 		code,

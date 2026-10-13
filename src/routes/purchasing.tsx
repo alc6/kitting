@@ -189,10 +189,10 @@ export function ShortageTables(props: { shortages: Shortages; selectable?: boole
 	const { shortages } = props;
 	return (
 		<>
-			{shortages.missingBoms.length ? (
-				<Alert variant="warning" title={t.purchasing.missingBoms} class="mb-0">
+			{shortages.missingAssemblies.length ? (
+				<Alert variant="warning" title={t.purchasing.missingAssemblies} class="mb-0">
 					<ul class="m-0 flex list-disc flex-col gap-1 pl-4">
-						{shortages.missingBoms.map((m) => (
+						{shortages.missingAssemblies.map((m) => (
 							<li>
 								<span class="font-medium">{m.ref}</span> {m.name} × <Qty milli={m.qtyMilli} /> ({m.builds.join(", ")})
 							</li>
@@ -335,7 +335,7 @@ purchasingRoutes.get("/", async (c) => {
 				<p>{fmt(t.purchasing.shortagesIntro, { n: shortages.buildCount })}</p>
 				{choosing ? <p>{t.purchasing.orderFromHint}</p> : null}
 			</div>
-			{shortages.groups.length === 0 && shortages.missingBoms.length === 0 ? (
+			{shortages.groups.length === 0 && shortages.missingAssemblies.length === 0 ? (
 				<EmptyState icon={icons.circleCheck} description={t.purchasing.noShortages} />
 			) : (
 				<form id="draft-pos" method="post" action="/purchasing/draft-pos" class="flex flex-col gap-4">
@@ -740,8 +740,8 @@ function DraftLines(props: {
 													variant="destructive"
 													size="icon-sm"
 													icon={icons.trash}
-													aria-label={t.boms.remove}
-													title={t.boms.remove}
+													aria-label={t.assemblies.remove}
+													title={t.assemblies.remove}
 												/>
 											</form>
 										</TableCell>

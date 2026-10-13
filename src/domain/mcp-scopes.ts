@@ -17,9 +17,9 @@ type ScopeRule = {
 /** In the order the consent page lists them: by area, reading first. */
 export const MCP_SCOPES = {
 	"catalog:read": { kind: "read", actions: [] },
-	"catalog:write": { kind: "write", actions: ["parts.edit", "suppliers.edit", "boms.edit"] },
+	"catalog:write": { kind: "write", actions: ["parts.edit", "suppliers.edit", "assemblies.edit"] },
 	"prices:write": { kind: "write", actions: ["prices.edit"] },
-	"catalog:archive": { kind: "write", actions: ["parts.archive", "boms.archive"] },
+	"catalog:archive": { kind: "write", actions: ["parts.archive", "assemblies.archive"] },
 	"stock:read": { kind: "read", actions: [] },
 	"stock:write": { kind: "write", actions: ["stock.adjust", "stock.count"] },
 	"builds:read": { kind: "read", actions: [] },
@@ -33,7 +33,7 @@ export type McpScope = keyof typeof MCP_SCOPES;
 export const MCP_SCOPE_NAMES = Object.keys(MCP_SCOPES) as McpScope[];
 
 /**
- * Never reachable over MCP, now or later: permanent deletes (parts and their offers and images, suppliers, BoMs,
+ * Never reachable over MCP, now or later: permanent deletes (parts and their offers and images, suppliers, assemblies,
  * POs), undoing a change (it stays in the app, where its conflicts are shown), user management, backup and
  * restore, CSV import, and these connections themselves. Image uploads share parts.edit, so that rule is on tool
  * names (test/mcp-scopes.test.ts checks both).
@@ -41,7 +41,7 @@ export const MCP_SCOPE_NAMES = Object.keys(MCP_SCOPES) as McpScope[];
 export const NEVER_OVER_MCP: readonly Action[] = [
 	"parts.delete",
 	"suppliers.delete",
-	"boms.delete",
+	"assemblies.delete",
 	"purchasing.delete",
 	"history.revert",
 	"users.manage",

@@ -46,7 +46,7 @@ CREATE TABLE `__new_price_history` (
 	`part_id` integer NOT NULL,
 	`kind` text NOT NULL,
 	`supplier_id` integer,
-	`bom_id` integer,
+	`assembly_id` integer,
 	`price_cents` integer,
 	`valid_from` text NOT NULL,
 	`source` text NOT NULL,
@@ -57,13 +57,13 @@ CREATE TABLE `__new_price_history` (
 	`updated_by` text NOT NULL,
 	FOREIGN KEY (`part_id`) REFERENCES `parts`(`id`) ON UPDATE no action ON DELETE cascade,
 	FOREIGN KEY (`supplier_id`) REFERENCES `suppliers`(`id`) ON UPDATE no action ON DELETE no action,
-	FOREIGN KEY (`bom_id`) REFERENCES `boms`(`id`) ON UPDATE no action ON DELETE cascade,
+	FOREIGN KEY (`assembly_id`) REFERENCES `assemblies`(`id`) ON UPDATE no action ON DELETE cascade,
 	CONSTRAINT "price_history_kind_check" CHECK(kind IN ('standard', 'purchase', 'sale')),
 	CONSTRAINT "price_history_source_check" CHECK(source IN ('form', 'import', 'po', 'migration', 'revert')),
 	CONSTRAINT "price_history_price_check" CHECK("__new_price_history"."price_cents" IS NULL OR "__new_price_history"."price_cents" >= 0)
 );
 --> statement-breakpoint
-INSERT INTO `__new_price_history`("id", "part_id", "kind", "supplier_id", "bom_id", "price_cents", "valid_from", "source", "note", "created_at", "updated_at", "created_by", "updated_by") SELECT "id", "part_id", "kind", "supplier_id", "bom_id", "price_cents", "valid_from", "source", "note", "created_at", "updated_at", "created_by", "updated_by" FROM `price_history`;--> statement-breakpoint
+INSERT INTO `__new_price_history`("id", "part_id", "kind", "supplier_id", "assembly_id", "price_cents", "valid_from", "source", "note", "created_at", "updated_at", "created_by", "updated_by") SELECT "id", "part_id", "kind", "supplier_id", "assembly_id", "price_cents", "valid_from", "source", "note", "created_at", "updated_at", "created_by", "updated_by" FROM `price_history`;--> statement-breakpoint
 DROP TABLE `price_history`;--> statement-breakpoint
 ALTER TABLE `__new_price_history` RENAME TO `price_history`;--> statement-breakpoint
 CREATE INDEX `price_history_part_idx` ON `price_history` (`part_id`,`kind`,`valid_from`);--> statement-breakpoint
@@ -118,55 +118,55 @@ BEGIN
 	INSERT INTO change_log (change_set_id, table_name, row_id, op, old_row, new_row)
 	SELECT change_set_id, 'suppliers', OLD."id", 'delete', json_object('id', OLD."id", 'name', OLD."name", 'email', OLD."email", 'phone', OLD."phone", 'notes', OLD."notes", 'created_at', OLD."created_at", 'updated_at', OLD."updated_at", 'created_by', OLD."created_by", 'updated_by', OLD."updated_by"), NULL FROM change_context;
 END;--> statement-breakpoint
-DROP TRIGGER IF EXISTS "history_boms_insert";--> statement-breakpoint
-CREATE TRIGGER "history_boms_insert" AFTER INSERT ON "boms"
+DROP TRIGGER IF EXISTS "history_assemblies_insert";--> statement-breakpoint
+CREATE TRIGGER "history_assemblies_insert" AFTER INSERT ON "assemblies"
 WHEN NOT EXISTS (SELECT 1 FROM change_context WHERE suppress = 1)
 BEGIN
-	SELECT RAISE(ABORT, 'history: write to boms outside a change set') WHERE NOT EXISTS (SELECT 1 FROM change_context WHERE change_set_id IS NOT NULL);
+	SELECT RAISE(ABORT, 'history: write to assemblies outside a change set') WHERE NOT EXISTS (SELECT 1 FROM change_context WHERE change_set_id IS NOT NULL);
 	INSERT INTO change_log (change_set_id, table_name, row_id, op, old_row, new_row)
-	SELECT change_set_id, 'boms', NEW."id", 'insert', NULL, json_object('id', NEW."id", 'parent_part_id', NEW."parent_part_id", 'code', NEW."code", 'revision', NEW."revision", 'status', NEW."status", 'sale_price_cents', NEW."sale_price_cents", 'notes', NEW."notes", 'created_at', NEW."created_at", 'updated_at', NEW."updated_at", 'created_by', NEW."created_by", 'updated_by', NEW."updated_by") FROM change_context;
+	SELECT change_set_id, 'assemblies', NEW."id", 'insert', NULL, json_object('id', NEW."id", 'parent_part_id', NEW."parent_part_id", 'code', NEW."code", 'revision', NEW."revision", 'status', NEW."status", 'sale_price_cents', NEW."sale_price_cents", 'notes', NEW."notes", 'created_at', NEW."created_at", 'updated_at', NEW."updated_at", 'created_by', NEW."created_by", 'updated_by', NEW."updated_by") FROM change_context;
 END;--> statement-breakpoint
-DROP TRIGGER IF EXISTS "history_boms_update";--> statement-breakpoint
-CREATE TRIGGER "history_boms_update" AFTER UPDATE ON "boms"
+DROP TRIGGER IF EXISTS "history_assemblies_update";--> statement-breakpoint
+CREATE TRIGGER "history_assemblies_update" AFTER UPDATE ON "assemblies"
 WHEN NOT EXISTS (SELECT 1 FROM change_context WHERE suppress = 1)
 BEGIN
-	SELECT RAISE(ABORT, 'history: write to boms outside a change set') WHERE NOT EXISTS (SELECT 1 FROM change_context WHERE change_set_id IS NOT NULL);
+	SELECT RAISE(ABORT, 'history: write to assemblies outside a change set') WHERE NOT EXISTS (SELECT 1 FROM change_context WHERE change_set_id IS NOT NULL);
 	INSERT INTO change_log (change_set_id, table_name, row_id, op, old_row, new_row)
-	SELECT change_set_id, 'boms', NEW."id", 'update', json_object('id', OLD."id", 'parent_part_id', OLD."parent_part_id", 'code', OLD."code", 'revision', OLD."revision", 'status', OLD."status", 'sale_price_cents', OLD."sale_price_cents", 'notes', OLD."notes", 'created_at', OLD."created_at", 'updated_at', OLD."updated_at", 'created_by', OLD."created_by", 'updated_by', OLD."updated_by"), json_object('id', NEW."id", 'parent_part_id', NEW."parent_part_id", 'code', NEW."code", 'revision', NEW."revision", 'status', NEW."status", 'sale_price_cents', NEW."sale_price_cents", 'notes', NEW."notes", 'created_at', NEW."created_at", 'updated_at', NEW."updated_at", 'created_by', NEW."created_by", 'updated_by', NEW."updated_by") FROM change_context
+	SELECT change_set_id, 'assemblies', NEW."id", 'update', json_object('id', OLD."id", 'parent_part_id', OLD."parent_part_id", 'code', OLD."code", 'revision', OLD."revision", 'status', OLD."status", 'sale_price_cents', OLD."sale_price_cents", 'notes', OLD."notes", 'created_at', OLD."created_at", 'updated_at', OLD."updated_at", 'created_by', OLD."created_by", 'updated_by', OLD."updated_by"), json_object('id', NEW."id", 'parent_part_id', NEW."parent_part_id", 'code', NEW."code", 'revision', NEW."revision", 'status', NEW."status", 'sale_price_cents', NEW."sale_price_cents", 'notes', NEW."notes", 'created_at', NEW."created_at", 'updated_at', NEW."updated_at", 'created_by', NEW."created_by", 'updated_by', NEW."updated_by") FROM change_context
 	WHERE OLD."id" IS NOT NEW."id" OR OLD."parent_part_id" IS NOT NEW."parent_part_id" OR OLD."code" IS NOT NEW."code" OR OLD."revision" IS NOT NEW."revision" OR OLD."status" IS NOT NEW."status" OR OLD."sale_price_cents" IS NOT NEW."sale_price_cents" OR OLD."notes" IS NOT NEW."notes";
 END;--> statement-breakpoint
-DROP TRIGGER IF EXISTS "history_boms_delete";--> statement-breakpoint
-CREATE TRIGGER "history_boms_delete" AFTER DELETE ON "boms"
+DROP TRIGGER IF EXISTS "history_assemblies_delete";--> statement-breakpoint
+CREATE TRIGGER "history_assemblies_delete" AFTER DELETE ON "assemblies"
 WHEN NOT EXISTS (SELECT 1 FROM change_context WHERE suppress = 1)
 BEGIN
-	SELECT RAISE(ABORT, 'history: write to boms outside a change set') WHERE NOT EXISTS (SELECT 1 FROM change_context WHERE change_set_id IS NOT NULL);
+	SELECT RAISE(ABORT, 'history: write to assemblies outside a change set') WHERE NOT EXISTS (SELECT 1 FROM change_context WHERE change_set_id IS NOT NULL);
 	INSERT INTO change_log (change_set_id, table_name, row_id, op, old_row, new_row)
-	SELECT change_set_id, 'boms', OLD."id", 'delete', json_object('id', OLD."id", 'parent_part_id', OLD."parent_part_id", 'code', OLD."code", 'revision', OLD."revision", 'status', OLD."status", 'sale_price_cents', OLD."sale_price_cents", 'notes', OLD."notes", 'created_at', OLD."created_at", 'updated_at', OLD."updated_at", 'created_by', OLD."created_by", 'updated_by', OLD."updated_by"), NULL FROM change_context;
+	SELECT change_set_id, 'assemblies', OLD."id", 'delete', json_object('id', OLD."id", 'parent_part_id', OLD."parent_part_id", 'code', OLD."code", 'revision', OLD."revision", 'status', OLD."status", 'sale_price_cents', OLD."sale_price_cents", 'notes', OLD."notes", 'created_at', OLD."created_at", 'updated_at', OLD."updated_at", 'created_by', OLD."created_by", 'updated_by', OLD."updated_by"), NULL FROM change_context;
 END;--> statement-breakpoint
-DROP TRIGGER IF EXISTS "history_bom_lines_insert";--> statement-breakpoint
-CREATE TRIGGER "history_bom_lines_insert" AFTER INSERT ON "bom_lines"
+DROP TRIGGER IF EXISTS "history_assembly_lines_insert";--> statement-breakpoint
+CREATE TRIGGER "history_assembly_lines_insert" AFTER INSERT ON "assembly_lines"
 WHEN NOT EXISTS (SELECT 1 FROM change_context WHERE suppress = 1)
 BEGIN
-	SELECT RAISE(ABORT, 'history: write to bom_lines outside a change set') WHERE NOT EXISTS (SELECT 1 FROM change_context WHERE change_set_id IS NOT NULL);
+	SELECT RAISE(ABORT, 'history: write to assembly_lines outside a change set') WHERE NOT EXISTS (SELECT 1 FROM change_context WHERE change_set_id IS NOT NULL);
 	INSERT INTO change_log (change_set_id, table_name, row_id, op, old_row, new_row)
-	SELECT change_set_id, 'bom_lines', NEW."id", 'insert', NULL, json_object('id', NEW."id", 'bom_id', NEW."bom_id", 'component_part_id', NEW."component_part_id", 'qty_milli', NEW."qty_milli", 'position', NEW."position", 'notes', NEW."notes", 'created_at', NEW."created_at", 'updated_at', NEW."updated_at", 'created_by', NEW."created_by", 'updated_by', NEW."updated_by") FROM change_context;
+	SELECT change_set_id, 'assembly_lines', NEW."id", 'insert', NULL, json_object('id', NEW."id", 'assembly_id', NEW."assembly_id", 'component_part_id', NEW."component_part_id", 'qty_milli', NEW."qty_milli", 'position', NEW."position", 'notes', NEW."notes", 'created_at', NEW."created_at", 'updated_at', NEW."updated_at", 'created_by', NEW."created_by", 'updated_by', NEW."updated_by") FROM change_context;
 END;--> statement-breakpoint
-DROP TRIGGER IF EXISTS "history_bom_lines_update";--> statement-breakpoint
-CREATE TRIGGER "history_bom_lines_update" AFTER UPDATE ON "bom_lines"
+DROP TRIGGER IF EXISTS "history_assembly_lines_update";--> statement-breakpoint
+CREATE TRIGGER "history_assembly_lines_update" AFTER UPDATE ON "assembly_lines"
 WHEN NOT EXISTS (SELECT 1 FROM change_context WHERE suppress = 1)
 BEGIN
-	SELECT RAISE(ABORT, 'history: write to bom_lines outside a change set') WHERE NOT EXISTS (SELECT 1 FROM change_context WHERE change_set_id IS NOT NULL);
+	SELECT RAISE(ABORT, 'history: write to assembly_lines outside a change set') WHERE NOT EXISTS (SELECT 1 FROM change_context WHERE change_set_id IS NOT NULL);
 	INSERT INTO change_log (change_set_id, table_name, row_id, op, old_row, new_row)
-	SELECT change_set_id, 'bom_lines', NEW."id", 'update', json_object('id', OLD."id", 'bom_id', OLD."bom_id", 'component_part_id', OLD."component_part_id", 'qty_milli', OLD."qty_milli", 'position', OLD."position", 'notes', OLD."notes", 'created_at', OLD."created_at", 'updated_at', OLD."updated_at", 'created_by', OLD."created_by", 'updated_by', OLD."updated_by"), json_object('id', NEW."id", 'bom_id', NEW."bom_id", 'component_part_id', NEW."component_part_id", 'qty_milli', NEW."qty_milli", 'position', NEW."position", 'notes', NEW."notes", 'created_at', NEW."created_at", 'updated_at', NEW."updated_at", 'created_by', NEW."created_by", 'updated_by', NEW."updated_by") FROM change_context
-	WHERE OLD."id" IS NOT NEW."id" OR OLD."bom_id" IS NOT NEW."bom_id" OR OLD."component_part_id" IS NOT NEW."component_part_id" OR OLD."qty_milli" IS NOT NEW."qty_milli" OR OLD."position" IS NOT NEW."position" OR OLD."notes" IS NOT NEW."notes";
+	SELECT change_set_id, 'assembly_lines', NEW."id", 'update', json_object('id', OLD."id", 'assembly_id', OLD."assembly_id", 'component_part_id', OLD."component_part_id", 'qty_milli', OLD."qty_milli", 'position', OLD."position", 'notes', OLD."notes", 'created_at', OLD."created_at", 'updated_at', OLD."updated_at", 'created_by', OLD."created_by", 'updated_by', OLD."updated_by"), json_object('id', NEW."id", 'assembly_id', NEW."assembly_id", 'component_part_id', NEW."component_part_id", 'qty_milli', NEW."qty_milli", 'position', NEW."position", 'notes', NEW."notes", 'created_at', NEW."created_at", 'updated_at', NEW."updated_at", 'created_by', NEW."created_by", 'updated_by', NEW."updated_by") FROM change_context
+	WHERE OLD."id" IS NOT NEW."id" OR OLD."assembly_id" IS NOT NEW."assembly_id" OR OLD."component_part_id" IS NOT NEW."component_part_id" OR OLD."qty_milli" IS NOT NEW."qty_milli" OR OLD."position" IS NOT NEW."position" OR OLD."notes" IS NOT NEW."notes";
 END;--> statement-breakpoint
-DROP TRIGGER IF EXISTS "history_bom_lines_delete";--> statement-breakpoint
-CREATE TRIGGER "history_bom_lines_delete" AFTER DELETE ON "bom_lines"
+DROP TRIGGER IF EXISTS "history_assembly_lines_delete";--> statement-breakpoint
+CREATE TRIGGER "history_assembly_lines_delete" AFTER DELETE ON "assembly_lines"
 WHEN NOT EXISTS (SELECT 1 FROM change_context WHERE suppress = 1)
 BEGIN
-	SELECT RAISE(ABORT, 'history: write to bom_lines outside a change set') WHERE NOT EXISTS (SELECT 1 FROM change_context WHERE change_set_id IS NOT NULL);
+	SELECT RAISE(ABORT, 'history: write to assembly_lines outside a change set') WHERE NOT EXISTS (SELECT 1 FROM change_context WHERE change_set_id IS NOT NULL);
 	INSERT INTO change_log (change_set_id, table_name, row_id, op, old_row, new_row)
-	SELECT change_set_id, 'bom_lines', OLD."id", 'delete', json_object('id', OLD."id", 'bom_id', OLD."bom_id", 'component_part_id', OLD."component_part_id", 'qty_milli', OLD."qty_milli", 'position', OLD."position", 'notes', OLD."notes", 'created_at', OLD."created_at", 'updated_at', OLD."updated_at", 'created_by', OLD."created_by", 'updated_by', OLD."updated_by"), NULL FROM change_context;
+	SELECT change_set_id, 'assembly_lines', OLD."id", 'delete', json_object('id', OLD."id", 'assembly_id', OLD."assembly_id", 'component_part_id', OLD."component_part_id", 'qty_milli', OLD."qty_milli", 'position', OLD."position", 'notes', OLD."notes", 'created_at', OLD."created_at", 'updated_at', OLD."updated_at", 'created_by', OLD."created_by", 'updated_by', OLD."updated_by"), NULL FROM change_context;
 END;--> statement-breakpoint
 DROP TRIGGER IF EXISTS "history_part_suppliers_insert";--> statement-breakpoint
 CREATE TRIGGER "history_part_suppliers_insert" AFTER INSERT ON "part_suppliers"
@@ -249,7 +249,7 @@ WHEN NOT EXISTS (SELECT 1 FROM change_context WHERE suppress = 1)
 BEGIN
 	SELECT RAISE(ABORT, 'history: write to builds outside a change set') WHERE NOT EXISTS (SELECT 1 FROM change_context WHERE change_set_id IS NOT NULL);
 	INSERT INTO change_log (change_set_id, table_name, row_id, op, old_row, new_row)
-	SELECT change_set_id, 'builds', NEW."id", 'insert', NULL, json_object('id', NEW."id", 'number', NEW."number", 'part_id', NEW."part_id", 'bom_id', NEW."bom_id", 'qty_milli', NEW."qty_milli", 'serial', NEW."serial", 'status', NEW."status", 'planned_for', NEW."planned_for", 'done_at', NEW."done_at", 'notes', NEW."notes", 'created_at', NEW."created_at", 'updated_at', NEW."updated_at", 'created_by', NEW."created_by", 'updated_by', NEW."updated_by") FROM change_context;
+	SELECT change_set_id, 'builds', NEW."id", 'insert', NULL, json_object('id', NEW."id", 'number', NEW."number", 'part_id', NEW."part_id", 'assembly_id', NEW."assembly_id", 'qty_milli', NEW."qty_milli", 'serial', NEW."serial", 'status', NEW."status", 'planned_for', NEW."planned_for", 'done_at', NEW."done_at", 'notes', NEW."notes", 'created_at', NEW."created_at", 'updated_at', NEW."updated_at", 'created_by', NEW."created_by", 'updated_by', NEW."updated_by") FROM change_context;
 END;--> statement-breakpoint
 DROP TRIGGER IF EXISTS "history_builds_update";--> statement-breakpoint
 CREATE TRIGGER "history_builds_update" AFTER UPDATE ON "builds"
@@ -257,8 +257,8 @@ WHEN NOT EXISTS (SELECT 1 FROM change_context WHERE suppress = 1)
 BEGIN
 	SELECT RAISE(ABORT, 'history: write to builds outside a change set') WHERE NOT EXISTS (SELECT 1 FROM change_context WHERE change_set_id IS NOT NULL);
 	INSERT INTO change_log (change_set_id, table_name, row_id, op, old_row, new_row)
-	SELECT change_set_id, 'builds', NEW."id", 'update', json_object('id', OLD."id", 'number', OLD."number", 'part_id', OLD."part_id", 'bom_id', OLD."bom_id", 'qty_milli', OLD."qty_milli", 'serial', OLD."serial", 'status', OLD."status", 'planned_for', OLD."planned_for", 'done_at', OLD."done_at", 'notes', OLD."notes", 'created_at', OLD."created_at", 'updated_at', OLD."updated_at", 'created_by', OLD."created_by", 'updated_by', OLD."updated_by"), json_object('id', NEW."id", 'number', NEW."number", 'part_id', NEW."part_id", 'bom_id', NEW."bom_id", 'qty_milli', NEW."qty_milli", 'serial', NEW."serial", 'status', NEW."status", 'planned_for', NEW."planned_for", 'done_at', NEW."done_at", 'notes', NEW."notes", 'created_at', NEW."created_at", 'updated_at', NEW."updated_at", 'created_by', NEW."created_by", 'updated_by', NEW."updated_by") FROM change_context
-	WHERE OLD."id" IS NOT NEW."id" OR OLD."number" IS NOT NEW."number" OR OLD."part_id" IS NOT NEW."part_id" OR OLD."bom_id" IS NOT NEW."bom_id" OR OLD."qty_milli" IS NOT NEW."qty_milli" OR OLD."serial" IS NOT NEW."serial" OR OLD."status" IS NOT NEW."status" OR OLD."planned_for" IS NOT NEW."planned_for" OR OLD."done_at" IS NOT NEW."done_at" OR OLD."notes" IS NOT NEW."notes";
+	SELECT change_set_id, 'builds', NEW."id", 'update', json_object('id', OLD."id", 'number', OLD."number", 'part_id', OLD."part_id", 'assembly_id', OLD."assembly_id", 'qty_milli', OLD."qty_milli", 'serial', OLD."serial", 'status', OLD."status", 'planned_for', OLD."planned_for", 'done_at', OLD."done_at", 'notes', OLD."notes", 'created_at', OLD."created_at", 'updated_at', OLD."updated_at", 'created_by', OLD."created_by", 'updated_by', OLD."updated_by"), json_object('id', NEW."id", 'number', NEW."number", 'part_id', NEW."part_id", 'assembly_id', NEW."assembly_id", 'qty_milli', NEW."qty_milli", 'serial', NEW."serial", 'status', NEW."status", 'planned_for', NEW."planned_for", 'done_at', NEW."done_at", 'notes', NEW."notes", 'created_at', NEW."created_at", 'updated_at', NEW."updated_at", 'created_by', NEW."created_by", 'updated_by', NEW."updated_by") FROM change_context
+	WHERE OLD."id" IS NOT NEW."id" OR OLD."number" IS NOT NEW."number" OR OLD."part_id" IS NOT NEW."part_id" OR OLD."assembly_id" IS NOT NEW."assembly_id" OR OLD."qty_milli" IS NOT NEW."qty_milli" OR OLD."serial" IS NOT NEW."serial" OR OLD."status" IS NOT NEW."status" OR OLD."planned_for" IS NOT NEW."planned_for" OR OLD."done_at" IS NOT NEW."done_at" OR OLD."notes" IS NOT NEW."notes";
 END;--> statement-breakpoint
 DROP TRIGGER IF EXISTS "history_builds_delete";--> statement-breakpoint
 CREATE TRIGGER "history_builds_delete" AFTER DELETE ON "builds"
@@ -266,7 +266,7 @@ WHEN NOT EXISTS (SELECT 1 FROM change_context WHERE suppress = 1)
 BEGIN
 	SELECT RAISE(ABORT, 'history: write to builds outside a change set') WHERE NOT EXISTS (SELECT 1 FROM change_context WHERE change_set_id IS NOT NULL);
 	INSERT INTO change_log (change_set_id, table_name, row_id, op, old_row, new_row)
-	SELECT change_set_id, 'builds', OLD."id", 'delete', json_object('id', OLD."id", 'number', OLD."number", 'part_id', OLD."part_id", 'bom_id', OLD."bom_id", 'qty_milli', OLD."qty_milli", 'serial', OLD."serial", 'status', OLD."status", 'planned_for', OLD."planned_for", 'done_at', OLD."done_at", 'notes', OLD."notes", 'created_at', OLD."created_at", 'updated_at', OLD."updated_at", 'created_by', OLD."created_by", 'updated_by', OLD."updated_by"), NULL FROM change_context;
+	SELECT change_set_id, 'builds', OLD."id", 'delete', json_object('id', OLD."id", 'number', OLD."number", 'part_id', OLD."part_id", 'assembly_id', OLD."assembly_id", 'qty_milli', OLD."qty_milli", 'serial', OLD."serial", 'status', OLD."status", 'planned_for', OLD."planned_for", 'done_at', OLD."done_at", 'notes', OLD."notes", 'created_at', OLD."created_at", 'updated_at', OLD."updated_at", 'created_by', OLD."created_by", 'updated_by', OLD."updated_by"), NULL FROM change_context;
 END;--> statement-breakpoint
 DROP TRIGGER IF EXISTS "history_users_insert";--> statement-breakpoint
 CREATE TRIGGER "history_users_insert" AFTER INSERT ON "users"

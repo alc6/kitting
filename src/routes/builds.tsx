@@ -3,8 +3,8 @@ import type { Context } from "hono";
 import { Hono } from "hono";
 import type { Child } from "hono/jsx";
 import { BUILD_STATUSES, type BuildStatus, type Part, parts, stockMoves } from "../db/schema";
-import type { ExplodedNode } from "../domain/bom-graph";
-import { loadGraph } from "../domain/boms";
+import { loadGraph } from "../domain/assemblies";
+import type { ExplodedNode } from "../domain/assembly-graph";
 import {
 	buildableProduct,
 	buildEditInput,
@@ -109,7 +109,7 @@ export function BuildsTable(props: { rows: BuildRow[] }) {
 				<TableRow>
 					<TableHead>{t.builds.number}</TableHead>
 					<TableHead>{t.builds.part}</TableHead>
-					<TableHead>{t.builds.bom}</TableHead>
+					<TableHead>{t.builds.assembly}</TableHead>
 					<TableHead class="text-right">{t.builds.qty}</TableHead>
 					<TableHead>{t.builds.serial}</TableHead>
 					<TableHead>{t.builds.status}</TableHead>
@@ -129,7 +129,7 @@ export function BuildsTable(props: { rows: BuildRow[] }) {
 							<span class="text-muted-foreground">{b.partName}</span>
 						</TableCell>
 						<TableCell class="whitespace-nowrap text-muted-foreground">
-							{b.bomCode} · {b.bomRevision}
+							{b.assemblyCode} · {b.assemblyRevision}
 						</TableCell>
 						<TableCell class="text-right">
 							<Qty milli={b.qtyMilli} unit={b.unit} />
@@ -197,14 +197,14 @@ buildRoutes.get("/", async (c) => {
 // ---------------------------------------------------------------------------
 // New build
 
-type BomOption = { id: number; code: string; revision: string };
+type AssemblyOption = { id: number; code: string; revision: string };
 
 function NewBuildForm(props: {
 	values: FormValues;
 	errors: FormErrors;
 	products: { id: number; ref: string; name: string }[];
 	product: Part | undefined;
-	bomOptions: BomOption[];
+	assemblyOptions: AssemblyOption[];
 }) {
 	const { t } = useApp();
 	const p = { values: props.values, errors: props.errors };
@@ -216,7 +216,7 @@ function NewBuildForm(props: {
 		"hx-swap": "outerHTML",
 	};
 	const partError = props.errors.part_id;
-	const ready = props.product !== undefined && props.bomOptions.length > 0;
+	const ready = props.product !== undefined && props.assemblyOptions.length > 0;
 	return (
 		<Card class="max-w-3xl">
 			<CardContent>
@@ -261,20 +261,21 @@ function NewBuildForm(props: {
 							<FieldError id="e-part_id">{partError}</FieldError>
 						</div>
 						{props.product ? (
-							props.bomOptions.length === 0 ? (
+							props.assemblyOptions.length === 0 ? (
 								<Alert variant="warning" class="mb-0">
 									<p>
-										{t.builds.noActiveBom} <a href={`/boms/new?part=${props.product.id}`}>{t.boms.new}</a>
+										{t.builds.noActiveAssembly}{" "}
+										<a href={`/assemblies/new?part=${props.product.id}`}>{t.assemblies.new}</a>
 									</p>
 								</Alert>
 							) : (
 								<>
 									<div class="grid gap-4 md:grid-cols-2">
 										<SelectField
-											name="bom_id"
+											name="assembly_id"
 											label={t.builds.variant}
 											required
-											options={props.bomOptions.map((b) => ({
+											options={props.assemblyOptions.map((b) => ({
 												value: String(b.id),
 												label: `${b.code} (${b.revision})`,
 											}))}
@@ -323,12 +324,17 @@ buildRoutes.get("/new", requirePermission("builds.plan"), async (c) => {
 	const q = c.req.query();
 	const partId = /^\d+$/.test(q.part_id ?? q.part ?? "") ? Number(q.part_id ?? q.part) : null;
 	const data = await newBuildData(c, partId);
-	const std = data.bomOptions.find((b) => b.code === "std") ?? data.bomOptions[0];
+	const std = data.assemblyOptions.find((b) => b.code === "std") ?? data.assemblyOptions[0];
 	const values: FormValues = {
 		qty: "1",
 		...q,
 		part_id: partId ? String(partId) : "",
-		bom_id: q.bom_id && data.bomOptions.some((b) => String(b.id) === q.bom_id) ? q.bom_id : std ? String(std.id) : "",
+		assembly_id:
+			q.assembly_id && data.assemblyOptions.some((b) => String(b.id) === q.assembly_id)
+				? q.assembly_id
+				: std
+					? String(std.id)
+					: "",
 	};
 	return page(
 		c,
@@ -348,7 +354,7 @@ buildRoutes.post("/", requirePermission("builds.plan"), async (c) => {
 	const errors: FieldErrors = v.ok ? {} : { ...v.errors };
 	const partId = v.ok ? v.data.part_id : null;
 	const data = await newBuildData(c, partId);
-	if (v.ok) Object.assign(errors, await buildPlanErrors(db, v.data, data.product, data.bomOptions));
+	if (v.ok) Object.assign(errors, await buildPlanErrors(db, v.data, data.product, data.assemblyOptions));
 	if (!v.ok || Object.keys(errors).length > 0 || !data.product) {
 		return page(
 			c,
@@ -373,7 +379,7 @@ buildRoutes.post("/", requirePermission("builds.plan"), async (c) => {
 					{
 						number,
 						partId: data.product.id,
-						bomId: d.bom_id as number,
+						assemblyId: d.assembly_id as number,
 						qtyMilli: d.qty,
 						serial: d.serial || null,
 						plannedFor: d.planned_for,
@@ -396,7 +402,7 @@ buildRoutes.post("/", requirePermission("builds.plan"), async (c) => {
 function BuildHeader(props: { data: BuildData }) {
 	const view = useApp();
 	const { t } = view;
-	const { build, part, bom } = props.data;
+	const { build, part, assembly } = props.data;
 	const open = OPEN_STATUSES.includes(build.status) && can(view, "builds.plan");
 	return (
 		<PageHeader
@@ -407,9 +413,9 @@ function BuildHeader(props: { data: BuildData }) {
 					<a href={`/parts/${part.id}`}>{part.name}</a>
 					<span aria-hidden="true">·</span>
 					<span>
-						{t.builds.bom}:{" "}
-						<a href={`/boms/${bom.id}`}>
-							{bom.code} ({bom.revision})
+						{t.builds.assembly}:{" "}
+						<a href={`/assemblies/${assembly.id}`}>
+							{assembly.code} ({assembly.revision})
 						</a>
 					</span>
 				</span>
@@ -486,7 +492,7 @@ function ChoiceRadios(props: { buildId: number; node: ExplodedNode; current: str
 			data-slot="toggle-group"
 			class="grid w-full grid-cols-3 rounded-md border bg-background shadow-xs sm:inline-grid sm:w-auto dark:border-input dark:bg-input/30"
 		>
-			{option("", `${t.builds.auto} (${t.boms.modes[props.node.mode]})`)}
+			{option("", `${t.builds.auto} (${t.assemblies.modes[props.node.mode]})`)}
 			{option("stock", t.builds.useStock)}
 			{option("build", t.builds.buildNow)}
 		</div>
@@ -922,7 +928,7 @@ async function renderBuild(
 		const doneAt = shortDateTime(build.doneAt);
 		const incomplete = lines.some((l) => l.line.unitCostCents === null);
 		// Two different costs: the one frozen at completion (standard costs) and the actual one (weighted average).
-		const priceCents = salePriceOf(part, data.bom);
+		const priceCents = salePriceOf(part, data.assembly);
 		const margin = marginOf(priceCents, actual?.unitCents ?? null);
 		const low = !margin || actual?.incomplete || (margin.rateBp !== null && margin.rateBp < LOW_MARGIN_BP);
 		const marginStatTone = margin && margin.marginCents < 0 ? "destructive" : low ? "warning" : "default";

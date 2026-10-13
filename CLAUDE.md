@@ -45,8 +45,8 @@ was built with; `npx skills update` refreshes it.
   `requirePermission(action)`, the startup check that every write route declares one), `security.ts` (CSP, CSRF).
 - `src/db/schema.ts`: Drizzle schema, the single source of truth for tables.
 - `src/domain/`: business logic and queries, framework-free where possible (unit-testable).
-  `bom-graph.ts` is pure (explosion, cost roll-up, cycle detection over an in-memory graph);
-  `boms.ts` loads the graph and holds the recursive CTEs (where-used, cycle check on save).
+  `assembly-graph.ts` is pure (explosion, cost roll-up, cycle detection over an in-memory graph);
+  `assemblies.ts` loads the graph and holds the recursive CTEs (where-used, cycle check on save).
   `stock.ts` (ledger, counts, valuation), `builds.ts` (pick list, completion batch),
   `purchasing.ts` (shortage engine, POs, receipts), `backup.ts` (JSON export/restore),
   `tree-layout.ts` (pure diagram layout), `search.ts` (global search), `offers.ts` (supplier offers),
@@ -60,7 +60,7 @@ was built with; `npx skills update` refreshes it.
   `src/domain/import/`: one importer per CSV type, all implementing `Importer`.
 - `src/routes/*.tsx`: one Hono router per area, with its page components.
 - `src/views/`: layout (sidebar, header), shadcn-style components (`ui.tsx`), icons (`icons.tsx`),
-  BoM diagram (`bom-diagram.tsx`), time charts (`chart.tsx`), render helpers, view context
+  assembly diagram (`assembly-diagram.tsx`), time charts (`chart.tsx`), render helpers, view context
   (`useApp()`: locale, theme, sidebar…).
 - Part picker (D138): `PartPicker`/`PartPickerDialog` in `src/views/part-picker.tsx` (dialog after the form, scoped by
   `kinds`/`exclude` to what the form accepts), results from `GET /parts/pick` (`src/routes/part-picker.tsx`, `src/domain/part-picker.ts`).
@@ -80,7 +80,7 @@ was built with; `npx skills update` refreshes it.
   summary }, statements)` from `src/domain/history.ts`; a page uses `saveChanges(c, summary, statements)`
   (`src/views/render.tsx`). Never run a bare query or `runBatch()` on a tracked table: the history triggers
   abort it. Put the write logic in `src/domain` as statement builders, and give the change a meaningful
-  summary from `t.history.summaries` naming what and which record ("Edit BoM LAMP-DESK std Rev3"), never an
+  summary from `t.history.summaries` naming what and which record ("Edit assembly LAMP-DESK std Rev3"), never an
   amount (every role reads it). An MCP tool saves through `saveChange()` (source `mcp`, its client name). A
   write that an undo could not restore consistently passes `revertible: false` (ledger writes are marked by
   trigger).
@@ -109,7 +109,7 @@ was built with; `npx skills update` refreshes it.
   On-hand = `SUM(qty_milli)` per part.
 - `price_history` is append-only too: every change of a standard cost, an offer price or a selling price
   adds a row in the same batch (`priceRecordStatement`, or go through `savePartStatements`,
-  `saveOfferStatements`, `setStandardCostStatements`, `bomSalePriceStatements`). Prices paid are the receipt moves.
+  `saveOfferStatements`, `setStandardCostStatements`, `assemblySalePriceStatements`). Prices paid are the receipt moves.
 - Supplier terms live in `part_suppliers` (one offer per part and supplier); `parts.supplier_id` is the
   preferred one. `parts.supplier_ref/moq_milli/pack_size_milli/lead_days` are deprecated: never use them.
 - Product images live in the optional `IMAGES` R2 bucket: always go through `imagesBucket(c.env)` (null when
@@ -200,7 +200,7 @@ was built with; `npx skills update` refreshes it.
   `package.json`'s, or when `SERVER_INFO.version` (`src/mcp/server.ts`) does: bump the three together. The skill's folder layout, the connector URL (`KITTING_MCP_URL`, never a
   real domain) and `npm run skill:zip` are described in D132–D135.
 - Never over MCP: permanent deletes, undo, user management, backups, imports, image uploads (`NEVER_OVER_MCP` and
-  the tool-name check in `test/mcp-scopes.test.ts`). BoMs change only through draft revisions (D128).
+  the tool-name check in `test/mcp-scopes.test.ts`). Assemblies change only through draft revisions (D128).
 
 ## Tests
 
@@ -217,7 +217,7 @@ Small, focused commits following [Conventional Commits](https://www.conventional
 `type(scope): summary`, imperative, lower case, no final period.
 
 - Types: `feat`, `fix`, `docs`, `refactor`, `test`, `perf`, `style`, `build`, `ci`, `chore`.
-- Scopes are app areas, optional: `parts`, `suppliers`, `boms`, `stock`, `builds`, `purchasing`,
+- Scopes are app areas, optional: `parts`, `suppliers`, `assemblies`, `stock`, `builds`, `purchasing`,
   `pricing`, `import`, `auth`, `ui`, `db`, `mcp`, `plugin`.
 - Examples: `feat(builds): allow cancelling a planned build`, `fix(import): accept semicolon CSVs`,
   `docs: explain the Access setup`, `chore: bump wrangler`.

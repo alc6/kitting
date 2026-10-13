@@ -1,8 +1,8 @@
-// Margins: every sellable item (active BoM variant, or product sold without BoM) with its selling price,
+// Margins: every sellable item (active assembly variant, or product sold without assembly) with its selling price,
 // planned margin (standard cost roll-up) and actual margin (completed builds at weighted average cost).
 import { eq } from "drizzle-orm";
 import { type Context, Hono } from "hono";
-import { boms } from "../db/schema";
+import { assemblies } from "../db/schema";
 import { type MarginTarget, marginHistory, type PlannedPoint } from "../domain/margin-history";
 import { type Margin, type MarginRow, marginReport } from "../domain/margins";
 import { historyStart } from "../domain/prices";
@@ -138,11 +138,11 @@ function MarginsTable(props: { rows: MarginRow[] }) {
 							</div>
 						</TableCell>
 						<TableCell class="whitespace-nowrap">
-							{r.bom ? (
+							{r.assembly ? (
 								<span class="inline-flex items-center gap-1.5">
-									<a href={`/boms/${r.bom.id}`}>{r.bom.code}</a>
-									<span class="text-xs text-muted-foreground">{r.bom.revision}</span>
-									{r.bom.ownPrice ? (
+									<a href={`/assemblies/${r.assembly.id}`}>{r.assembly.code}</a>
+									<span class="text-xs text-muted-foreground">{r.assembly.revision}</span>
+									{r.assembly.ownPrice ? (
 										<Badge variant="info" title={t.margins.ownPriceTitle}>
 											{t.margins.ownPrice}
 										</Badge>
@@ -193,7 +193,9 @@ function MarginsTable(props: { rows: MarginRow[] }) {
 								variant="ghost"
 								size="icon-sm"
 								icon={icons.chartLine}
-								aria-label={fmt(t.margins.historyLink, { item: r.bom ? `${r.part.ref} · ${r.bom.code}` : r.part.ref })}
+								aria-label={fmt(t.margins.historyLink, {
+									item: r.assembly ? `${r.part.ref} · ${r.assembly.code}` : r.part.ref,
+								})}
 								title={t.margins.historyTitle}
 							/>
 						</TableCell>
@@ -240,9 +242,9 @@ marginRoutes.get("/", async (c) => {
 			...shown.map((r) => [
 				r.part.ref,
 				r.part.name,
-				r.bom?.code ?? "",
-				r.bom?.revision ?? "",
-				r.bom?.ownPrice ? "yes" : "",
+				r.assembly?.code ?? "",
+				r.assembly?.revision ?? "",
+				r.assembly?.ownPrice ? "yes" : "",
 				cents(r.priceCents),
 				cents(r.plannedCostCents),
 				r.plannedIncomplete ? "yes" : "",
@@ -347,8 +349,8 @@ marginRoutes.get("/", async (c) => {
 // Margin history of one sellable item (D98)
 
 /** Link to the margin history of a margins row. */
-export const historyHref = (r: { part: { id: number }; bom: { id: number } | null }) =>
-	r.bom ? `/margins/boms/${r.bom.id}` : `/margins/parts/${r.part.id}`;
+export const historyHref = (r: { part: { id: number }; assembly: { id: number } | null }) =>
+	r.assembly ? `/margins/assemblies/${r.assembly.id}` : `/margins/parts/${r.part.id}`;
 
 /** A change of percentage points, signed: "+1.5 pts", "−4.0 pts". */
 function Points(props: { bp: number }) {
@@ -402,9 +404,9 @@ async function historyPage(c: Context<AppEnv>, target: MarginTarget) {
 	const currency = c.env.CURRENCY;
 	const data = await marginHistory(c.var.db, target);
 	if (!data) return notFound(c);
-	const { part, bom, planned, actual, refs } = data;
+	const { part, assembly, planned, actual, refs } = data;
 	const start = planned.some((p) => p.fallback) ? await historyStart(c.var.db) : null;
-	const item = bom ? `${part.ref} · ${bom.code} ${bom.revision}` : part.ref;
+	const item = assembly ? `${part.ref} · ${assembly.code} ${assembly.revision}` : part.ref;
 	const title = `${t.margins.historyTitle}: ${item}`;
 	const money = (cents: number | null) => (cents === null ? t.common.none : formatMoney(cents, locale, currency));
 	const pct = (bp: number | null | undefined) =>
@@ -427,11 +429,11 @@ async function historyPage(c: Context<AppEnv>, target: MarginTarget) {
 						{t.margins.allMargins}
 					</Button>
 					<Button
-						href={bom ? `/boms/${bom.id}` : `/parts/${part.id}`}
+						href={assembly ? `/assemblies/${assembly.id}` : `/parts/${part.id}`}
 						variant="outline"
-						icon={bom ? icons.listTree : icons.package}
+						icon={assembly ? icons.listTree : icons.package}
 					>
-						{bom ? t.margins.openBom : t.margins.openPart}
+						{assembly ? t.margins.openAssembly : t.margins.openPart}
 					</Button>
 				</>
 			}
@@ -632,16 +634,19 @@ async function historyPage(c: Context<AppEnv>, target: MarginTarget) {
 	);
 }
 
-marginRoutes.get("/boms/:id", async (c) => {
+marginRoutes.get("/assemblies/:id", async (c) => {
 	const id = idParam(c);
 	if (!id) return notFound(c);
-	const [bom] = await c.var.db.select({ partId: boms.parentPartId }).from(boms).where(eq(boms.id, id));
-	if (!bom) return notFound(c);
-	return historyPage(c, { partId: bom.partId, bomId: id });
+	const [assembly] = await c.var.db
+		.select({ partId: assemblies.parentPartId })
+		.from(assemblies)
+		.where(eq(assemblies.id, id));
+	if (!assembly) return notFound(c);
+	return historyPage(c, { partId: assembly.partId, assemblyId: id });
 });
 
 marginRoutes.get("/parts/:id", async (c) => {
 	const id = idParam(c);
 	if (!id) return notFound(c);
-	return historyPage(c, { partId: id, bomId: null });
+	return historyPage(c, { partId: id, assemblyId: null });
 });

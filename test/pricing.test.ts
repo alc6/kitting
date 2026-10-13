@@ -4,7 +4,7 @@ import { buildActualCost, marginOf, marginReport } from "../src/domain/margins";
 import { computeShortages, planDraftOrders } from "../src/domain/purchasing";
 import { valuation } from "../src/domain/stock";
 import {
-	bomId,
+	assemblyId,
 	DEMO,
 	importCsv,
 	insertMove,
@@ -127,7 +127,7 @@ describe("ordering from several suppliers", () => {
 		for (let i = 1; i <= 6; i++) {
 			await postForm("/builds", {
 				part_id: String(await partId("LAMP-DESK")),
-				bom_id: String(await bomId("LAMP-DESK")),
+				assembly_id: String(await assemblyId("LAMP-DESK")),
 				qty: "1",
 				serial: `L-${i}`,
 				planned_for: "",
@@ -242,12 +242,12 @@ describe("margins", () => {
 	it("computes planned margins per variant, with the variant's own price when it has one", async () => {
 		await loadDemo({ stock: false });
 		const report = await marginReport(testDb());
-		const std = report.find((r) => r.part.ref === "LAMP-DESK" && r.bom?.code === "std")!;
-		const warm = report.find((r) => r.part.ref === "LAMP-DESK" && r.bom?.code === "warm")!;
+		const std = report.find((r) => r.part.ref === "LAMP-DESK" && r.assembly?.code === "std")!;
+		const warm = report.find((r) => r.part.ref === "LAMP-DESK" && r.assembly?.code === "warm")!;
 		expect(std).toMatchObject({ priceCents: 8900, plannedCostCents: 3783, plannedIncomplete: true });
 		expect(std.planned).toEqual({ marginCents: 5117, rateBp: 5749, markupBp: 13526 });
 		expect(warm.priceCents).toBe(9400);
-		expect(warm.bom?.ownPrice).toBe(true);
+		expect(warm.assembly?.ownPrice).toBe(true);
 		// Parts without a selling price are not listed.
 		expect(report.some((r) => r.part.ref === "ARM-ASSY")).toBe(false);
 	});
@@ -256,7 +256,7 @@ describe("margins", () => {
 		await loadDemo();
 		const res = await postForm("/builds", {
 			part_id: String(await partId("LAMP-DESK")),
-			bom_id: String(await bomId("LAMP-DESK")),
+			assembly_id: String(await assemblyId("LAMP-DESK")),
 			qty: "1",
 			serial: "L-1",
 			planned_for: "",
@@ -269,7 +269,7 @@ describe("margins", () => {
 		expect((await postForm(`/builds/${build}/complete`, fields)).status).toBe(303);
 		const actual = await buildActualCost(testDb(), build);
 		expect(actual?.unitCents).toBeGreaterThan(0);
-		const std = (await marginReport(testDb())).find((r) => r.part.ref === "LAMP-DESK" && r.bom?.code === "std")!;
+		const std = (await marginReport(testDb())).find((r) => r.part.ref === "LAMP-DESK" && r.assembly?.code === "std")!;
 		expect(std.doneBuilds).toBe(1);
 		expect(std.actualCostCents).toBe(actual?.unitCents);
 		expect(std.actual).toEqual(marginOf(8900, actual?.unitCents ?? null));

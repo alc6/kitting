@@ -1,5 +1,5 @@
 import { asc, eq } from "drizzle-orm";
-import { boms, type Part, parts, stockMoves, suppliers } from "../../db/schema";
+import { assemblies, type Part, parts, stockMoves, suppliers } from "../../db/schema";
 import { formatCentsInput, formatQtyInput } from "../../lib/units";
 import { validate } from "../../lib/validation";
 import { NO_TERMS, type OfferTerms, preferredTerms } from "../offers";
@@ -79,11 +79,11 @@ export const partsImporter: Importer = {
 		const { errors, warnings } = checkHeader(this, table);
 		if (errors.length) return emptyPlan("parts", errors, warnings);
 
-		const [allParts, allSuppliers, withMoves, withBoms, offers] = await Promise.all([
+		const [allParts, allSuppliers, withMoves, withAssemblies, offers] = await Promise.all([
 			db.select().from(parts),
 			db.select({ id: suppliers.id, name: suppliers.name }).from(suppliers),
 			db.select({ partId: stockMoves.partId }).from(stockMoves).groupBy(stockMoves.partId),
-			db.select({ partId: boms.parentPartId }).from(boms).groupBy(boms.parentPartId),
+			db.select({ partId: assemblies.parentPartId }).from(assemblies).groupBy(assemblies.parentPartId),
 			preferredTerms(db),
 		]);
 		const byRef = new Map(allParts.map((p) => [p.ref, p]));
@@ -91,7 +91,7 @@ export const partsImporter: Importer = {
 		const supplierByName = new Map(allSuppliers.map((s) => [s.name.toLowerCase(), s]));
 		const supplierName = new Map(allSuppliers.map((s) => [s.id, s.name]));
 		const hasMoves = new Set(withMoves.map((r) => r.partId));
-		const ownsBoms = new Set(withBoms.map((r) => r.partId));
+		const ownsAssemblies = new Set(withAssemblies.map((r) => r.partId));
 		const present = new Set(table.header);
 
 		const issues: RowIssue[] = [];
@@ -135,7 +135,7 @@ export const partsImporter: Importer = {
 					{ kind: v.data.kind, trackSerial: v.data.track_serial },
 					{
 						hasMoves: current ? hasMoves.has(current.id) : false,
-						hasBoms: current ? ownsBoms.has(current.id) : false,
+						hasAssemblies: current ? ownsAssemblies.has(current.id) : false,
 					},
 				);
 				lineIssues.push(...fieldIssues(rec.line, rules, fieldToColumn));

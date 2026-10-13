@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { computeShortages } from "../src/domain/purchasing";
-import { bomId, insertMove, insertPart, insertSupplier, loadDemo, one, partId, postForm, testDb } from "./helpers";
+import { assemblyId, insertMove, insertPart, insertSupplier, loadDemo, one, partId, postForm, testDb } from "./helpers";
 
 async function planBuild(ref: string, opts: { serial?: string; qty?: string; code?: string; date?: string } = {}) {
 	const res = await postForm("/builds", {
 		part_id: String(await partId(ref)),
-		bom_id: String(await bomId(ref, opts.code ?? "std")),
+		assembly_id: String(await assemblyId(ref, opts.code ?? "std")),
 		qty: opts.qty ?? "1",
 		serial: opts.serial ?? "",
 		planned_for: opts.date ?? "",
@@ -74,20 +74,28 @@ describe("shortage engine", () => {
 		expect(lineOf(await computeShortages(testDb()), "BASE-PLATE")?.netMilli).toBe(2000);
 	});
 
-	it("reports parts below zero, parts without supplier and sub-assemblies without BoM", async () => {
+	it("reports parts below zero, parts without supplier and sub-assemblies without assembly", async () => {
 		const top = await insertPart("TOP", "make");
-		await insertPart("NOBOM", "make");
+		await insertPart("NOASSEMBLY", "make");
 		await insertPart("LOOSE", "buy", { costCents: 100 });
 		const neg = await insertPart("NEG", "buy", { supplierId: await insertSupplier("Acme") });
 		await insertMove(neg, -3000);
-		await postForm("/boms", { parent_part_id: String(top), code: "std", revision: "Rev1", notes: "", copy_from: "" });
-		const b = (await one<{ id: number }>("SELECT id FROM boms")).id;
-		await postForm(`/boms/${b}/lines`, { component: "NOBOM", qty: "1", notes: "" });
-		await postForm(`/boms/${b}/lines`, { component: "LOOSE", qty: "2", notes: "" });
-		await postForm(`/boms/${b}/activate`, {});
+		await postForm("/assemblies", {
+			parent_part_id: String(top),
+			code: "std",
+			revision: "Rev1",
+			notes: "",
+			copy_from: "",
+		});
+		const b = (await one<{ id: number }>("SELECT id FROM assemblies")).id;
+		await postForm(`/assemblies/${b}/lines`, { component: "NOASSEMBLY", qty: "1", notes: "" });
+		await postForm(`/assemblies/${b}/lines`, { component: "LOOSE", qty: "2", notes: "" });
+		await postForm(`/assemblies/${b}/activate`, {});
 		await planBuild("TOP", { qty: "2" });
 		const s = await computeShortages(testDb());
-		expect(s.missingBoms).toEqual([{ ref: "NOBOM", name: "Part NOBOM", qtyMilli: 2000, builds: ["B-0001"] }]);
+		expect(s.missingAssemblies).toEqual([
+			{ ref: "NOASSEMBLY", name: "Part NOASSEMBLY", qtyMilli: 2000, builds: ["B-0001"] },
+		]);
 		const unassigned = s.groups.find((g) => g.supplierId === null)!;
 		expect(unassigned.lines.map((l) => [l.part.ref, l.orderMilli])).toEqual([["LOOSE", 4000]]);
 		expect(lineOf(s, "NEG")?.netMilli).toBe(3000);

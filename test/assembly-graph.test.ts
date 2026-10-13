@@ -1,18 +1,18 @@
 import { describe, expect, it } from "vitest";
+import { loadGraph, whereUsed, wouldCreateCycle } from "../src/domain/assemblies";
 import {
-	BomCycleError,
+	AssemblyCycleError,
 	buildGraph,
 	CostCalculator,
 	centsOf,
-	defaultBom,
+	defaultAssembly,
 	explode,
 	findCycle,
 	type GraphPart,
 	walkTree,
-} from "../src/domain/bom-graph";
-import { loadGraph, whereUsed, wouldCreateCycle } from "../src/domain/boms";
+} from "../src/domain/assembly-graph";
 import { onHandMap } from "../src/domain/parts";
-import { bomId, loadDemo, partId, testDb } from "./helpers";
+import { assemblyId, loadDemo, partId, testDb } from "./helpers";
 
 const part = (id: number, ref: string, kind: GraphPart["kind"], costCents: number | null = 100): GraphPart => ({
 	id,
@@ -31,7 +31,7 @@ describe("explosion on the demo lamp", () => {
 	it("explodes kits and sub-assemblies into leaf requirements", async () => {
 		await loadDemo();
 		const graph = await loadGraph(testDb());
-		const e = explode(graph, await bomId("LAMP-DESK"), 1000);
+		const e = explode(graph, await assemblyId("LAMP-DESK"), 1000);
 		const r = req(e);
 		expect(r["SCREW-M3X8"]).toBe(11_000); // 2 arms x 4 + fixing kit 3
 		expect(r["WASHER-M3"]).toBe(3_000);
@@ -60,7 +60,7 @@ describe("explosion on the demo lamp", () => {
 	it("scales with the build quantity and uses the variant asked for", async () => {
 		await loadDemo();
 		const graph = await loadGraph(testDb());
-		const r = req(explode(graph, await bomId("LAMP-DESK", "warm"), 3000));
+		const r = req(explode(graph, await assemblyId("LAMP-DESK", "warm"), 3000));
 		expect(r["SCREW-M3X8"]).toBe(33_000);
 		expect(r["LED-5W-WW"]).toBe(3_000);
 		expect(r["LED-5W-CW"]).toBeUndefined();
@@ -70,7 +70,7 @@ describe("explosion on the demo lamp", () => {
 		await loadDemo();
 		const db = testDb();
 		const [graph, stock] = await Promise.all([loadGraph(db), onHandMap(db)]);
-		const lamp = await bomId("LAMP-DESK");
+		const lamp = await assemblyId("LAMP-DESK");
 		const one = explode(graph, lamp, 1000, { stock });
 		expect(req(one)["ARM-ASSY"]).toBe(2000);
 		expect(req(one)["ARM-TUBE-300"]).toBeUndefined();
@@ -86,7 +86,7 @@ describe("explosion on the demo lamp", () => {
 		await loadDemo();
 		const db = testDb();
 		const [graph, stock] = await Promise.all([loadGraph(db), onHandMap(db)]);
-		const lamp = await bomId("LAMP-DESK");
+		const lamp = await assemblyId("LAMP-DESK");
 		const available = new Map(stock);
 		const first = explode(graph, lamp, 1000, { available });
 		const second = explode(graph, lamp, 1000, { available });
@@ -100,7 +100,7 @@ describe("explosion on the demo lamp", () => {
 		await loadDemo();
 		const db = testDb();
 		const [graph, stock] = await Promise.all([loadGraph(db), onHandMap(db)]);
-		const lamp = await bomId("LAMP-DESK");
+		const lamp = await assemblyId("LAMP-DESK");
 		const base = explode(graph, lamp, 1000, { stock });
 		const armPath = base.tree.find((n) => n.part.ref === "ARM-ASSY")!.path;
 		const built = explode(graph, lamp, 1000, { stock, choices: new Map([[armPath, "build"]]) });
@@ -112,18 +112,18 @@ describe("explosion on the demo lamp", () => {
 });
 
 describe("explosion edge cases", () => {
-	it("shares stock across lines and flags make parts without BoM", () => {
+	it("shares stock across lines and flags make parts without assembly", () => {
 		const g = buildGraph(
-			[part(1, "TOP", "make"), part(2, "SUB", "make"), part(3, "NOBOM", "make"), part(4, "SCREW", "buy")],
+			[part(1, "TOP", "make"), part(2, "SUB", "make"), part(3, "NOASSEMBLY", "make"), part(4, "SCREW", "buy")],
 			[
 				{ id: 10, parentPartId: 1, code: "std", revision: "R1", status: "active" },
 				{ id: 11, parentPartId: 2, code: "std", revision: "R1", status: "active" },
 			],
 			[
-				{ id: 100, bomId: 10, componentPartId: 2, qtyMilli: 2000, position: 1, notes: "" },
-				{ id: 101, bomId: 10, componentPartId: 2, qtyMilli: 1000, position: 2, notes: "" },
-				{ id: 102, bomId: 10, componentPartId: 3, qtyMilli: 1000, position: 3, notes: "" },
-				{ id: 110, bomId: 11, componentPartId: 4, qtyMilli: 1500, position: 1, notes: "" },
+				{ id: 100, assemblyId: 10, componentPartId: 2, qtyMilli: 2000, position: 1, notes: "" },
+				{ id: 101, assemblyId: 10, componentPartId: 2, qtyMilli: 1000, position: 2, notes: "" },
+				{ id: 102, assemblyId: 10, componentPartId: 3, qtyMilli: 1000, position: 3, notes: "" },
+				{ id: 110, assemblyId: 11, componentPartId: 4, qtyMilli: 1500, position: 1, notes: "" },
 			],
 		);
 		const e = explode(g, 10, 1000, { stock: new Map([[2, 2500]]) });
@@ -132,13 +132,13 @@ describe("explosion edge cases", () => {
 			[2000, 0],
 			[500, 500],
 		]);
-		expect(req(e)).toEqual({ NOBOM: 1000, SCREW: 750, SUB: 2500 });
-		expect(e.requirements.find((r) => r.part.ref === "NOBOM")?.missingBom).toBe(true);
+		expect(req(e)).toEqual({ NOASSEMBLY: 1000, SCREW: 750, SUB: 2500 });
+		expect(e.requirements.find((r) => r.part.ref === "NOASSEMBLY")?.missingAssembly).toBe(true);
 		// Fractional quantities round up, never down.
 		expect(req(explode(g, 11, 1))).toEqual({ SCREW: 2 });
 	});
 
-	it("picks the std variant, else the only active BoM, for sub-levels", () => {
+	it("picks the std variant, else the only active assembly, for sub-levels", () => {
 		const g = buildGraph(
 			[part(1, "A", "make")],
 			[
@@ -148,9 +148,9 @@ describe("explosion edge cases", () => {
 			],
 			[],
 		);
-		expect(defaultBom(g, 1)?.id).toBe(6);
-		g.boms.get(6)!.status = "archived";
-		expect(defaultBom(g, 1)?.id).toBe(5);
+		expect(defaultAssembly(g, 1)?.id).toBe(6);
+		g.assemblies.get(6)!.status = "archived";
+		expect(defaultAssembly(g, 1)?.id).toBe(5);
 	});
 
 	it("refuses to walk a cycle", () => {
@@ -161,13 +161,13 @@ describe("explosion edge cases", () => {
 				{ id: 2, parentPartId: 2, code: "std", revision: "R1", status: "active" },
 			],
 			[
-				{ id: 1, bomId: 1, componentPartId: 2, qtyMilli: 1000, position: 1, notes: "" },
-				{ id: 2, bomId: 2, componentPartId: 1, qtyMilli: 1000, position: 1, notes: "" },
+				{ id: 1, assemblyId: 1, componentPartId: 2, qtyMilli: 1000, position: 1, notes: "" },
+				{ id: 2, assemblyId: 2, componentPartId: 1, qtyMilli: 1000, position: 1, notes: "" },
 			],
 		);
-		expect(() => explode(g, 1, 1000)).toThrow(BomCycleError);
+		expect(() => explode(g, 1, 1000)).toThrow(AssemblyCycleError);
 		expect(findCycle(g)).toEqual(["A", "B", "A"]);
-		g.boms.get(2)!.status = "archived";
+		g.assemblies.get(2)!.status = "archived";
 		expect(findCycle(g)).toBeNull();
 	});
 });
@@ -180,7 +180,7 @@ describe("cost roll-up", () => {
 		const arm = calc.part(await partId("ARM-ASSY"));
 		expect(arm).toEqual({ millicents: 453_750, incomplete: false, missing: [] }); // €4.5375
 		expect(centsOf(arm.millicents)).toBe(454);
-		const lamp = calc.bom(await bomId("LAMP-DESK"));
+		const lamp = calc.assembly(await assemblyId("LAMP-DESK"));
 		expect(centsOf(lamp.millicents)).toBe(3783); // €37.83 without the manual
 		// Head kit cost rolls up through its nested fixing kit: 4.20 + 1.90 + 0.85 + 3 x 0.02 + 3 x 0.01
 		expect(centsOf(calc.part(await partId("HEAD-KIT-CW")).millicents)).toBe(704);
@@ -188,13 +188,13 @@ describe("cost roll-up", () => {
 		expect(lamp.missing).toEqual([await partId("MANUAL")]);
 	});
 
-	it("uses the standard cost of make parts without BoM and of buy/fee parts", () => {
+	it("uses the standard cost of make parts without assembly and of buy/fee parts", () => {
 		const g = buildGraph(
 			[part(1, "TOP", "kit"), part(2, "SUB", "make", 250), part(3, "FEE", "fee", 25), part(4, "NOCOST", "make", null)],
 			[{ id: 1, parentPartId: 1, code: "std", revision: "R1", status: "active" }],
 			[
-				{ id: 1, bomId: 1, componentPartId: 2, qtyMilli: 2000, position: 1, notes: "" },
-				{ id: 2, bomId: 1, componentPartId: 3, qtyMilli: 1000, position: 2, notes: "" },
+				{ id: 1, assemblyId: 1, componentPartId: 2, qtyMilli: 2000, position: 1, notes: "" },
+				{ id: 2, assemblyId: 1, componentPartId: 3, qtyMilli: 1000, position: 2, notes: "" },
 			],
 		);
 		const calc = new CostCalculator(g);
@@ -204,7 +204,7 @@ describe("cost roll-up", () => {
 });
 
 describe("where-used and cycle check (recursive CTEs)", () => {
-	it("lists direct and indirect uses, ignoring archived BoMs", async () => {
+	it("lists direct and indirect uses, ignoring archived assemblies", async () => {
 		await loadDemo();
 		const rows = await whereUsed(testDb(), await partId("SCREW-M3X8"));
 		const direct = rows.filter((r) => r.depth === 1).map((r) => r.parentRef);
@@ -222,7 +222,7 @@ describe("where-used and cycle check (recursive CTEs)", () => {
 		expect(deepest.sort()).toEqual(["LAMP-DESK/std via HEAD-KIT-CW", "LAMP-DESK/warm via HEAD-KIT-WW"]);
 	});
 
-	it("detects cycles through draft and active BoMs", async () => {
+	it("detects cycles through draft and active assemblies", async () => {
 		await loadDemo();
 		const db = testDb();
 		const lamp = await partId("LAMP-DESK");

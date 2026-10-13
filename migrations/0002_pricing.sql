@@ -24,7 +24,7 @@ CREATE TABLE `price_history` (
 	`part_id` integer NOT NULL,
 	`kind` text NOT NULL,
 	`supplier_id` integer,
-	`bom_id` integer,
+	`assembly_id` integer,
 	`price_cents` integer,
 	`valid_from` text NOT NULL,
 	`source` text NOT NULL,
@@ -35,14 +35,14 @@ CREATE TABLE `price_history` (
 	`updated_by` text NOT NULL,
 	FOREIGN KEY (`part_id`) REFERENCES `parts`(`id`) ON UPDATE no action ON DELETE cascade,
 	FOREIGN KEY (`supplier_id`) REFERENCES `suppliers`(`id`) ON UPDATE no action ON DELETE no action,
-	FOREIGN KEY (`bom_id`) REFERENCES `boms`(`id`) ON UPDATE no action ON DELETE cascade,
+	FOREIGN KEY (`assembly_id`) REFERENCES `assemblies`(`id`) ON UPDATE no action ON DELETE cascade,
 	CONSTRAINT "price_history_kind_check" CHECK(kind IN ('standard', 'purchase', 'sale')),
 	CONSTRAINT "price_history_source_check" CHECK(source IN ('form', 'import', 'po', 'migration')),
 	CONSTRAINT "price_history_price_check" CHECK("price_history"."price_cents" IS NULL OR "price_history"."price_cents" >= 0)
 );
 --> statement-breakpoint
 CREATE INDEX `price_history_part_idx` ON `price_history` (`part_id`,`kind`,`valid_from`);--> statement-breakpoint
-ALTER TABLE `boms` ADD `sale_price_cents` integer;--> statement-breakpoint
+ALTER TABLE `assemblies` ADD `sale_price_cents` integer;--> statement-breakpoint
 ALTER TABLE `parts` ADD `sale_price_cents` integer;--> statement-breakpoint
 -- Data moves (hand-written): the preferred supplier's terms become its offer. The offer price starts
 -- unknown, so draft POs keep using the standard cost until a supplier price is entered (D90).

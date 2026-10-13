@@ -2,8 +2,8 @@ import { asc, desc, eq } from "drizzle-orm";
 import type { Context } from "hono";
 import { Hono } from "hono";
 import { PART_KINDS, type Part, type PartKind, parts, stockMoves, suppliers } from "../db/schema";
-import { type Cost, centsOf } from "../domain/bom-graph";
-import { partBomSummary, type WhereUsedRow, whereUsed } from "../domain/boms";
+import { partAssemblySummary, type WhereUsedRow, whereUsed } from "../domain/assemblies";
+import { type Cost, centsOf } from "../domain/assembly-graph";
 import { listBuilds } from "../domain/builds";
 import { type AverageCost, averageUnitCents } from "../domain/costing";
 import { imagesBucket, imageUrl } from "../domain/images";
@@ -41,7 +41,7 @@ import { formatMoney, formatPercent, lineCostCents } from "../lib/units";
 import { validate } from "../lib/validation";
 import { requirePermission } from "../middleware/roles";
 import type { AppEnv } from "../types";
-import { CostView, StatusBadge } from "../views/bom";
+import { CostView, StatusBadge } from "../views/assembly";
 import { StepChart } from "../views/chart";
 import { useApp } from "../views/context";
 import { RecordTabs } from "../views/history";
@@ -403,7 +403,7 @@ function PartDetail(props: {
 	today: string;
 	onHand: number;
 	moves: (typeof stockMoves.$inferSelect)[];
-	bomSummary: Awaited<ReturnType<typeof partBomSummary>>;
+	assemblySummary: Awaited<ReturnType<typeof partAssemblySummary>>;
 	usedIn: WhereUsedRow[];
 	builds: Awaited<ReturnType<typeof listBuilds>>;
 	imagesEnabled: boolean;
@@ -417,7 +417,7 @@ function PartDetail(props: {
 	const canDelete = can(view, "parts.delete");
 	const p = props.part;
 	const stocked = isStocked(p.kind);
-	const { rollup, refs } = props.bomSummary;
+	const { rollup, refs } = props.assemblySummary;
 	return (
 		<>
 			<PageHeader
@@ -567,7 +567,7 @@ function PartDetail(props: {
 				{stocked || props.offers.length > 0 ? (
 					<OffersCard part={p} offers={props.offers} lastPaid={props.lastPaid} />
 				) : null}
-				{p.kind === "make" || p.kind === "kit" ? <PartBoms part={p} summary={props.bomSummary} /> : null}
+				{p.kind === "make" || p.kind === "kit" ? <PartAssemblies part={p} summary={props.assemblySummary} /> : null}
 				{p.kind === "make" ? (
 					<Card>
 						<CardHeader>
@@ -679,8 +679,8 @@ function ImageCard(props: { part: Part; enabled: boolean }) {
 }
 
 /**
- * Standard cost, weighted average, selling price and planned margin (D93: on the BoM roll-up for a part
- * with a BoM, else on the standard cost), with shortcuts that copy a known price into the standard cost.
+ * Standard cost, weighted average, selling price and planned margin (D93: on the assembly roll-up for a part
+ * with an assembly, else on the standard cost), with shortcuts that copy a known price into the standard cost.
  */
 function PricesCard(props: {
 	part: Part;
@@ -709,7 +709,7 @@ function PricesCard(props: {
 							<span class="inline-flex flex-wrap items-baseline gap-x-2">
 								{props.rollup ? <CostView cost={props.rollup} refs={props.refs} /> : <Money cents={p.costCents} />}
 								<span class="text-xs text-muted-foreground">
-									{props.rollup ? t.parts.fromBom : t.parts.fromStandard}
+									{props.rollup ? t.parts.fromAssembly : t.parts.fromStandard}
 								</span>
 							</span>
 						),
@@ -1048,8 +1048,8 @@ function PriceHistoryCard(props: { part: Part; history: HistoryRow[]; paid: Paid
 											<TableCell>
 												{h.supplierId !== null ? (
 													<a href={`/suppliers/${h.supplierId}`}>{h.supplierName ?? h.supplierId}</a>
-												) : h.bomId !== null ? (
-													<a href={`/boms/${h.bomId}`}>{h.bomCode ?? h.bomId}</a>
+												) : h.assemblyId !== null ? (
+													<a href={`/assemblies/${h.assemblyId}`}>{h.assemblyCode ?? h.assemblyId}</a>
 												) : (
 													<span class="text-muted-foreground">{t.common.none}</span>
 												)}
@@ -1115,54 +1115,54 @@ function PriceHistoryCard(props: { part: Part; history: HistoryRow[]; paid: Paid
 	);
 }
 
-function PartBoms(props: { part: Part; summary: Awaited<ReturnType<typeof partBomSummary>> }) {
+function PartAssemblies(props: { part: Part; summary: Awaited<ReturnType<typeof partAssemblySummary>> }) {
 	const view = useApp();
 	const { t, seeCosts } = view;
 	const { summary } = props;
-	const only = summary.boms.length === 1 ? summary.boms[0] : undefined;
+	const only = summary.assemblies.length === 1 ? summary.assemblies[0] : undefined;
 	return (
 		<Card>
 			<CardHeader>
-				<CardTitle>{t.parts.boms}</CardTitle>
+				<CardTitle>{t.parts.assemblies}</CardTitle>
 				{seeCosts && summary.rollup ? (
 					<CardDescription>
-						{t.boms.totalCost}: <CostView cost={summary.rollup} refs={summary.refs} long />
+						{t.assemblies.totalCost}: <CostView cost={summary.rollup} refs={summary.refs} long />
 					</CardDescription>
 				) : null}
 				<CardAction>
 					{only ? (
-						<Button href={`/boms/${only.id}/diagram`} variant="outline" size="sm" icon={icons.diagram}>
+						<Button href={`/assemblies/${only.id}/diagram`} variant="outline" size="sm" icon={icons.diagram}>
 							{t.parts.openDiagram}
 						</Button>
 					) : null}
-					{can(view, "boms.edit") ? (
-						<Button href={`/boms/new?part=${props.part.id}`} variant="outline" size="sm" icon={icons.plus}>
-							{t.boms.new}
+					{can(view, "assemblies.edit") ? (
+						<Button href={`/assemblies/new?part=${props.part.id}`} variant="outline" size="sm" icon={icons.plus}>
+							{t.assemblies.new}
 						</Button>
 					) : null}
 				</CardAction>
 			</CardHeader>
 			<CardContent class="px-2">
-				{summary.boms.length === 0 ? (
-					<CardEmpty icon={icons.listTree}>{t.boms.noBoms}</CardEmpty>
+				{summary.assemblies.length === 0 ? (
+					<CardEmpty icon={icons.listTree}>{t.assemblies.noAssemblies}</CardEmpty>
 				) : (
 					<Table>
 						<TableHeader>
 							<TableRow>
-								<TableHead>{t.boms.code}</TableHead>
-								<TableHead>{t.boms.revision}</TableHead>
-								<TableHead>{t.boms.status}</TableHead>
-								{seeCosts ? <TableHead class="text-right">{t.boms.totalCost}</TableHead> : null}
+								<TableHead>{t.assemblies.code}</TableHead>
+								<TableHead>{t.assemblies.revision}</TableHead>
+								<TableHead>{t.assemblies.status}</TableHead>
+								{seeCosts ? <TableHead class="text-right">{t.assemblies.totalCost}</TableHead> : null}
 								<TableHead class="w-px">
 									<span class="sr-only">{t.common.actions}</span>
 								</TableHead>
 							</TableRow>
 						</TableHeader>
 						<TableBody>
-							{summary.boms.map((b) => (
+							{summary.assemblies.map((b) => (
 								<TableRow>
 									<TableCell class="font-medium">
-										<a href={`/boms/${b.id}`}>{b.code}</a>
+										<a href={`/assemblies/${b.id}`}>{b.code}</a>
 									</TableCell>
 									<TableCell>{b.revision}</TableCell>
 									<TableCell>
@@ -1175,7 +1175,7 @@ function PartBoms(props: { part: Part; summary: Awaited<ReturnType<typeof partBo
 									) : null}
 									<TableCell class="py-1 text-right">
 										<Button
-											href={`/boms/${b.id}/diagram`}
+											href={`/assemblies/${b.id}/diagram`}
 											variant="ghost"
 											size="icon-sm"
 											icon={icons.diagram}
@@ -1210,12 +1210,12 @@ function WhereUsed(props: { rows: WhereUsedRow[] }) {
 					<Table>
 						<TableHeader>
 							<TableRow>
-								<TableHead>{t.boms.parent}</TableHead>
-								<TableHead>{t.boms.code}</TableHead>
-								<TableHead>{t.boms.revision}</TableHead>
-								<TableHead>{t.boms.status}</TableHead>
-								<TableHead>{t.boms.level}</TableHead>
-								<TableHead class="text-right">{t.boms.qty}</TableHead>
+								<TableHead>{t.assemblies.parent}</TableHead>
+								<TableHead>{t.assemblies.code}</TableHead>
+								<TableHead>{t.assemblies.revision}</TableHead>
+								<TableHead>{t.assemblies.status}</TableHead>
+								<TableHead>{t.assemblies.level}</TableHead>
+								<TableHead class="text-right">{t.assemblies.qty}</TableHead>
 							</TableRow>
 						</TableHeader>
 						<TableBody>
@@ -1223,7 +1223,7 @@ function WhereUsed(props: { rows: WhereUsedRow[] }) {
 								<TableRow>
 									<TableCell>
 										<span class="font-medium">
-											<a href={`/boms/${r.bomId}`}>{r.parentRef}</a>
+											<a href={`/assemblies/${r.assemblyId}`}>{r.parentRef}</a>
 										</span>{" "}
 										<span class="text-muted-foreground">{r.parentName}</span>
 									</TableCell>
@@ -1234,9 +1234,9 @@ function WhereUsed(props: { rows: WhereUsedRow[] }) {
 									</TableCell>
 									<TableCell>
 										{r.depth === 1 ? (
-											<Badge variant="secondary">{t.boms.direct}</Badge>
+											<Badge variant="secondary">{t.assemblies.direct}</Badge>
 										) : (
-											<Badge variant="outline">{fmt(t.boms.via, { ref: r.viaRef })}</Badge>
+											<Badge variant="outline">{fmt(t.assemblies.via, { ref: r.viaRef })}</Badge>
 										)}
 									</TableCell>
 									<TableCell class="text-right">{r.depth === 1 ? <Qty milli={r.qtyMilli} /> : null}</TableCell>
@@ -1290,7 +1290,7 @@ partRoutes.get("/:id", async (c) => {
 	const part = id ? await getPart(c.var.db, id) : undefined;
 	if (!part) return notFound(c);
 	const db = c.var.db;
-	const [supplierRows, onHand, moves, bomSummary, usedIn, recent, offers, lastPaid, average, history, paid] =
+	const [supplierRows, onHand, moves, assemblySummary, usedIn, recent, offers, lastPaid, average, history, paid] =
 		await Promise.all([
 			part.supplierId
 				? db
@@ -1305,7 +1305,7 @@ partRoutes.get("/:id", async (c) => {
 				.where(eq(stockMoves.partId, part.id))
 				.orderBy(desc(stockMoves.at), desc(stockMoves.id))
 				.limit(100),
-			partBomSummary(db, part.id),
+			partAssemblySummary(db, part.id),
 			whereUsed(db, part.id),
 			part.kind === "make" ? listBuilds(db, { status: "all", partId: part.id, limit: 10 }) : Promise.resolve([]),
 			partOffers(db, part.id),
@@ -1328,7 +1328,7 @@ partRoutes.get("/:id", async (c) => {
 			today={nowIso().slice(0, 10)}
 			onHand={onHand}
 			moves={moves}
-			bomSummary={bomSummary}
+			assemblySummary={assemblySummary}
 			usedIn={usedIn}
 			builds={recent}
 			imagesEnabled={imagesBucket(c.env) !== null}

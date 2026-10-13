@@ -128,11 +128,11 @@ describe("on-hand list and ledger", () => {
 });
 
 describe("valuation", () => {
-	it("values buy parts at standard cost and make parts at the BoM roll-up", async () => {
+	it("values buy parts at standard cost and make parts at the assembly roll-up", async () => {
 		await loadDemo();
 		const html = await (await request("/stock/valuation")).text();
 		// 2 arms x €4.5375 (roll-up) = €9.075 -> €9.08
-		expect(html).toMatch(/ARM-ASSY<\/a>.*?BoM roll-up.*?€4\.54.*?€9\.08/s);
+		expect(html).toMatch(/ARM-ASSY<\/a>.*?assembly roll-up.*?€4\.54.*?€9\.08/s);
 		expect(html).toContain("Some parts have no cost"); // MANUAL
 		const csv = await (await request("/stock/valuation?format=csv")).text();
 		expect(csv).toContain("ARM-ASSY,Arm sub-assembly,make,pcs,2,4.54,rollup,9.08,");
@@ -182,7 +182,7 @@ describe("JSON backup and restore", () => {
 		expect(await one("SELECT name FROM parts WHERE id = ?", await partId("LAMP-DESK"))).toEqual({
 			name: "Modular desk lamp",
 		});
-		expect(await one("SELECT count(*) AS n FROM bom_lines")).toEqual({ n: 39 });
+		expect(await one("SELECT count(*) AS n FROM assembly_lines")).toEqual({ n: 39 });
 	});
 
 	it("rejects foreign files, unknown columns and other schema versions; admin only", async () => {

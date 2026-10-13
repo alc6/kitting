@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import type { Context } from "hono";
 import { Hono } from "hono";
 import { MOVE_REASONS, parts } from "../db/schema";
-import { centsOf } from "../domain/bom-graph";
+import { centsOf } from "../domain/assembly-graph";
 import { getPart, listParts, partOptions } from "../domain/parts";
 import { can } from "../domain/permissions";
 import {
@@ -660,7 +660,7 @@ stockRoutes.get("/valuation", requirePermission("costs.view"), async (c) => {
 					<input type="date" name="at" value={at ?? ""} class="w-auto" />
 				</label>
 				<Button variant="outline" icon={icons.calendar}>
-					{t.boms.update}
+					{t.assemblies.update}
 				</Button>
 				<span class="text-sm text-muted-foreground">{t.stock.asOfHint}</span>
 			</form>

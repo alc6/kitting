@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { computeShortages } from "../src/domain/purchasing";
 import {
-	bomId,
+	assemblyId,
 	insertPart,
 	insertSupplier,
 	loadDemo,
@@ -22,7 +22,7 @@ async function planLamps(n: number) {
 	for (let i = 1; i <= n; i++) {
 		const res = await postForm("/builds", {
 			part_id: String(await partId("LAMP-DESK")),
-			bom_id: String(await bomId("LAMP-DESK")),
+			assembly_id: String(await assemblyId("LAMP-DESK")),
 			qty: "1",
 			serial: `L-${i}`,
 			planned_for: "",

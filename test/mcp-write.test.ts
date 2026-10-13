@@ -7,7 +7,7 @@ import { MCP_SCOPES } from "../src/domain/mcp-scopes";
 import { type Access, PERMISSIONS } from "../src/domain/permissions";
 import { revertChangeSet } from "../src/domain/revert";
 import { TOOL_BY_NAME, TOOLS } from "../src/mcp/tools";
-import { bomId, loadDemo, NOT_ADMIN, one, partId, postForm, rows, setRole, TESTER, testDb } from "./helpers";
+import { assemblyId, loadDemo, NOT_ADMIN, one, partId, postForm, rows, setRole, TESTER, testDb } from "./helpers";
 import { callTool, connect, mcpPost, resetKv, rpc } from "./mcp-helpers";
 
 const ADMIN: Access = { role: "admin", seeCosts: true };
@@ -56,7 +56,7 @@ async function seed() {
 	await loadDemo();
 	const planned = await postForm("/builds", {
 		part_id: String(await partId("ARM-ASSY")),
-		bom_id: String(await bomId("ARM-ASSY")),
+		assembly_id: String(await assemblyId("ARM-ASSY")),
 		qty: "1",
 		serial: "",
 		planned_for: "",
@@ -83,7 +83,7 @@ type Seed = Awaited<ReturnType<typeof seed>>;
 async function planViaForm(ref: string, qty: string) {
 	const res = await postForm("/builds", {
 		part_id: String(await partId(ref)),
-		bom_id: String(await bomId(ref)),
+		assembly_id: String(await assemblyId(ref)),
 		qty,
 		serial: "",
 		planned_for: "",
@@ -138,23 +138,23 @@ const CASES: WriteCase[] = [
 		args: () => ({ name: "kraft box packaging", phone: "+1 555 0199" }),
 	},
 	{
-		tool: "create_bom",
+		tool: "create_assembly",
 		scope: "catalog:write",
 		min: "planner",
-		args: () => ({ part: "ARM-ASSY", code: "long", copy_from: { bom: "ARM-ASSY" } }),
+		args: () => ({ part: "ARM-ASSY", code: "long", copy_from: { assembly: "ARM-ASSY" } }),
 	},
 	{
-		tool: "set_bom_lines",
+		tool: "set_assembly_lines",
 		scope: "catalog:write",
 		min: "planner",
-		args: () => ({ bom: "ARM-ASSY", lines: [{ ref: "ARM-TUBE-300", qty: "2" }] }),
+		args: () => ({ assembly: "ARM-ASSY", lines: [{ ref: "ARM-TUBE-300", qty: "2" }] }),
 	},
-	{ tool: "new_bom_revision", scope: "catalog:write", min: "planner", args: () => ({ bom: "LAMP-DESK" }) },
+	{ tool: "new_assembly_revision", scope: "catalog:write", min: "planner", args: () => ({ assembly: "LAMP-DESK" }) },
 	{
-		tool: "activate_bom",
+		tool: "activate_assembly",
 		scope: "catalog:write",
 		min: "planner",
-		args: () => ({ bom: "LAMP-DESK", revision: "Rev1" }),
+		args: () => ({ assembly: "LAMP-DESK", revision: "Rev1" }),
 	},
 	{
 		tool: "set_standard_cost",
@@ -177,7 +177,12 @@ const CASES: WriteCase[] = [
 		args: () => ({ ref: "PAD-FELT" }),
 		prepare: async () => postForm(`/parts/${await partId("PAD-FELT")}/archive`, {}),
 	},
-	{ tool: "archive_bom", scope: "catalog:archive", min: "admin", args: () => ({ bom: "LAMP-DESK", code: "warm" }) },
+	{
+		tool: "archive_assembly",
+		scope: "catalog:archive",
+		min: "admin",
+		args: () => ({ assembly: "LAMP-DESK", code: "warm" }),
+	},
 	{
 		tool: "adjust_stock",
 		scope: "stock:write",
@@ -264,7 +269,7 @@ describe("every write tool", () => {
 		);
 		for (const e of entries) {
 			if (e.op === "delete")
-				expect(["bom_lines", "po_lines"], `${c.tool} deletes ${e.table_name}`).toContain(e.table_name);
+				expect(["assembly_lines", "po_lines"], `${c.tool} deletes ${e.table_name}`).toContain(e.table_name);
 			expect(["users", "settings"]).not.toContain(e.table_name);
 			if (e.table_name === "parts" && e.old_row && e.new_row)
 				expect(JSON.parse(e.new_row).image_key).toBe(JSON.parse(e.old_row).image_key);
@@ -348,8 +353,8 @@ describe("catalog tools", () => {
 
 		const toKit = await callTool(token, "update_part", { ref: "BOX-LAMP-L", kind: "kit" });
 		expect(toKit.text).toContain("kind: This part has stock moves");
-		const noBoms = await callTool(token, "update_part", { ref: "ARM-ASSY", kind: "buy" });
-		expect(noBoms.text).toContain("This part has BoMs");
+		const noAssemblies = await callTool(token, "update_part", { ref: "ARM-ASSY", kind: "buy" });
+		expect(noAssemblies.text).toContain("This part has assemblies");
 	});
 
 	it("creates and edits suppliers, refusing duplicate names", async () => {
@@ -367,30 +372,38 @@ describe("catalog tools", () => {
 		expect(missing.text).toContain('No supplier named "Nobody"');
 	});
 
-	it("creates draft BoMs, copied or empty, with the form's checks", async () => {
+	it("creates draft assemblies, copied or empty, with the form's checks", async () => {
 		await loadDemo();
 		const token = await connect(["catalog:write"]);
-		const copied = await write(token, "create_bom", { part: "ARM-ASSY", code: "long", copy_from: { bom: "ARM-ASSY" } });
-		expect(copied.data.bom).toMatchObject({ part: "ARM-ASSY", code: "long", revision: "Rev1", status: "draft" });
+		const copied = await write(token, "create_assembly", {
+			part: "ARM-ASSY",
+			code: "long",
+			copy_from: { assembly: "ARM-ASSY" },
+		});
+		expect(copied.data.assembly).toMatchObject({ part: "ARM-ASSY", code: "long", revision: "Rev1", status: "draft" });
 		expect((copied.data.lines as unknown[]).length).toBe(5);
-		const dup = await callTool(token, "create_bom", { part: "ARM-ASSY", code: "long" });
-		expect(dup.text).toContain("revision: This part already has a BoM with this variant code and revision.");
-		const buy = await callTool(token, "create_bom", { part: "PAD-FELT" });
-		expect(buy.text).toContain("part: Only make and kit parts can have a BoM.");
+		const dup = await callTool(token, "create_assembly", { part: "ARM-ASSY", code: "long" });
+		expect(dup.text).toContain("revision: This part already has an assembly with this variant code and revision.");
+		const buy = await callTool(token, "create_assembly", { part: "PAD-FELT" });
+		expect(buy.text).toContain("part: Only make and kit parts can have an assembly.");
 		// ARM-ASSY's lines under BASE-ASSY are fine; LAMP-DESK's (which contain ARM-ASSY) under ARM-ASSY are a cycle.
-		const cycle = await callTool(token, "create_bom", { part: "ARM-ASSY", code: "x", copy_from: { bom: "LAMP-DESK" } });
+		const cycle = await callTool(token, "create_assembly", {
+			part: "ARM-ASSY",
+			code: "x",
+			copy_from: { assembly: "LAMP-DESK" },
+		});
 		expect(cycle.text).toContain("copy_from: This would create a cycle");
 	});
 
-	it("never edits an active BoM in place: set_bom_lines creates a draft revision, activate_bom switches", async () => {
+	it("never edits an active assembly in place: set_assembly_lines creates a draft revision, activate_assembly switches", async () => {
 		await loadDemo();
 		const token = await connect(["catalog:read", "catalog:write"]);
-		const active = await bomId("LAMP-DESK");
-		const linesBefore = await rows("SELECT * FROM bom_lines WHERE bom_id = ? ORDER BY id", active);
-		const bomBefore = await one("SELECT * FROM boms WHERE id = ?", active);
+		const active = await assemblyId("LAMP-DESK");
+		const linesBefore = await rows("SELECT * FROM assembly_lines WHERE assembly_id = ? ORDER BY id", active);
+		const assemblyBefore = await one("SELECT * FROM assemblies WHERE id = ?", active);
 
-		const r = await write(token, "set_bom_lines", {
-			bom: "LAMP-DESK",
+		const r = await write(token, "set_assembly_lines", {
+			assembly: "LAMP-DESK",
 			lines: [
 				{ ref: "BASE-ASSY", qty: 1 },
 				{ ref: "ARM-ASSY", qty: "2" },
@@ -399,8 +412,8 @@ describe("catalog tools", () => {
 			],
 		});
 		expect(r.data.new_revision).toBe(true);
-		expect(r.data.bom).toMatchObject({ part: "LAMP-DESK", code: "std", revision: "Rev3", status: "draft" });
-		expect(r.data.active_bom).toMatchObject({ revision: "Rev2", status: "active" });
+		expect(r.data.assembly).toMatchObject({ part: "LAMP-DESK", code: "std", revision: "Rev3", status: "draft" });
+		expect(r.data.active_assembly).toMatchObject({ revision: "Rev2", status: "active" });
 		expect(String(r.data.note)).toContain("Rev2 is active and was left unchanged");
 		expect(r.data.lines).toEqual([
 			{ ref: "BASE-ASSY", qty: "1" },
@@ -408,39 +421,44 @@ describe("catalog tools", () => {
 			{ ref: "HEAD-KIT-WW", qty: "1", notes: "warm by default" },
 			{ ref: "PSU-EU-12V", qty: "1" },
 		]);
-		// The active BoM is untouched, row for row.
-		expect(await rows("SELECT * FROM bom_lines WHERE bom_id = ? ORDER BY id", active)).toEqual(linesBefore);
-		expect(await one("SELECT * FROM boms WHERE id = ?", active)).toEqual(bomBefore);
+		// The active assembly is untouched, row for row.
+		expect(await rows("SELECT * FROM assembly_lines WHERE assembly_id = ? ORDER BY id", active)).toEqual(linesBefore);
+		expect(await one("SELECT * FROM assemblies WHERE id = ?", active)).toEqual(assemblyBefore);
 		const summary = await one<{ summary: string }>("SELECT summary FROM change_sets ORDER BY id DESC LIMIT 1");
-		expect(summary.summary).toBe("Create BoM LAMP-DESK std Rev3 from Rev2 with new lines");
+		expect(summary.summary).toBe("Create assembly LAMP-DESK std Rev3 from Rev2 with new lines");
 
 		// On the draft, the lines are replaced in place (no other revision).
-		const draft = r.data.bom as { bom_id: number };
-		const again = await write(token, "set_bom_lines", { bom: draft.bom_id, lines: [{ ref: "BASE-ASSY", qty: "1" }] });
-		expect(again.data).toMatchObject({ new_revision: false, bom: { revision: "Rev3" } });
+		const draft = r.data.assembly as { assembly_id: number };
+		const again = await write(token, "set_assembly_lines", {
+			assembly: draft.assembly_id,
+			lines: [{ ref: "BASE-ASSY", qty: "1" }],
+		});
+		expect(again.data).toMatchObject({ new_revision: false, assembly: { revision: "Rev3" } });
 		expect(again.data.lines).toEqual([{ ref: "BASE-ASSY", qty: "1" }]);
 
 		// Activating archives Rev2, which can be activated again.
-		const on = await write(token, "activate_bom", { bom: "LAMP-DESK", revision: "Rev3" });
-		expect(on.data.bom).toMatchObject({ revision: "Rev3", status: "active" });
+		const on = await write(token, "activate_assembly", { assembly: "LAMP-DESK", revision: "Rev3" });
+		expect(on.data.assembly).toMatchObject({ revision: "Rev3", status: "active" });
 		expect(on.data.archived).toEqual([expect.objectContaining({ revision: "Rev2", status: "archived" })]);
-		expect((await one<{ status: string }>("SELECT status FROM boms WHERE id = ?", active)).status).toBe("archived");
-		const read = await callTool(token, "get_bom", { bom: "LAMP-DESK" });
-		expect(read.data.bom).toMatchObject({ revision: "Rev3" });
-		const back = await write(token, "activate_bom", { bom: active });
+		expect((await one<{ status: string }>("SELECT status FROM assemblies WHERE id = ?", active)).status).toBe(
+			"archived",
+		);
+		const read = await callTool(token, "get_assembly", { assembly: "LAMP-DESK" });
+		expect(read.data.assembly).toMatchObject({ revision: "Rev3" });
+		const back = await write(token, "activate_assembly", { assembly: active });
 		expect(back.data.archived).toEqual([expect.objectContaining({ revision: "Rev3" })]);
-		const noop = await write(token, "activate_bom", { bom: active });
+		const noop = await write(token, "activate_assembly", { assembly: active });
 		expect(noop.data).toMatchObject({ change_set_id: null, note: "LAMP-DESK std Rev2 is already active." });
 	});
 
 	it("checks every line like the editor and changes nothing when one is refused", async () => {
 		await loadDemo();
 		const token = await connect(["catalog:write"]);
-		const draft = await write(token, "create_bom", { part: "BASE-ASSY", code: "alt" });
-		const id = (draft.data.bom as { bom_id: number }).bom_id;
+		const draft = await write(token, "create_assembly", { part: "BASE-ASSY", code: "alt" });
+		const id = (draft.data.assembly as { assembly_id: number }).assembly_id;
 		const after = await lastChangeSetId();
-		const bad = await callTool(token, "set_bom_lines", {
-			bom: id,
+		const bad = await callTool(token, "set_assembly_lines", {
+			assembly: id,
 			lines: [
 				{ ref: "BASE-PLATE", qty: "1" },
 				{ ref: "NOPE", qty: "1" },
@@ -455,13 +473,16 @@ describe("catalog tools", () => {
 		expect(bad.text).toContain("line 4 (LAMP-DESK) component: This would create a cycle");
 		expect(bad.text).toContain("line 5 (PAD-FELT) qty: Must be more than zero.");
 		expect(await lastChangeSetId()).toBe(after);
-		expect(await rows("SELECT id FROM bom_lines WHERE bom_id = ?", id)).toEqual([]);
+		expect(await rows("SELECT id FROM assembly_lines WHERE assembly_id = ?", id)).toEqual([]);
 
-		await postForm(`/boms/${id}/archive`, {});
-		const archived = await callTool(token, "set_bom_lines", { bom: id, lines: [{ ref: "BASE-PLATE", qty: "1" }] });
+		await postForm(`/assemblies/${id}/archive`, {});
+		const archived = await callTool(token, "set_assembly_lines", {
+			assembly: id,
+			lines: [{ ref: "BASE-PLATE", qty: "1" }],
+		});
 		expect(archived.text).toContain("is archived");
-		const revision = await write(token, "new_bom_revision", { bom: id });
-		expect(revision.data.bom).toMatchObject({ code: "alt", revision: "Rev2", status: "draft" });
+		const revision = await write(token, "new_assembly_revision", { assembly: id });
+		expect(revision.data.assembly).toMatchObject({ code: "alt", revision: "Rev2", status: "draft" });
 		expect(revision.data.from).toMatchObject({ revision: "Rev1", status: "archived" });
 	});
 });
@@ -469,11 +490,11 @@ describe("catalog tools", () => {
 // ---------------------------------------------------------------------------
 // prices:write
 
-type PriceRow = { kind: string; price_cents: number | null; source: string; note: string; bom_id: number | null };
+type PriceRow = { kind: string; price_cents: number | null; source: string; note: string; assembly_id: number | null };
 
 const priceRows = (ref: string) =>
 	rows<PriceRow>(
-		`SELECT kind, price_cents, source, note, bom_id FROM price_history
+		`SELECT kind, price_cents, source, note, assembly_id FROM price_history
 		 WHERE part_id = (SELECT id FROM parts WHERE ref = ?) ORDER BY id`,
 		ref,
 	);
@@ -489,7 +510,7 @@ describe("price tools", () => {
 			price_cents: 135,
 			source: "form",
 			note: "Quote 2026-10",
-			bom_id: null,
+			assembly_id: null,
 		});
 		const same = await write(token, "set_standard_cost", { ref: "BOX-LAMP", cost: 1.35 });
 		expect(same.data).toMatchObject({ change_set_id: null, revertible: false });
@@ -501,11 +522,11 @@ describe("price tools", () => {
 		const sale = await write(token, "set_sale_price", { ref: "LAMP-DESK", price: "95.00" });
 		expect(sale.data).toMatchObject({ sale_price: "95.00", previous_sale_price: "89.00" });
 		const variant = await write(token, "set_sale_price", { ref: "LAMP-DESK", code: "warm", price: "99" });
-		expect(variant.data).toMatchObject({ bom: { code: "warm", revision: "Rev1" }, sale_price: "99.00" });
+		expect(variant.data).toMatchObject({ assembly: { code: "warm", revision: "Rev1" }, sale_price: "99.00" });
 		const history = await priceRows("LAMP-DESK");
 		expect(history.slice(-2)).toEqual([
-			expect.objectContaining({ kind: "sale", price_cents: 9500, bom_id: null }),
-			expect.objectContaining({ kind: "sale", price_cents: 9900, bom_id: await bomId("LAMP-DESK", "warm") }),
+			expect.objectContaining({ kind: "sale", price_cents: 9500, assembly_id: null }),
+			expect.objectContaining({ kind: "sale", price_cents: 9900, assembly_id: await assemblyId("LAMP-DESK", "warm") }),
 		]);
 		const noCode = await callTool(token, "set_sale_price", { ref: "LAMP-DESK", revision: "Rev1", price: "1" });
 		expect(noCode.text).toContain("revision needs code");
@@ -515,7 +536,7 @@ describe("price tools", () => {
 			revision: "Rev1",
 			price: "1",
 		});
-		expect(archived.text).toContain("Archived BoMs are read-only.");
+		expect(archived.text).toContain("Archived assemblies are read-only.");
 		const summaries = await rows<{ summary: string }>(
 			"SELECT summary FROM change_sets WHERE source = 'mcp' ORDER BY id",
 		);
@@ -523,7 +544,7 @@ describe("price tools", () => {
 			"Set the standard cost of BOX-LAMP",
 			"Set the standard cost of BOX-LAMP",
 			"Set the selling price of LAMP-DESK",
-			"Set the selling price of BoM LAMP-DESK warm Rev1",
+			"Set the selling price of assembly LAMP-DESK warm Rev1",
 		]);
 	});
 
@@ -593,7 +614,7 @@ describe("price tools", () => {
 // catalog:archive
 
 describe("archive tools", () => {
-	it("archives and unarchives parts and archives BoMs, never deleting anything", async () => {
+	it("archives and unarchives parts and archives assemblies, never deleting anything", async () => {
 		await loadDemo();
 		const token = await connect(["catalog:archive"]);
 		const off = await write(token, "archive_part", { ref: "pad-felt" });
@@ -602,9 +623,9 @@ describe("archive tools", () => {
 		expect(again.data).toMatchObject({ change_set_id: null, note: "PAD-FELT is already archived." });
 		const on = await write(token, "unarchive_part", { ref: "PAD-FELT" });
 		expect(on.data.part).toMatchObject({ archived: false });
-		const bom = await write(token, "archive_bom", { bom: "LAMP-DESK", code: "warm" });
-		expect(bom.data.bom).toMatchObject({ code: "warm", status: "archived" });
-		expect(await rows("SELECT id FROM boms WHERE code = 'warm' AND status = 'active'")).toEqual([]);
+		const assembly = await write(token, "archive_assembly", { assembly: "LAMP-DESK", code: "warm" });
+		expect(assembly.data.assembly).toMatchObject({ code: "warm", status: "archived" });
+		expect(await rows("SELECT id FROM assemblies WHERE code = 'warm' AND status = 'active'")).toEqual([]);
 		const deletes = await rows(
 			"SELECT l.id FROM change_log l JOIN change_sets s ON s.id = l.change_set_id WHERE s.source = 'mcp' AND l.op = 'delete'",
 		);
@@ -706,20 +727,20 @@ describe("build tools", () => {
 			status: "planned",
 			part: "ARM-ASSY",
 			qty: "3",
-			bom: { code: "std", revision: "Rev1" },
+			assembly: { code: "std", revision: "Rev1" },
 			planned_for: "2026-11-02",
 		});
 		const noSerial = await callTool(token, "plan_build", { ref: "LAMP-DESK", qty: "2" });
 		expect(noSerial.text).toContain("qty: A serial-tracked product is built one unit at a time.");
 		expect(noSerial.text).toContain("serial: This product is serial-tracked: enter its serial number.");
 		const lamp = await write(token, "plan_build", { ref: "LAMP-DESK", code: "warm", serial: "L-0100" });
-		expect(lamp.data.build).toMatchObject({ number: "B-0002", serial: "L-0100", bom: { code: "warm" } });
+		expect(lamp.data.build).toMatchObject({ number: "B-0002", serial: "L-0100", assembly: { code: "warm" } });
 		const taken = await callTool(token, "plan_build", { ref: "LAMP-DESK", serial: "L-0100" });
 		expect(taken.text).toContain("serial: This serial number is already used for this product.");
 		const kit = await callTool(token, "plan_build", { ref: "HEAD-KIT-CW" });
 		expect(kit.text).toContain("ref: Only make parts can be built.");
 		const variant = await callTool(token, "plan_build", { ref: "ARM-ASSY", code: "nope" });
-		expect(variant.text).toContain("code: Choose an active BoM of this part.");
+		expect(variant.text).toContain("code: Choose an active assembly of this part.");
 		const date = await callTool(token, "plan_build", { ref: "ARM-ASSY", planned_for: "02/11/2026" });
 		expect(date.isError).toBe(true);
 	});
@@ -970,7 +991,8 @@ describe("purchasing tools", () => {
 		);
 		expect(r.isError, r.text).toBe(false);
 		expect(r.data.costs_hidden).toBe(true);
-		expect(r.text).not.toMatch(/unit_price|"total"|1\.00|10\.00/);
+		// Amounts are quoted strings; unquoted, "1.00" also matches timestamps such as "…:01.004Z".
+		expect(r.text).not.toMatch(/unit_price|"total"|"1\.00"|"10\.00"/);
 		const order = await rpc(
 			await mcpPost(token, "tools/call", { name: "mark_po_sent", arguments: { number: s.draftPo } }, NOT_ADMIN),
 		);

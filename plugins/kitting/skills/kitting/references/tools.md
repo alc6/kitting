@@ -5,8 +5,8 @@ scope AND the user's role allows its permission. A tool you do not see is a tool
 scope or role it needs (below) instead of working around it.
 
 Roles, lowest to highest: viewer, operator, planner, admin. Permission minimums: `builds.plan`, `builds.complete`,
-`stock.adjust`, `stock.count`, `purchasing.receive` need operator; `parts.edit`, `suppliers.edit`, `boms.edit`,
-`prices.edit`, `purchasing.order` need planner; `parts.archive`, `boms.archive` need admin. Reading is open to every
+`stock.adjust`, `stock.count`, `purchasing.receive` need operator; `parts.edit`, `suppliers.edit`, `assemblies.edit`,
+`prices.edit`, `purchasing.order` need planner; `parts.archive`, `assemblies.archive` need admin. Reading is open to every
 listed user, but costs need planner (or the cost option set on the Users page).
 
 ## Conventions
@@ -16,8 +16,8 @@ listed user, but costs need planner (or the cost option set on the Users page).
   integer suffixes dropped (`on_hand`, `unit_cost`).
 - **References and numbers are case-insensitive**: part refs (`lamp-desk`), supplier names, build numbers
   (`b-0001`), PO numbers.
-- **Selecting a BoM** (`get_bom`, `explode_bom`, `set_bom_lines`, `new_bom_revision`, `activate_bom`,
-  `archive_bom`): `bom` is a BoM id (number) or the reference of the part it builds (its active BoM), plus an
+- **Selecting an assembly** (`get_assembly`, `explode_assembly`, `set_assembly_lines`, `new_assembly_revision`, `activate_assembly`,
+  `archive_assembly`): `assembly` is an assembly id (number) or the reference of the part it builds (its active assembly), plus an
   optional `code` (variant, default `std`, else the only active one) and an optional `revision` (any status).
 - **Every write result** carries `change_set_id`, `revertible`, an `undo` sentence and, only when it can be undone,
   `history_path` and `history_url` (the page where the user clicks Undo). A call that changes nothing records
@@ -26,7 +26,7 @@ listed user, but costs need planner (or the cost option set on the Users page).
   link: they are corrected with reverse moves (`adjust_stock`), never undone.
 - **Refusals.** A rejected write says `Refused, nothing was changed.` followed by one `field: message` per problem
   (every problem at once; nothing is written). Lookups fail with `No part with reference "X". Use search_parts to
-  find it.` (same for BoMs, builds, POs, suppliers). A call the user's role forbids answers `Refused: your role
+  find it.` (same for assemblies, builds, POs, suppliers). A call the user's role forbids answers `Refused: your role
   (...) does not allow <tool>`; a scope the connection lacks answers `This connection was not granted <scope>`.
 - **Costs hidden.** When the user may not see costs, every amount is left out of the result and it says
   `costs_hidden: true`. Never guess an amount.
@@ -43,25 +43,25 @@ Find parts by reference, name or any supplier's reference. Use it before relying
 - **Example:** `search_parts({ "query": "felt" })`
 
 ### `get_part`
-One part in full: details, prices, supplier offers (preferred first), on hand, its BoMs with unit cost, and where it is used.
+One part in full: details, prices, supplier offers (preferred first), on hand, its assemblies with unit cost, and where it is used.
 - **Scope:** `catalog:read` · **Permission:** none
 - **Inputs:** `ref` (part reference).
-- **Returns:** `part` (`ref`, `name`, `kind`, `unit`, `track_serial`, `archived`, `notes`, `on_hand`, `standard_cost`, `sale_price`), `offers[]` (`supplier`, `preferred`, `supplier_ref`, `price`, `moq`, `pack_size`, `lead_days`), `boms[]` (`bom_id`, `code`, `revision`, `status`, `unit_cost`, `cost_incomplete`, `sale_price`), `rolled_up_cost`, `where_used[]` (`parent`, `bom_id`, `code`, `revision`, `status`, `depth`, `via`, `qty_per_parent`).
+- **Returns:** `part` (`ref`, `name`, `kind`, `unit`, `track_serial`, `archived`, `notes`, `on_hand`, `standard_cost`, `sale_price`), `offers[]` (`supplier`, `preferred`, `supplier_ref`, `price`, `moq`, `pack_size`, `lead_days`), `assemblies[]` (`assembly_id`, `code`, `revision`, `status`, `unit_cost`, `cost_incomplete`, `sale_price`), `rolled_up_cost`, `where_used[]` (`parent`, `assembly_id`, `code`, `revision`, `status`, `depth`, `via`, `qty_per_parent`).
 - **Example:** `get_part({ "ref": "PAD-FELT" })`
 
-### `get_bom`
-The structure of a BoM as a tree with cost roll-up. Kits and sub-assemblies are expanded through their active BoMs.
+### `get_assembly`
+The structure of an assembly as a tree with cost roll-up. Kits and sub-assemblies are expanded through their active assemblies.
 - **Scope:** `catalog:read` · **Permission:** none
-- **Inputs:** `bom`, `code`, `revision` (selector), `qty` (how many to build, default 1).
-- **Returns:** `bom` (`bom_id`, `part`, `code`, `revision`, `status`), `qty`, `cost` (`unit_cost`, `total_cost`, `incomplete`, `missing_costs`), `lines[]` as a tree: `ref`, `kind`, `per_parent`, `qty` (cumulative), `mode`, `unit_cost`, `extended_cost`, `cost_incomplete`, `children`.
-- **Example:** `get_bom({ "bom": "LAMP-DESK", "code": "warm", "qty": 3 })`
+- **Inputs:** `assembly`, `code`, `revision` (selector), `qty` (how many to build, default 1).
+- **Returns:** `assembly` (`assembly_id`, `part`, `code`, `revision`, `status`), `qty`, `cost` (`unit_cost`, `total_cost`, `incomplete`, `missing_costs`), `lines[]` as a tree: `ref`, `kind`, `per_parent`, `qty` (cumulative), `mode`, `unit_cost`, `extended_cost`, `cost_incomplete`, `children`.
+- **Example:** `get_assembly({ "assembly": "LAMP-DESK", "code": "warm", "qty": 3 })`
 
-### `explode_bom`
+### `explode_assembly`
 The flat list of components needed for a quantity, with on hand and shortfall. Fee lines are listed apart (cost only).
 - **Scope:** `catalog:read` · **Permission:** none
-- **Inputs:** `bom`, `code`, `revision` (selector), `qty` (required), `use_stock` (take sub-assemblies already in stock instead of building them; default false).
-- **Returns:** `bom`, `qty`, `use_stock`, `components[]` (`ref`, `name`, `kind`, `unit`, `qty`, `on_hand`, `short`, `missing_bom`, `unit_cost`, `extended_cost`), `fees[]`, `total_cost`, `cost_incomplete`.
-- **Example:** `explode_bom({ "bom": "LAMP-DESK", "code": "warm", "qty": 3, "use_stock": true })`
+- **Inputs:** `assembly`, `code`, `revision` (selector), `qty` (required), `use_stock` (take sub-assemblies already in stock instead of building them; default false).
+- **Returns:** `assembly`, `qty`, `use_stock`, `components[]` (`ref`, `name`, `kind`, `unit`, `qty`, `on_hand`, `short`, `missing_assembly`, `unit_cost`, `extended_cost`), `fees[]`, `total_cost`, `cost_incomplete`.
+- **Example:** `explode_assembly({ "assembly": "LAMP-DESK", "code": "warm", "qty": 3, "use_stock": true })`
 
 ### `list_recent_changes`
 The change history (who, when, from where, which rows and fields before/after), as on the Recent changes page.
@@ -92,14 +92,14 @@ The stock ledger, newest first. On hand is the sum of the signed moves.
 Builds (production orders), newest first. The query also matches the serials of consumed components: use it to find which build used a serial.
 - **Scope:** `builds:read` · **Permission:** none
 - **Inputs:** `query` (build number, product serial, part ref or name, component serial), `status` (open, all, planned, in_progress, done, cancelled; default open, or all when a query is given), `limit` (default 50, max 500).
-- **Returns:** `status`, `count`, `builds[]` (`number`, `status`, `part`, `name`, `unit`, `qty`, `serial`, `bom`, `planned_for`, `done_at`).
+- **Returns:** `status`, `count`, `builds[]` (`number`, `status`, `part`, `name`, `unit`, `qty`, `serial`, `assembly`, `planned_for`, `done_at`).
 - **Example:** `list_builds({ "query": "CW-24-0003" })`
 
 ### `get_build`
 One build. Done: the as-built record. Open: the pick list from current stock.
 - **Scope:** `builds:read` · **Permission:** none
 - **Inputs:** `number` (e.g. `B-0001`).
-- **Returns:** `build` (`number`, `status`, `part`, `qty`, `serial`, `bom`, `planned_for`, `done_at`). Done: `as_built[]` (`ref`, `qty`, `serial`, `unit_cost` frozen, `made_by_build`), `total_cost`. Open: `pick_list[]` (`ref`, `qty`, `on_hand`, `short`, `serials_to_scan` count to give), `sub_assemblies[]` (`ref`, `path`, `qty`, `from_stock`, `to_build`), `fees`, `problems` (what blocks completion).
+- **Returns:** `build` (`number`, `status`, `part`, `qty`, `serial`, `assembly`, `planned_for`, `done_at`). Done: `as_built[]` (`ref`, `qty`, `serial`, `unit_cost` frozen, `made_by_build`), `total_cost`. Open: `pick_list[]` (`ref`, `qty`, `on_hand`, `short`, `serials_to_scan` count to give), `sub_assemblies[]` (`ref`, `path`, `qty`, `from_stock`, `to_build`), `fees`, `problems` (what blocks completion).
 - **Example:** `get_build({ "number": "B-0001" })`
 
 ## Reading: `purchasing:read`
@@ -108,7 +108,7 @@ One build. Done: the as-built record. Open: the pick list from current stock.
 What to buy for all planned and in-progress builds: need minus on hand minus on order, rounded up to the preferred supplier's MOQ and pack size, grouped by supplier.
 - **Scope:** `purchasing:read` · **Permission:** none
 - **Inputs:** none.
-- **Returns:** `open_builds`, `suppliers[]` (`supplier`, `total`, `lines[]` with `ref`, `unit`, `need`, `on_hand`, `on_order`, `net`, `order`, `unit_price`, `supplier_ref`, `moq`, `pack_size`, `lead_days`, `builds`), `missing_boms[]` (make or kit parts to build that have no active BoM).
+- **Returns:** `open_builds`, `suppliers[]` (`supplier`, `total`, `lines[]` with `ref`, `unit`, `need`, `on_hand`, `on_order`, `net`, `order`, `unit_price`, `supplier_ref`, `moq`, `pack_size`, `lead_days`, `builds`), `missing_assemblies[]` (make or kit parts to build that have no active assembly).
 - **Example:** `get_shortages({})`
 
 ### `list_purchase_orders`
@@ -137,7 +137,7 @@ Creates a part. Prices and offers are separate calls.
 ### `update_part`
 Changes a part's fields; fields left out keep their value. Never prices.
 - **Scope:** `catalog:write` · **Permission:** `parts.edit` (planner)
-- **Inputs:** `ref`, `new_ref`, `name`, `kind`, `unit`, `track_serial`, `notes`. A part with stock moves cannot become a kit or fee; a part with BoMs stays make or kit.
+- **Inputs:** `ref`, `new_ref`, `name`, `kind`, `unit`, `track_serial`, `notes`. A part with stock moves cannot become a kit or fee; a part with assemblies stays make or kit.
 - **Returns:** the write envelope and `part`.
 - **Example:** `update_part({ "ref": "PAD-FELT", "notes": "Self-adhesive" })`
 
@@ -153,33 +153,33 @@ Changes a part's fields; fields left out keep their value. Never prices.
 - **Returns:** the write envelope and `supplier`.
 - **Example:** `update_supplier({ "name": "Acme Fasteners", "phone": "+1 555 0123" })`
 
-### `create_bom`
-Creates a draft BoM for a make or kit part, empty or copied from another BoM. Then `set_bom_lines`, then `activate_bom`.
-- **Scope:** `catalog:write` · **Permission:** `boms.edit` (planner)
-- **Inputs:** `part`, `code` (default std), `revision` (default Rev1), `notes`, `copy_from` (a BoM selector).
-- **Returns:** the write envelope, `bom` (`bom_id`, `part`, `code`, `revision`, `status`), `lines`.
-- **Example:** `create_bom({ "part": "LAMP-DESK", "code": "compact", "copy_from": { "bom": "LAMP-DESK" } })`
+### `create_assembly`
+Creates a draft assembly for a make or kit part, empty or copied from another assembly. Then `set_assembly_lines`, then `activate_assembly`.
+- **Scope:** `catalog:write` · **Permission:** `assemblies.edit` (planner)
+- **Inputs:** `part`, `code` (default std), `revision` (default Rev1), `notes`, `copy_from` (an assembly selector).
+- **Returns:** the write envelope, `assembly` (`assembly_id`, `part`, `code`, `revision`, `status`), `lines`.
+- **Example:** `create_assembly({ "part": "LAMP-DESK", "code": "compact", "copy_from": { "assembly": "LAMP-DESK" } })`
 
-### `set_bom_lines`
-Replaces every line of a BoM at once, in order, with the editor's checks (known part, not archived, whole units for serial-tracked parts, no cycle). Nothing changes if one line is refused. An active BoM is never edited: the next revision is created as a draft (with the active one's notes, lines replaced by yours) and the active BoM stays as it is. Archived BoMs are read-only.
-- **Scope:** `catalog:write` · **Permission:** `boms.edit` (planner)
-- **Inputs:** `bom`, `code`, `revision` (selector), `lines[]` of `ref`, `qty`, `notes` (1 to 500 lines). Send the complete list, not a delta.
-- **Returns:** the write envelope, `bom` (the one that was edited), `new_revision` (true when a draft revision was created), `active_bom` (then), `note`, `lines`.
-- **Example:** `set_bom_lines({ "bom": "BASE-ASSY", "lines": [{ "ref": "BASE-PLATE", "qty": 1 }, { "ref": "PAD-FELT", "qty": 6 }] })`
+### `set_assembly_lines`
+Replaces every line of an assembly at once, in order, with the editor's checks (known part, not archived, whole units for serial-tracked parts, no cycle). Nothing changes if one line is refused. An active assembly is never edited: the next revision is created as a draft (with the active one's notes, lines replaced by yours) and the active assembly stays as it is. Archived assemblies are read-only.
+- **Scope:** `catalog:write` · **Permission:** `assemblies.edit` (planner)
+- **Inputs:** `assembly`, `code`, `revision` (selector), `lines[]` of `ref`, `qty`, `notes` (1 to 500 lines). Send the complete list, not a delta.
+- **Returns:** the write envelope, `assembly` (the one that was edited), `new_revision` (true when a draft revision was created), `active_assembly` (then), `note`, `lines`.
+- **Example:** `set_assembly_lines({ "assembly": "BASE-ASSY", "lines": [{ "ref": "BASE-PLATE", "qty": 1 }, { "ref": "PAD-FELT", "qty": 6 }] })`
 
-### `new_bom_revision`
-Copies a BoM (any status) with its lines into the next draft revision of the same part and code. The original is not changed.
-- **Scope:** `catalog:write` · **Permission:** `boms.edit` (planner)
-- **Inputs:** `bom`, `code`, `revision` (selector).
-- **Returns:** the write envelope, `bom` (new draft), `from`, `lines`.
-- **Example:** `new_bom_revision({ "bom": "BASE-ASSY" })`
+### `new_assembly_revision`
+Copies an assembly (any status) with its lines into the next draft revision of the same part and code. The original is not changed.
+- **Scope:** `catalog:write` · **Permission:** `assemblies.edit` (planner)
+- **Inputs:** `assembly`, `code`, `revision` (selector).
+- **Returns:** the write envelope, `assembly` (new draft), `from`, `lines`.
+- **Example:** `new_assembly_revision({ "assembly": "BASE-ASSY" })`
 
-### `activate_bom`
-Makes a draft or archived BoM the active one of its part and code: builds and explosions use it from now on. The previously active revision is archived (it can be activated again). Refused if it would create a cycle.
-- **Scope:** `catalog:write` · **Permission:** `boms.edit` (planner)
-- **Inputs:** `bom`, `code`, `revision` (selector; give the revision, or the BoM id).
-- **Returns:** the write envelope, `bom`, `archived[]` (the revisions it replaced). Already active: nothing changes.
-- **Example:** `activate_bom({ "bom": "BASE-ASSY", "revision": "Rev2" })`
+### `activate_assembly`
+Makes a draft or archived assembly the active one of its part and code: builds and explosions use it from now on. The previously active revision is archived (it can be activated again). Refused if it would create a cycle.
+- **Scope:** `catalog:write` · **Permission:** `assemblies.edit` (planner)
+- **Inputs:** `assembly`, `code`, `revision` (selector; give the revision, or the assembly id).
+- **Returns:** the write envelope, `assembly`, `archived[]` (the revisions it replaced). Already active: nothing changes.
+- **Example:** `activate_assembly({ "assembly": "BASE-ASSY", "revision": "Rev2" })`
 
 ## Writing prices: `prices:write`
 
@@ -191,10 +191,10 @@ A part's standard cost: the unit cost used in roll-ups, valuations and planned m
 - **Example:** `set_standard_cost({ "ref": "PAD-FELT", "cost": "0.06", "note": "2026 price list" })`
 
 ### `set_sale_price`
-The selling price of a part, or of one BoM variant (`code`, plus `revision` when not the active one), which overrides the part's price for that variant.
+The selling price of a part, or of one assembly variant (`code`, plus `revision` when not the active one), which overrides the part's price for that variant.
 - **Scope:** `prices:write` · **Permission:** `prices.edit` (planner)
 - **Inputs:** `ref`, `price` (null clears it), `code`, `revision` (needs `code`).
-- **Returns:** the write envelope, `part`, `bom` (for a variant), `sale_price`, `previous_sale_price`.
+- **Returns:** the write envelope, `part`, `assembly` (for a variant), `sale_price`, `previous_sale_price`.
 - **Example:** `set_sale_price({ "ref": "LAMP-DESK", "price": "94.00", "code": "warm" })`
 
 ### `upsert_supplier_offer`
@@ -209,7 +209,7 @@ Creates or edits a supplier's offer for a buy or make part (fields left out keep
 Archiving hides; nothing is deleted over MCP, and unarchiving brings it back.
 
 ### `archive_part`
-The part disappears from lists and pickers (new BoM lines, POs); stock, BoMs, builds and history stay.
+The part disappears from lists and pickers (new assembly lines, POs); stock, assemblies, builds and history stay.
 - **Scope:** `catalog:archive` · **Permission:** `parts.archive` (admin)
 - **Inputs:** `ref`.
 - **Returns:** the write envelope and `part`.
@@ -221,12 +221,12 @@ The part disappears from lists and pickers (new BoM lines, POs); stock, BoMs, bu
 - **Returns:** the write envelope and `part`.
 - **Example:** `unarchive_part({ "ref": "PAD-FELT" })`
 
-### `archive_bom`
-A revision becomes read-only and unused by builds and explosions. Archiving the active one leaves its part and code with no active BoM until another is activated. `activate_bom` brings one back.
-- **Scope:** `catalog:archive` · **Permission:** `boms.archive` (admin)
-- **Inputs:** `bom`, `code`, `revision` (selector).
-- **Returns:** the write envelope and `bom`.
-- **Example:** `archive_bom({ "bom": "LAMP-DESK", "revision": "Rev1" })`
+### `archive_assembly`
+A revision becomes read-only and unused by builds and explosions. Archiving the active one leaves its part and code with no active assembly until another is activated. `activate_assembly` brings one back.
+- **Scope:** `catalog:archive` · **Permission:** `assemblies.archive` (admin)
+- **Inputs:** `assembly`, `code`, `revision` (selector).
+- **Returns:** the write envelope and `assembly`.
+- **Example:** `archive_assembly({ "assembly": "LAMP-DESK", "revision": "Rev1" })`
 
 ## Writing stock: `stock:write`
 
@@ -249,14 +249,14 @@ Posts counted quantities: for each part one count move for the difference with t
 ## Builds: `builds:write`
 
 ### `plan_build`
-Plans a build of a make part from one of its active BoMs. A serial-tracked product is built one unit at a time with its own serial.
+Plans a build of a make part from one of its active assemblies. A serial-tracked product is built one unit at a time with its own serial.
 - **Scope:** `builds:write` · **Permission:** `builds.plan` (operator)
 - **Inputs:** `ref`, `qty` (default 1), `code` (variant), `serial`, `planned_for` (date), `notes`.
-- **Returns:** the write envelope and `build` (`number`, `status`, `part`, `qty`, `serial`, `bom`, `planned_for`).
+- **Returns:** the write envelope and `build` (`number`, `status`, `part`, `qty`, `serial`, `assembly`, `planned_for`).
 - **Example:** `plan_build({ "ref": "LAMP-DESK", "code": "warm", "serial": "L-0100", "planned_for": "2026-11-02" })`
 
 ### `complete_build`
-Records a planned or in-progress build as done: components are consumed, the product is added, and the as-built record keeps every serial and frozen unit cost. Refused, with every reason, when a serial is missing or repeated, a sub-assembly to build has no active BoM, or the product needs a serial. Writes the ledger: cannot be undone.
+Records a planned or in-progress build as done: components are consumed, the product is added, and the as-built record keeps every serial and frozen unit cost. Refused, with every reason, when a serial is missing or repeated, a sub-assembly to build has no active assembly, or the product needs a serial. Writes the ledger: cannot be undone.
 - **Scope:** `builds:write` · **Permission:** `builds.complete` (operator)
 - **Inputs:** `number`, `serials[]` of `ref` and `serials` (one per unit of each serial-tracked component; the count is `serials_to_scan` in `get_build`), `sub_assemblies[]` of `ref` (every place the part appears) or `path` (one place, from `get_build`) and `mode` (stock or build). Without a choice, a sub-assembly comes from stock when there is enough, else it is built now.
 - **Returns:** the write envelope, `build` (done), `as_built[]`.

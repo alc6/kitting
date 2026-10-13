@@ -10,7 +10,7 @@ import {
 	redactCosts,
 	redactCsv,
 } from "../src/domain/permissions";
-import { bomId, loadDemo, NOT_ADMIN, one, partId, postForm, request, setRole } from "./helpers";
+import { assemblyId, loadDemo, NOT_ADMIN, one, partId, postForm, request, setRole } from "./helpers";
 
 /** Demo data plus a draft PO, a sent PO and a planned build, as an admin would set them up. */
 async function seed() {
@@ -28,10 +28,10 @@ async function seed() {
 	await postForm(`/purchasing/po/${sent}/send`, {});
 	const line = (await one<{ id: number }>("SELECT id FROM po_lines WHERE po_id = ?", sent)).id;
 	const lamp = await partId("LAMP-DESK");
-	const bom = await bomId("LAMP-DESK");
+	const assembly = await assemblyId("LAMP-DESK");
 	const planned = await postForm("/builds", {
 		part_id: String(lamp),
-		bom_id: String(bom),
+		assembly_id: String(assembly),
 		qty: "1",
 		serial: "L-1",
 		planned_for: "",
@@ -40,7 +40,7 @@ async function seed() {
 	const build = Number(/\/builds\/(\d+)/.exec(planned.headers.get("Location") ?? "")?.[1]);
 	// The change set that planned the build: operators may undo it (they plan builds).
 	const planning = (await one<{ id: number }>("SELECT max(id) AS id FROM change_sets")).id;
-	return { part, supplier, draft, sent, line, lamp, bom, build, planning };
+	return { part, supplier, draft, sent, line, lamp, assembly, build, planning };
 }
 
 type Ids = Awaited<ReturnType<typeof seed>>;
@@ -50,18 +50,25 @@ type Call = { method?: "GET" | "POST"; path: string; form?: Record<string, strin
 const CALLS: Record<Action, (ids: Ids) => Call> = {
 	"parts.edit": () => ({ path: "/parts", form: { ref: "NEW-1", name: "New part", kind: "buy", unit: "pcs" } }),
 	"parts.archive": (i) => ({ path: `/parts/${i.part}/archive` }),
-	// Used by BoMs and POs: refused with a redirect (in_use), after the permission check.
+	// Used by assemblies and POs: refused with a redirect (in_use), after the permission check.
 	"parts.delete": (i) => ({ path: `/parts/${i.part}/delete` }),
 	"suppliers.edit": () => ({ path: "/suppliers", form: { name: "Acme", email: "", phone: "", notes: "" } }),
 	"suppliers.delete": (i) => ({ path: `/suppliers/${i.supplier}/delete` }),
-	"boms.edit": (i) => ({ path: `/boms/${i.bom}/revision` }),
-	"boms.archive": (i) => ({ path: `/boms/${i.bom}/archive` }),
+	"assemblies.edit": (i) => ({ path: `/assemblies/${i.assembly}/revision` }),
+	"assemblies.archive": (i) => ({ path: `/assemblies/${i.assembly}/archive` }),
 	// Used by the planned build: refused with a redirect (in_use), after the permission check.
-	"boms.delete": (i) => ({ path: `/boms/${i.bom}/delete` }),
-	"prices.edit": (i) => ({ path: `/boms/${i.bom}/sale-price`, form: { sale_price: "99.00" } }),
+	"assemblies.delete": (i) => ({ path: `/assemblies/${i.assembly}/delete` }),
+	"prices.edit": (i) => ({ path: `/assemblies/${i.assembly}/sale-price`, form: { sale_price: "99.00" } }),
 	"builds.plan": (i) => ({
 		path: "/builds",
-		form: { part_id: String(i.lamp), bom_id: String(i.bom), qty: "1", serial: "L-2", planned_for: "", notes: "" },
+		form: {
+			part_id: String(i.lamp),
+			assembly_id: String(i.assembly),
+			qty: "1",
+			serial: "L-2",
+			planned_for: "",
+			notes: "",
+		},
 	}),
 	"builds.complete": (i) => ({ path: `/builds/${i.build}/complete` }),
 	"stock.adjust": () => ({ path: "/stock/adjust", form: { part: "BOX-LAMP", qty: "1", serial: "", note: "found" } }),

@@ -13,14 +13,14 @@ type Rule = {
 export const PERMISSIONS = {
 	// Catalogue (office)
 	"parts.edit": { min: "planner" },
-	// Archiving hides a part or BoM and is undone by unarchiving; deleting is permanent (D125).
+	// Archiving hides a part or assembly and is undone by unarchiving; deleting is permanent (D125).
 	"parts.archive": { min: "admin" },
 	"parts.delete": { min: "admin" },
 	"suppliers.edit": { min: "planner" },
 	"suppliers.delete": { min: "admin" },
-	"boms.edit": { min: "planner" },
-	"boms.archive": { min: "admin" },
-	"boms.delete": { min: "admin" },
+	"assemblies.edit": { min: "planner" },
+	"assemblies.archive": { min: "admin" },
+	"assemblies.delete": { min: "admin" },
 	"prices.edit": { min: "planner" },
 	// Shop floor
 	"builds.plan": { min: "operator" },
@@ -58,7 +58,7 @@ export const ACTIONS = Object.keys(PERMISSIONS) as Action[];
  */
 export const PERMISSION_GROUPS = [
 	{ key: "parts", actions: ["parts.edit", "parts.archive", "parts.delete"] },
-	{ key: "boms", actions: ["boms.edit", "boms.archive", "boms.delete"] },
+	{ key: "assemblies", actions: ["assemblies.edit", "assemblies.archive", "assemblies.delete"] },
 	{ key: "suppliers", actions: ["suppliers.edit", "suppliers.delete"] },
 	{ key: "costs", actions: ["costs.view", "prices.edit"] },
 	{ key: "builds", actions: ["builds.plan", "builds.complete"] },

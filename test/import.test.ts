@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import demoBoms from "../examples/demo/boms.csv?raw";
+import demoAssemblies from "../examples/demo/assemblies.csv?raw";
 import demoOffers from "../examples/demo/part_suppliers.csv?raw";
 import demoParts from "../examples/demo/parts.csv?raw";
 import demoStock from "../examples/demo/stock.csv?raw";
@@ -222,7 +222,7 @@ describe("demo dataset", () => {
 		await importOk("suppliers", demoSuppliers);
 		await importOk("parts", demoParts);
 		await importOk("part_suppliers", demoOffers);
-		await importOk("boms", demoBoms);
+		await importOk("assemblies", demoAssemblies);
 		await importOk("stock", demoStock);
 		expect(await one("SELECT count(*) AS n FROM suppliers")).toEqual({ n: 6 });
 		expect(await one("SELECT count(*) AS n FROM parts")).toEqual({ n: 25 });
@@ -234,7 +234,9 @@ describe("demo dataset", () => {
 			),
 		).toEqual({ price_cents: 790, lead_days: 3 });
 		expect(await one("SELECT sale_price_cents FROM parts WHERE ref = 'LAMP-DESK'")).toEqual({ sale_price_cents: 8900 });
-		expect(await one("SELECT sale_price_cents FROM boms WHERE code = 'warm'")).toEqual({ sale_price_cents: 9400 });
+		expect(await one("SELECT sale_price_cents FROM assemblies WHERE code = 'warm'")).toEqual({
+			sale_price_cents: 9400,
+		});
 		expect(
 			await one(
 				"SELECT SUM(qty_milli) AS n FROM stock_moves m JOIN parts p ON p.id = m.part_id WHERE p.ref = 'LED-5W-CW'",

@@ -8,7 +8,7 @@ import { HISTORY_TABLES, LEDGER_TABLES, UNTRACKED_TABLES } from "../src/db/schem
 import { runChangeSet } from "../src/domain/history";
 import { saveUserStatement } from "../src/domain/users";
 import {
-	bomId,
+	assemblyId,
 	changeSql,
 	insertPart,
 	insertSupplier,
@@ -49,8 +49,11 @@ async function fixtures() {
 	const supplier = await insertSupplier("Acme Example");
 	const buy = await insertPart("BOLT", "buy", { costCents: 10 });
 	const make = await insertPart("LAMP", "make");
-	const [bom] = await seedSql(
-		stmt("INSERT INTO boms (parent_part_id, created_by, updated_by) VALUES (?, 'seed', 'seed') RETURNING id", make),
+	const [assembly] = await seedSql(
+		stmt(
+			"INSERT INTO assemblies (parent_part_id, created_by, updated_by) VALUES (?, 'seed', 'seed') RETURNING id",
+			make,
+		),
 	);
 	const [po] = await seedSql(
 		stmt(
@@ -58,7 +61,7 @@ async function fixtures() {
 			supplier,
 		),
 	);
-	return { supplier, buy, make, bom: returnedId(bom), po: returnedId(po) };
+	return { supplier, buy, make, assembly: returnedId(assembly), po: returnedId(po) };
 }
 
 type Fixtures = Awaited<ReturnType<typeof fixtures>>;
@@ -76,22 +79,22 @@ const CASES: Record<string, { insert: (f: Fixtures) => D1PreparedStatement; upda
 		insert: () => stmt("INSERT INTO suppliers (name, created_by, updated_by) VALUES ('Other', 'u', 'u') RETURNING id"),
 		update: "UPDATE suppliers SET notes = 'Ships on Fridays' WHERE id = ?",
 	},
-	boms: {
+	assemblies: {
 		insert: (f) =>
 			stmt(
-				"INSERT INTO boms (parent_part_id, code, created_by, updated_by) VALUES (?, 'alt', 'u', 'u') RETURNING id",
+				"INSERT INTO assemblies (parent_part_id, code, created_by, updated_by) VALUES (?, 'alt', 'u', 'u') RETURNING id",
 				f.make,
 			),
-		update: "UPDATE boms SET status = 'active' WHERE id = ?",
+		update: "UPDATE assemblies SET status = 'active' WHERE id = ?",
 	},
-	bom_lines: {
+	assembly_lines: {
 		insert: (f) =>
 			stmt(
-				"INSERT INTO bom_lines (bom_id, component_part_id, qty_milli, created_by, updated_by) VALUES (?, ?, 2000, 'u', 'u') RETURNING id",
-				f.bom,
+				"INSERT INTO assembly_lines (assembly_id, component_part_id, qty_milli, created_by, updated_by) VALUES (?, ?, 2000, 'u', 'u') RETURNING id",
+				f.assembly,
 				f.buy,
 			),
-		update: "UPDATE bom_lines SET qty_milli = 3000 WHERE id = ?",
+		update: "UPDATE assembly_lines SET qty_milli = 3000 WHERE id = ?",
 	},
 	part_suppliers: {
 		insert: (f) =>
@@ -122,9 +125,9 @@ const CASES: Record<string, { insert: (f: Fixtures) => D1PreparedStatement; upda
 	builds: {
 		insert: (f) =>
 			stmt(
-				"INSERT INTO builds (number, part_id, bom_id, created_by, updated_by) VALUES ('B-9000', ?, ?, 'u', 'u') RETURNING id",
+				"INSERT INTO builds (number, part_id, assembly_id, created_by, updated_by) VALUES ('B-9000', ?, ?, 'u', 'u') RETURNING id",
 				f.make,
-				f.bom,
+				f.assembly,
 			),
 		update: "UPDATE builds SET notes = 'first run' WHERE id = ?",
 	},
@@ -194,14 +197,17 @@ describe("change capture", () => {
 
 	it("ignores updates that only touch who/when, but still requires a change set for them", async () => {
 		const f = await fixtures();
-		await changeSql("Touch", stmt("UPDATE boms SET updated_at = '2030-01-01', updated_by = 'x' WHERE id = ?", f.bom));
+		await changeSql(
+			"Touch",
+			stmt("UPDATE assemblies SET updated_at = '2030-01-01', updated_by = 'x' WHERE id = ?", f.assembly),
+		);
 		expect(await rows("SELECT * FROM change_log")).toEqual([]);
 		// A change set that changed nothing is not kept.
 		const kept = await runChangeSet(testDb(), { user: TESTER, source: "ui", summary: "Nothing" }, [
-			testDb().run(sql`UPDATE boms SET notes = notes WHERE id = 0`),
+			testDb().run(sql`UPDATE assemblies SET notes = notes WHERE id = 0`),
 		]);
 		expect(kept.id).toBeNull();
-		await expect(env.DB.prepare("UPDATE boms SET updated_at = '2031-01-01'").run()).rejects.toThrow(
+		await expect(env.DB.prepare("UPDATE assemblies SET updated_at = '2031-01-01'").run()).rejects.toThrow(
 			"outside a change set",
 		);
 	});
@@ -216,23 +222,24 @@ describe("change capture", () => {
 
 	it("logs cascaded deletes and upserts in the same change set", async () => {
 		await loadDemo({ stock: false });
-		const bom = await bomId("LAMP-DESK");
-		const lines = (await one<{ n: number }>("SELECT count(*) AS n FROM bom_lines WHERE bom_id = ?", bom)).n;
-		const { revision } = await one<{ revision: string }>("SELECT revision FROM boms WHERE id = ?", bom);
-		await postForm(`/boms/${bom}/archive`, {});
-		expect((await postForm(`/boms/${bom}/delete`, {})).status).toBe(303);
+		const assembly = await assemblyId("LAMP-DESK");
+		const lines = (await one<{ n: number }>("SELECT count(*) AS n FROM assembly_lines WHERE assembly_id = ?", assembly))
+			.n;
+		const { revision } = await one<{ revision: string }>("SELECT revision FROM assemblies WHERE id = ?", assembly);
+		await postForm(`/assemblies/${assembly}/archive`, {});
+		expect((await postForm(`/assemblies/${assembly}/delete`, {})).status).toBe(303);
 		const set = await one<{ id: number; summary: string }>(
 			"SELECT id, summary FROM change_sets ORDER BY id DESC LIMIT 1",
 		);
-		expect(set.summary).toBe(`Delete BoM LAMP-DESK std ${revision}`);
+		expect(set.summary).toBe(`Delete assembly LAMP-DESK std ${revision}`);
 		expect(
 			await rows(
 				"SELECT table_name, op, count(*) AS n FROM change_log WHERE change_set_id = ? GROUP BY 1, 2 ORDER BY 1",
 				set.id,
 			),
 		).toEqual([
-			{ table_name: "bom_lines", op: "delete", n: lines },
-			{ table_name: "boms", op: "delete", n: 1 },
+			{ table_name: "assemblies", op: "delete", n: 1 },
+			{ table_name: "assembly_lines", op: "delete", n: lines },
 		]);
 
 		const db = testDb();
@@ -274,7 +281,7 @@ describe("change capture", () => {
 			{ summary: "Import suppliers.csv", revertible: 1 },
 			{ summary: "Import parts.csv", revertible: 1 },
 			{ summary: "Import part_suppliers.csv", revertible: 1 },
-			{ summary: "Import boms.csv", revertible: 1 },
+			{ summary: "Import assemblies.csv", revertible: 1 },
 		]);
 	});
 });

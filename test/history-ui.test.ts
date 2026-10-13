@@ -4,7 +4,7 @@ import { AUDIT_COLUMNS, columnNames } from "../src/db/history-sql";
 import { HISTORY_TABLES, LEDGER_TABLES } from "../src/db/schema";
 import { en } from "../src/i18n/en";
 import {
-	bomId,
+	assemblyId,
 	changeSql,
 	importCsv,
 	loadDemo,
@@ -26,19 +26,19 @@ async function html(path: string, overrides = {}) {
 	return res.text();
 }
 
-/** A supplier edited twice, and a BoM line whose quantity changed. */
+/** A supplier edited twice, and an assembly line whose quantity changed. */
 async function seed() {
 	await loadDemo({ stock: false });
 	await postForm("/suppliers", { name: "Acme", email: "", phone: "", notes: "" });
 	const acme = (await one<{ id: number }>("SELECT id FROM suppliers WHERE name = 'Acme'")).id;
 	await postForm(`/suppliers/${acme}`, { name: "Acme", email: "", phone: "555-0100", notes: "" });
-	const bom = await bomId("LAMP-DESK");
+	const assembly = await assemblyId("LAMP-DESK");
 	const line = await one<{ id: number }>(
-		"SELECT l.id FROM bom_lines l JOIN parts p ON p.id = l.component_part_id WHERE l.bom_id = ? AND p.ref = 'BOX-LAMP'",
-		bom,
+		"SELECT l.id FROM assembly_lines l JOIN parts p ON p.id = l.component_part_id WHERE l.assembly_id = ? AND p.ref = 'BOX-LAMP'",
+		assembly,
 	);
-	await postForm(`/boms/${bom}/lines/${line.id}`, { qty: "3" });
-	return { acme, bom, line: line.id, qtyChange: await lastSet() };
+	await postForm(`/assemblies/${assembly}/lines/${line.id}`, { qty: "3" });
+	return { acme, assembly, line: line.id, qtyChange: await lastSet() };
 }
 
 describe("history pages", () => {
@@ -47,7 +47,7 @@ describe("history pages", () => {
 		const all = await html("/history");
 		expect(all).toContain("Recent changes");
 		expect(all).toContain("Create supplier Acme");
-		expect(all).toContain("Change the quantity of BOX-LAMP in BoM LAMP-DESK std");
+		expect(all).toContain("Change the quantity of BOX-LAMP in assembly LAMP-DESK std");
 		expect(all).toContain("Import parts.csv");
 		const ui = await html("/history?source=ui");
 		expect(ui).toContain("Create supplier Acme");
@@ -68,7 +68,7 @@ describe("history pages", () => {
 	it("shows a change field by field, and every record's history tab", async () => {
 		const s = await seed();
 		const detail = await html(`/history/${s.qtyChange}`);
-		expect(detail).toContain("BoM line");
+		expect(detail).toContain("Assembly component");
 		expect(detail).toMatch(/quantity:<\/span>\s*<span class="num">1<\/span>.*→.*<span class="num">3<\/span>/s);
 		expect(detail).toContain(`action="/history/${s.qtyChange}/revert"`);
 		expect(detail).not.toMatch(/\sstyle=/);
@@ -79,9 +79,9 @@ describe("history pages", () => {
 		expect(supplier).toContain("Create supplier Acme");
 		expect(await html(`/suppliers/${s.acme}`)).toContain(`href="/suppliers/${s.acme}/history"`);
 
-		const bom = await html(`/boms/${s.bom}/history`);
-		expect(bom).toContain("Change the quantity of BOX-LAMP");
-		expect(await html(`/boms/${s.bom}`)).toContain(`href="/boms/${s.bom}/history"`);
+		const assembly = await html(`/assemblies/${s.assembly}/history`);
+		expect(assembly).toContain("Change the quantity of BOX-LAMP");
+		expect(await html(`/assemblies/${s.assembly}`)).toContain(`href="/assemblies/${s.assembly}/history"`);
 
 		const box = await partId("BOX-LAMP");
 		expect(await html(`/parts/${box}`)).toContain(`href="/parts/${box}/history"`);
@@ -107,7 +107,7 @@ describe("history pages", () => {
 		expect(page).toContain("Change undone.");
 		expect(page).toContain(`Undo #${s.qtyChange}: Change the quantity of BOX-LAMP`);
 		expect(page).toContain(`Undo of #${s.qtyChange}`);
-		expect(await one("SELECT qty_milli FROM bom_lines WHERE id = ?", s.line)).toEqual({ qty_milli: 1000 });
+		expect(await one("SELECT qty_milli FROM assembly_lines WHERE id = ?", s.line)).toEqual({ qty_milli: 1000 });
 		// Undone: no second Undo button on the original, which links to its undo.
 		const original = await html(`/history/${s.qtyChange}`);
 		expect(original).toContain(`Undone by #${undo}`);
@@ -182,10 +182,10 @@ describe("history pages", () => {
 		await setRole("operator");
 		const detail = await html(`/history/${s.qtyChange}`, NOT_ADMIN);
 		expect(detail).not.toContain(`action="/history/${s.qtyChange}/revert"`);
-		expect(detail).toContain("Undoing it needs rights you do not have: BoM line.");
+		expect(detail).toContain("Undoing it needs rights you do not have: Assembly component.");
 		const denied = await postForm(`/history/${s.qtyChange}/revert`, {}, NOT_ADMIN);
 		expect(denied.status).toBe(403);
-		expect(await one("SELECT qty_milli FROM bom_lines WHERE id = ?", s.line)).toEqual({ qty_milli: 3000 });
+		expect(await one("SELECT qty_milli FROM assembly_lines WHERE id = ?", s.line)).toEqual({ qty_milli: 3000 });
 
 		await setRole("viewer");
 		expect(await html("/history", NOT_ADMIN)).not.toContain("/revert");

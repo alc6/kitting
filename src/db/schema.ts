@@ -27,8 +27,8 @@ const audit = () => ({
 export const PART_KINDS = ["buy", "make", "kit", "fee"] as const;
 export type PartKind = (typeof PART_KINDS)[number];
 
-export const BOM_STATUSES = ["draft", "active", "archived"] as const;
-export type BomStatus = (typeof BOM_STATUSES)[number];
+export const ASSEMBLY_STATUSES = ["draft", "active", "archived"] as const;
+export type AssemblyStatus = (typeof ASSEMBLY_STATUSES)[number];
 
 export const MOVE_REASONS = ["receipt", "build_consume", "build_output", "adjust", "count"] as const;
 export type MoveReason = (typeof MOVE_REASONS)[number];
@@ -84,7 +84,7 @@ export const parts = sqliteTable(
 		unit: text("unit").notNull().default("pcs"),
 		// Standard unit cost. NULL means "unknown" and makes cost roll-ups incomplete.
 		costCents: integer("cost_cents"),
-		// Selling price excluding VAT (products); a BoM variant can override it. NULL = not sold / unknown.
+		// Selling price excluding VAT (products); an assembly variant can override it. NULL = not sold / unknown.
 		salePriceCents: integer("sale_price_cents"),
 		// Preferred supplier: its offer in part_suppliers drives shortages and draft POs.
 		supplierId: integer("supplier_id").references(() => suppliers.id),
@@ -110,8 +110,8 @@ export const parts = sqliteTable(
 	],
 );
 
-export const boms = sqliteTable(
-	"boms",
+export const assemblies = sqliteTable(
+	"assemblies",
 	{
 		id: integer("id").primaryKey({ autoIncrement: true }),
 		parentPartId: integer("parent_part_id")
@@ -119,27 +119,27 @@ export const boms = sqliteTable(
 			.references(() => parts.id),
 		code: text("code").notNull().default("std"),
 		revision: text("revision").notNull().default("Rev1"),
-		status: text("status", { enum: BOM_STATUSES }).notNull().default("draft"),
+		status: text("status", { enum: ASSEMBLY_STATUSES }).notNull().default("draft"),
 		// Selling price of this variant, overriding the part's sale price. NULL = use the part's.
 		salePriceCents: integer("sale_price_cents"),
 		notes: text("notes").notNull().default(""),
 		...audit(),
 	},
 	(t) => [
-		uniqueIndex("boms_parent_code_revision_unique").on(t.parentPartId, t.code, t.revision),
-		// At most one active BoM per (parent, variant code).
-		uniqueIndex("boms_one_active_per_code").on(t.parentPartId, t.code).where(sql`status = 'active'`),
-		check("boms_status_check", inList("status", BOM_STATUSES)),
+		uniqueIndex("assemblies_parent_code_revision_unique").on(t.parentPartId, t.code, t.revision),
+		// At most one active assembly per (parent, variant code).
+		uniqueIndex("assemblies_one_active_per_code").on(t.parentPartId, t.code).where(sql`status = 'active'`),
+		check("assemblies_status_check", inList("status", ASSEMBLY_STATUSES)),
 	],
 );
 
-export const bomLines = sqliteTable(
-	"bom_lines",
+export const assemblyLines = sqliteTable(
+	"assembly_lines",
 	{
 		id: integer("id").primaryKey({ autoIncrement: true }),
-		bomId: integer("bom_id")
+		assemblyId: integer("assembly_id")
 			.notNull()
-			.references(() => boms.id, { onDelete: "cascade" }),
+			.references(() => assemblies.id, { onDelete: "cascade" }),
 		componentPartId: integer("component_part_id")
 			.notNull()
 			.references(() => parts.id),
@@ -149,9 +149,9 @@ export const bomLines = sqliteTable(
 		...audit(),
 	},
 	(t) => [
-		index("bom_lines_bom_idx").on(t.bomId, t.position),
-		index("bom_lines_component_idx").on(t.componentPartId),
-		check("bom_lines_qty_check", sql`${t.qtyMilli} > 0`),
+		index("assembly_lines_assembly_idx").on(t.assemblyId, t.position),
+		index("assembly_lines_component_idx").on(t.componentPartId),
+		check("assembly_lines_qty_check", sql`${t.qtyMilli} > 0`),
 	],
 );
 
@@ -236,9 +236,9 @@ export const builds = sqliteTable(
 		partId: integer("part_id")
 			.notNull()
 			.references(() => parts.id),
-		bomId: integer("bom_id")
+		assemblyId: integer("assembly_id")
 			.notNull()
-			.references(() => boms.id),
+			.references(() => assemblies.id),
 		qtyMilli: integer("qty_milli").notNull().default(1000),
 		serial: text("serial"),
 		status: text("status", { enum: BUILD_STATUSES }).notNull().default("planned"),
@@ -320,9 +320,9 @@ export const priceHistory = sqliteTable(
 			.notNull()
 			.references(() => parts.id, { onDelete: "cascade" }),
 		kind: text("kind", { enum: PRICE_KINDS }).notNull(),
-		// Set for kind = 'purchase' (whose offer) and for a BoM variant's sale price.
+		// Set for kind = 'purchase' (whose offer) and for an assembly variant's sale price.
 		supplierId: integer("supplier_id").references(() => suppliers.id),
-		bomId: integer("bom_id").references(() => boms.id, { onDelete: "cascade" }),
+		assemblyId: integer("assembly_id").references(() => assemblies.id, { onDelete: "cascade" }),
 		// The new price. NULL = cleared / unknown.
 		priceCents: integer("price_cents"),
 		validFrom: text("valid_from").notNull(),
@@ -439,8 +439,8 @@ export const changeContext = sqliteTable(
 export const HISTORY_TABLES: SQLiteTable[] = [
 	parts,
 	suppliers,
-	boms,
-	bomLines,
+	assemblies,
+	assemblyLines,
 	partSuppliers,
 	purchaseOrders,
 	poLines,
@@ -463,8 +463,8 @@ export type ChangeLogRow = typeof changeLog.$inferSelect;
 
 export type Supplier = typeof suppliers.$inferSelect;
 export type Part = typeof parts.$inferSelect;
-export type Bom = typeof boms.$inferSelect;
-export type BomLine = typeof bomLines.$inferSelect;
+export type Assembly = typeof assemblies.$inferSelect;
+export type AssemblyLine = typeof assemblyLines.$inferSelect;
 export type StockMove = typeof stockMoves.$inferSelect;
 export type PurchaseOrder = typeof purchaseOrders.$inferSelect;
 export type PoLine = typeof poLines.$inferSelect;

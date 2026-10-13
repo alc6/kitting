@@ -196,9 +196,9 @@ dashboardRoutes.get("/", async (c) => {
 			<div class="mb-6 grid grid-cols-1 items-start gap-4 xl:grid-cols-3">
 				<div class="flex min-w-0 flex-col gap-4 xl:col-span-2">
 					<Section title={t.dashboard.shortages} href="/purchasing" total={shortageLines.length}>
-						{shortages.missingBoms.map((m) => (
+						{shortages.missingAssemblies.map((m) => (
 							<Alert variant="warning" class="mb-0">
-								{fmt(t.boms.missingBom, { ref: m.ref })}
+								{fmt(t.assemblies.missingAssembly, { ref: m.ref })}
 							</Alert>
 						))}
 						{shortageLines.length === 0 ? (

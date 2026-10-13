@@ -2,8 +2,8 @@
 // pick list exactly as the build page does: re-exploded with current stock and the given choices, the same serial
 // checks, the same completion batch. It writes the stock ledger, so it cannot be undone.
 import { z } from "zod";
-import { explode, walkTree } from "../domain/bom-graph";
-import { loadGraph } from "../domain/boms";
+import { loadGraph } from "../domain/assemblies";
+import { explode, walkTree } from "../domain/assembly-graph";
 import {
 	buildableProduct,
 	buildInput,
@@ -48,7 +48,7 @@ const planBuild = tool({
 	name: "plan_build",
 	title: "Plan a build",
 	description:
-		"Plans a build (production order) of a make part from one of its active BoMs, as the new build form does. A serial-tracked product is built one unit at a time with its own serial, unused by other builds. Then get_build shows its pick list and complete_build records it.",
+		"Plans a build (production order) of a make part from one of its active assemblies, as the new build form does. A serial-tracked product is built one unit at a time with its own serial, unused by other builds. Then get_build shows its pick list and complete_build records it.",
 	rule: { scope: "builds:write", action: "builds.plan" },
 	annotations: writes({ destructive: false, idempotent: false }),
 	input: z.object({
@@ -60,28 +60,29 @@ const planBuild = tool({
 			.min(1)
 			.max(64)
 			.optional()
-			.describe('Variant code of the active BoM to use (default "std", else its only active BoM).'),
+			.describe('Variant code of the active assembly to use (default "std", else its only active assembly).'),
 		serial: z.string().max(100).default("").describe("Serial number of the product (serial-tracked products)."),
 		planned_for: date.optional(),
 		notes: z.string().max(2000).default(""),
 	}),
 	run: async (a, ctx) => {
 		const part = await partByRef(ctx.db, a.ref);
-		const { product, bomOptions } = await buildableProduct(ctx.db, part.id);
-		const bom = a.code
-			? bomOptions.find((b) => b.code === a.code)
-			: (bomOptions.find((b) => b.code === "std") ?? bomOptions[0]);
+		const { product, assemblyOptions } = await buildableProduct(ctx.db, part.id);
+		const assembly = a.code
+			? assemblyOptions.find((b) => b.code === a.code)
+			: (assemblyOptions.find((b) => b.code === "std") ?? assemblyOptions[0]);
 		const v = validate(buildInput, {
 			part_id: String(part.id),
-			bom_id: bom ? String(bom.id) : "",
+			assembly_id: assembly ? String(assembly.id) : "",
 			qty: formValue(a.qty),
 			serial: a.serial,
 			planned_for: a.planned_for ?? "",
 			notes: a.notes,
 		});
-		if (!v.ok) refuse(v.errors, {}, { part_id: "ref", bom_id: "code" });
-		const errors = await buildPlanErrors(ctx.db, v.data, product, bomOptions);
-		if (Object.keys(errors).length || !product || !bom) refuse(errors, {}, { part_id: "ref", bom_id: "code" });
+		if (!v.ok) refuse(v.errors, {}, { part_id: "ref", assembly_id: "code" });
+		const errors = await buildPlanErrors(ctx.db, v.data, product, assemblyOptions);
+		if (Object.keys(errors).length || !product || !assembly)
+			refuse(errors, {}, { part_id: "ref", assembly_id: "code" });
 		// Numbers are sequential; retry once if someone took the same number meanwhile (as the page does).
 		for (let attempt = 0; ; attempt++) {
 			const number = await nextBuildNumber(ctx.db);
@@ -95,7 +96,7 @@ const planBuild = tool({
 							{
 								number,
 								partId: product.id,
-								bomId: bom.id,
+								assemblyId: assembly.id,
 								qtyMilli: v.data.qty,
 								serial: v.data.serial || null,
 								plannedFor: v.data.planned_for,
@@ -115,7 +116,7 @@ const planBuild = tool({
 						unit: product.unit,
 						qtyMilli: v.data.qty,
 						serial: v.data.serial || null,
-						bom: { bomId: bom.id, code: bom.code, revision: bom.revision },
+						assembly: { assemblyId: assembly.id, code: assembly.code, revision: assembly.revision },
 						plannedFor: v.data.planned_for,
 					},
 				};
@@ -130,7 +131,7 @@ const completeBuild = tool({
 	name: "complete_build",
 	title: "Complete a build",
 	description:
-		"Records a planned or in-progress build as done, as the build page's pick list does: components are consumed from stock, the product is added, and the as-built record keeps every serial and frozen unit cost. Give one serial per unit of each serial-tracked component (get_build lists them under serials_to_scan). Sub-assemblies (make parts) are taken from stock when there is enough, else built now; override per sub-assembly with sub_assemblies (by ref for every occurrence, or by the path get_build shows). Refused, with the reasons, when a serial is missing or repeated, a sub-assembly to build has no active BoM, or the product needs a serial. This writes the stock ledger: it cannot be undone.",
+		"Records a planned or in-progress build as done, as the build page's pick list does: components are consumed from stock, the product is added, and the as-built record keeps every serial and frozen unit cost. Give one serial per unit of each serial-tracked component (get_build lists them under serials_to_scan). Sub-assemblies (make parts) are taken from stock when there is enough, else built now; override per sub-assembly with sub_assemblies (by ref for every occurrence, or by the path get_build shows). Refused, with the reasons, when a serial is missing or repeated, a sub-assembly to build has no active assembly, or the product needs a serial. This writes the stock ledger: it cannot be undone.",
 	rule: { scope: "builds:write", action: "builds.complete" },
 	annotations: writes({ destructive: true, idempotent: false }),
 	input: z.object({
@@ -147,25 +148,27 @@ const completeBuild = tool({
 		sub_assemblies: z
 			.array(
 				z.object({
-					ref: partRef.optional().describe("A make part of the BoM: applies to each place it appears."),
+					ref: partRef.optional().describe("A make part of the assembly: applies to each place it appears."),
 					path: z
 						.string()
 						.regex(/^\d+(\/\d+)*$/)
 						.optional()
 						.describe("Or one place, by the path get_build shows."),
-					mode: z.enum(["stock", "build"]).describe("stock: take it from stock; build: build it now from its BoM."),
+					mode: z
+						.enum(["stock", "build"])
+						.describe("stock: take it from stock; build: build it now from its assembly."),
 				}),
 			)
 			.max(200)
 			.default([]),
 	}),
 	run: async (a, ctx) => {
-		const { build, part, bom } = await buildByNumber(ctx.db, a.number);
+		const { build, part, assembly } = await buildByNumber(ctx.db, a.number);
 		if (!OPEN_STATUSES.includes(build.status)) refuse({ _: "build_not_open" });
 		const [graph, onHand] = await Promise.all([loadGraph(ctx.db), onHandAt(ctx.db)]);
 		const form: Record<string, string> = {};
-		// Every place a make part can appear (the BoM exploded with no stock: all built), to apply a choice by reference.
-		const everywhere = exploding(() => explode(graph, build.bomId, build.qtyMilli, { stock: new Map() }));
+		// Every place a make part can appear (the assembly exploded with no stock: all built), to apply a choice by reference.
+		const everywhere = exploding(() => explode(graph, build.assemblyId, build.qtyMilli, { stock: new Map() }));
 		const makePaths = [...walkTree(everywhere.tree)].filter((n) => n.part.kind === "make");
 		for (const choice of a.sub_assemblies) {
 			if (!choice.ref === !choice.path) throw new ToolError("Give either ref or path for each sub-assembly choice.");
@@ -224,7 +227,7 @@ const completeBuild = tool({
 				unit: part.unit,
 				qtyMilli: build.qtyMilli,
 				serial: build.serial,
-				bom: { bomId: bom.id, code: bom.code, revision: bom.revision },
+				assembly: { assemblyId: assembly.id, code: assembly.code, revision: assembly.revision },
 			},
 			asBuilt: lines.map((l) => ({
 				ref: l.ref,

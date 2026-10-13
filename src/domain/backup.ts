@@ -6,8 +6,8 @@ import { getTableColumns, getTableName } from "drizzle-orm";
 import type { SQLiteTable } from "drizzle-orm/sqlite-core";
 import { z } from "zod";
 import {
-	bomLines,
-	boms,
+	assemblies,
+	assemblyLines,
 	buildLines,
 	builds,
 	changeLog,
@@ -29,8 +29,8 @@ export const BACKUP_VERSION = 1;
 const TABLES: SQLiteTable[] = [
 	suppliers,
 	parts,
-	boms,
-	bomLines,
+	assemblies,
+	assemblyLines,
 	purchaseOrders,
 	poLines,
 	builds,

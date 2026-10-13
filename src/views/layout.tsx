@@ -42,7 +42,7 @@ export const NAV_GROUPS: { key: keyof Dict["navGroups"]; items: NavItem[] }[] = 
 		key: "catalogue",
 		items: [
 			{ key: "parts", href: "/parts", icon: icons.package },
-			{ key: "boms", href: "/boms", icon: icons.listTree },
+			{ key: "assemblies", href: "/assemblies", icon: icons.listTree },
 			{ key: "suppliers", href: "/suppliers", icon: icons.factory },
 			{ key: "margins", href: "/margins", icon: icons.chartColumn, shown: (v) => can(v, "costs.view") },
 		],

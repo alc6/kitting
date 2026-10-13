@@ -64,26 +64,26 @@ Short log of choices made where the brief left room. Newest at the bottom of eac
   as-built lines and are searchable, but a build does not require the serial to be "in stock".
   The company can start without scanning every receipt.
 
-## BoMs
+## Assemblies
 
-- **D21. Explosion and cost roll-up run in TypeScript over an in-memory graph** (`src/domain/bom-graph.ts`),
+- **D21. Explosion and cost roll-up run in TypeScript over an in-memory graph** (`src/domain/assembly-graph.ts`),
   loaded once per request: easy to unit-test and to extend with per-line choices. Recursive CTEs are used
-  where SQL is the natural fit: where-used and the cycle check on save (`src/domain/boms.ts`).
-- **D22. Which BoM is used below the top level:** the part's active `std` variant, else its only active
-  BoM, else the active BoM with the lowest id. Variants are chosen explicitly only for the top-level BoM
+  where SQL is the natural fit: where-used and the cycle check on save (`src/domain/assemblies.ts`).
+- **D22. Which assembly is used below the top level:** the part's active `std` variant, else its only active
+  assembly, else the active assembly with the lowest id. Variants are chosen explicitly only for the top-level assembly
   (e.g. when planning a build).
-- **D23. Active BoMs stay editable**, with a warning; archived BoMs are read-only. "New revision" copies the
-  lines into a draft; activating it archives the previous active BoM of the same parent and code (one batch).
-  Done builds keep their as-built record, so editing a BoM never rewrites history.
-- **D24. Cycle checks cover draft and active BoMs** (archived ones are ignored), on every line added, when
-  an archived BoM is activated or restored, and on import (whole resulting graph checked in memory).
+- **D23. Active assemblies stay editable**, with a warning; archived assemblies are read-only. "New revision" copies the
+  lines into a draft; activating it archives the previous active assembly of the same parent and code (one batch).
+  Done builds keep their as-built record, so editing an assembly never rewrites history.
+- **D24. Cycle checks cover draft and active assemblies** (archived ones are ignored), on every line added, when
+  an archived assembly is activated or restored, and on import (whole resulting graph checked in memory).
 - **D25. Costs are rolled up in millicents** (cents × 1000) so fractional quantities (0.35 m of cable)
   stay exact to a thousandth of a cent; display rounds half away from zero. A `make`/`kit` part without an
-  active BoM falls back to its standard cost; any missing cost marks the result incomplete and names the parts.
+  active assembly falls back to its standard cost; any missing cost marks the result incomplete and names the parts.
 - **D26. Exploded quantities round up** to the thousandth (never under-pick).
-- **D27. `boms.csv` replaces the lines of each BoM it mentions**, grouped by (parent_ref, code, revision).
+- **D27. `assemblies.csv` replaces the lines of each assembly it mentions**, grouped by (parent_ref, code, revision).
   Defaults: code `std`, revision `Rev1`, status `draft`. All rows of a group must share a status; an `active`
-  group archives the previous active BoM of the same parent and code.
+  group archives the previous active assembly of the same parent and code.
 - **D28. The tree view shows the full structure** (no stock consumption); the exploded list can optionally
   take sub-assemblies from stock, as builds will.
 
@@ -96,7 +96,7 @@ Short log of choices made where the brief left room. Newest at the bottom of eac
   ledger records reality rather than blocking the shop floor.
 - **D52. Every move snapshots `unit_cost_cents`** (standard cost for adjustments and counts, PO price for
   receipts), for later audits. Valuation itself uses current costs: buy parts at standard cost, make parts at
-  their BoM roll-up (or standard cost without BoM), with an "as of" date that sums moves up to the end of that
+  their assembly roll-up (or standard cost without assembly), with an "as of" date that sums moves up to the end of that
   day (UTC). Missing costs are flagged and make the total understated.
 - **D53. JSON backup = every table, in foreign-key order, with ids**, plus the last applied D1 migration.
   Restore is admin-only, shows the row counts first, refuses backups from another schema version, whitelists
@@ -111,7 +111,7 @@ Short log of choices made where the brief left room. Newest at the bottom of eac
   it re-explodes the build with current stock and the submitted choices, then validates.
 - **D61. Completion rules:** every unit of a serial-tracked requirement (buy part, or make part taken from
   stock) needs a non-empty serial, no duplicates; a serial-tracked product needs its own serial and is built
-  one unit at a time; a sub-assembly that must be built but has no active BoM blocks completion. The
+  one unit at a time; a sub-assembly that must be built but has no active assembly blocks completion. The
   "picked" checkboxes are a shop-floor aid, not validated. Consuming below zero is allowed with a warning.
 - **D62. One batch, fixed order:** consume moves → output move → as-built lines → status update
   (`WHERE status IN ('planned','in_progress')`). A second completion fails on the unique `build_output`
@@ -129,7 +129,7 @@ Short log of choices made where the brief left room. Newest at the bottom of eac
 - **D70. Shortages = all planned and in-progress builds**, exploded in planned-date order with one shared
   availability map, so sub-assemblies in stock are allotted once. Only `buy` parts are netted:
   `need − on_hand − on_order`; make parts taken from stock are already covered, and make parts that must be
-  built without an active BoM are listed apart. A buy part below zero is short of its deficit even when no
+  built without an active assembly are listed apart. A buy part below zero is short of its deficit even when no
   build needs it.
 - **D71. "On order" = remaining quantities of draft, sent and partly received POs.** Counting drafts means
   "create draft POs" can be clicked twice without ordering twice; cancelling a draft brings the shortage back.
@@ -195,7 +195,7 @@ Short log of choices made where the brief left room. Newest at the bottom of eac
   (`.num`, `.kind-*`, `.status-*`).
 - **D82a. Nested `<details>` chevrons use `[details[open]>summary_&]:rotate-90`**, not `group-open:`, which
   matches any open ancestor (a closed child under an open parent would show as open). Collapsible cards, the
-  pick-list choice (radios styled as a segmented control) and the BoM tree all work without JavaScript.
+  pick-list choice (radios styled as a segmented control) and the assembly tree all work without JavaScript.
 - **D82. Theme and sidebar state are cookies set by plain links.** A client-side theme switch needs an inline
   pre-paint script to avoid a flash of the wrong theme, which the CSP forbids. `/theme/:mode` (system, light,
   dark) and `/sidebar/:state` set a cookie and redirect back to a local path, like `/lang`; the layout renders
@@ -210,13 +210,13 @@ Short log of choices made where the brief left room. Newest at the bottom of eac
   (only the icons in `src/views/icons.tsx` are bundled). Lucide is shadcn's default icon set (ISC licence).
 - **D86. `tailwind-merge` at runtime for `cn()`.** A few KB in the Worker, so `<Button class="w-full">` and
   similar overrides behave as in shadcn without hand-ordered class strings.
-- **D87. The BoM diagram is server-rendered SVG.** Mermaid or D3 would need client code and inject `<style>`
+- **D87. The assembly diagram is server-rendered SVG.** Mermaid or D3 would need client code and inject `<style>`
   elements (CSP). `src/domain/tree-layout.ts` is a pure, unit-tested left-to-right layout (leaves on their own
   rows, parents centred on their children, so boxes never overlap); the SVG is styled with Tailwind
   `fill-*`/`stroke-*` classes and app.js adds zoom, fit and drag-to-pan. Like the tree view it shows the
   structure without stock: a part used in two places appears twice, each with its branch quantity. Depth and
   "sub-assemblies and kits only" are URL parameters, so every view is a link.
-- **D88. Global search reuses each list's own filter** (parts, BoMs, builds with component serials, POs,
+- **D88. Global search reuses each list's own filter** (parts, assemblies, builds with component serials, POs,
   suppliers) and includes archived and closed records, with an exact part reference first.
 - **D89. The mobile sidebar is a native popover** (`popover="auto"` opened by `popovertarget`): off-canvas
   with a backdrop, light dismiss and Escape, without JavaScript. From the `lg` breakpoint CSS shows the same
@@ -234,7 +234,7 @@ Short log of choices made where the brief left room. Newest at the bottom of eac
   prices are entered. `parts.csv` keeps its supplier columns, meaning the preferred offer;
   `part_suppliers.csv` loads the others.
 - **D91. Valuation shows two methods side by side; the company has not chosen one.** *Standard*: on-hand ×
-  the standard cost valid on the "as of" date (make parts at their roll-up with today's BoM structure).
+  the standard cost valid on the "as of" date (make parts at their roll-up with today's assembly structure).
   *Weighted average* (PMP): a pure replay of the ledger (`src/domain/costing.ts`) with a running quantity
   and value per part in integer millicents (no rounded average carried over). Receipts enter at the PO
   price and reset the average on empty or negative stock; build outputs enter at the average value of what
@@ -248,9 +248,9 @@ Short log of choices made where the brief left room. Newest at the bottom of eac
   only when someone edits or imports them). Before migration 0002
   nothing was recorded, so each cost's history starts with a seed row dated from the part's last update; an
   "as of" date before it falls back to that first value, and the valuation page says so.
-- **D93. Selling prices: one per product, optionally overridden per BoM variant**
-  (`parts.sale_price_cents`, `boms.sale_price_cents`; `boms.csv` gains an optional `sale_price` column, one
-  value per BoM). Prices exclude VAT. Margins are shown as an amount, as a rate on the selling price
+- **D93. Selling prices: one per product, optionally overridden per assembly variant**
+  (`parts.sale_price_cents`, `assemblies.sale_price_cents`; `assemblies.csv` gains an optional `sale_price` column, one
+  value per assembly). Prices exclude VAT. Margins are shown as an amount, as a rate on the selling price
   (*taux de marque*) and as a markup on cost (*taux de marge*), in integer basis points. Planned margin uses
   the standard cost roll-up; actual margin uses completed builds valued at weighted average cost.
 - **D94. Ordering from another supplier is a per-line choice on the shortage list.** Lines stay grouped by
@@ -275,12 +275,12 @@ Short log of choices made where the brief left room. Newest at the bottom of eac
   "Use average as standard cost" (refused while the average is incomplete) and "Use preferred offer price
   as standard cost" write the history with a note in the user's language. The price chart is server-rendered
   SVG: standard cost as a step line, prices paid as dots.
-- **D98. Margin history is derived, never stored.** Each sellable item (`/margins/boms/:id`,
+- **D98. Margin history is derived, never stored.** Each sellable item (`/margins/assemblies/:id`,
   `/margins/parts/:id`) replays the price history (`src/domain/margin-history.ts`, pure core): one planned
   point per day on which the standard cost of a component of its roll-up (buy and fee parts, make and kit
-  parts without an active BoM; a rolled-up sub-assembly's own standard cost does not count) or its selling
+  parts without an active assembly; a rolled-up sub-assembly's own standard cost does not count) or its selling
   price changed, skipping days that did not move it (e.g. the part's price while a variant has its own).
-  Same limits as the dated valuation (D91, D92): today's BoM structure, and costs before the history
+  Same limits as the dated valuation (D91, D92): today's assembly structure, and costs before the history
   started use their first recorded value (flagged). Actual points are the completed builds at weighted
   average cost against the selling price valid on the day each was completed: there is no sales record.
   Snapshots were rejected: they would duplicate data the log already holds and drift from it. The chart
@@ -316,7 +316,7 @@ Short log of choices made where the brief left room. Newest at the bottom of eac
 - **D101. Four roles, decided by the app; Cloudflare Access only says who the user is.** `viewer` <
   `operator` < `planner` < `admin`, each able to do what the previous one can (`atLeast()` in
   `src/domain/users.ts`). Operators run the shop floor (builds, stock adjustments and counts, receiving POs);
-  planners also edit the catalogue, BoMs, suppliers, offers, prices and POs and use Import / Export; admins
+  planners also edit the catalogue, assemblies, suppliers, offers, prices and POs and use Import / Export; admins
   also confirm imports, delete, archive, restore and manage users. Roles live in a `users` table (migration
   0004, additive, with `settings`), edited by admins at `/users`. Resolution order: `ADMIN_EMAILS` (always
   admin, cannot be demoted from the UI, so there is no "last admin" to protect and no lock-out), then the
@@ -333,9 +333,9 @@ Short log of choices made where the brief left room. Newest at the bottom of eac
 - **D103. Cost visibility is one admin switch, off by default.** Planners and admins always see costs (they
   edit prices and orders). Viewers and operators see them only when an admin ticks "Viewers and operators
   see costs" on `/users` (`settings.lower_roles_see_costs`); a per-user flag was not needed. Without it,
-  pages drop cost columns, cards and sections (the stock value card, offer prices, price history, BoM and
+  pages drop cost columns, cards and sections (the stock value card, offer prices, price history, assembly and
   build costs, PO prices: an operator receives a PO without seeing them); `Money` and `CostView` render
-  "Hidden" as a backstop; the moves and BoM explosion CSVs lose their cost columns; margins, valuation and
+  "Hidden" as a backstop; the moves and assembly explosion CSVs lose their cost columns; margins, valuation and
   the PO CSV are refused. `test/costs-hidden.test.ts` seeds distinctive amounts and checks every page and
   CSV an operator or a viewer can open; it was checked to fail when costs are forced visible.
 - **D104. The JSON backup is admin-only** (it was open to any signed-in user, and is the whole database).
@@ -378,7 +378,7 @@ Short log of choices made where the brief left room. Newest at the bottom of eac
   before 0005 get no backfilled "insert" entry: their later changes carry full before/after rows, so they
   can be undone all the same.
   The ledgers (`stock_moves`, `build_lines`) and `price_history` are not tracked: they are append-only
-  already. Updates that only touch who/when (a BoM "touched" when a line changes) are not logged.
+  already. Updates that only touch who/when (an assembly "touched" when a line changes) are not logged.
 - **D107. The trigger SQL is generated from the Drizzle schema.** `npm run -s db:triggers`
   (`scripts/history-triggers.mjs`, Node 22.18+ type stripping, no new dependency) prints `DROP TRIGGER IF
   EXISTS` + `CREATE TRIGGER` for every tracked table; its output is appended to the migration. A column added
@@ -397,17 +397,17 @@ Short log of choices made where the brief left room. Newest at the bottom of eac
   back (signed and dated by whoever undoes it), an insert is deleted, a delete is re-inserted with its id and
   its original who/when (ids are never reused: AUTOINCREMENT). It is refused, changing nothing, when a row's
   data columns differ from what the change set left (who/when are ignored, so a later "touch" does not block),
-  when a deleted row is used since (a stock move on a part, a line added to a BoM…), when a restored row
+  when a deleted row is used since (a stock move on a part, a line added to an assembly…), when a restored row
   points at a row that no longer exists, or when a restored unique value (a ref, a PO number) is taken. These
   are checked in TypeScript first, a few queries per table, so the message can name the row and who changed
   it; then the batch repeats them as guards (`UPDATE change_context SET conflict = 1 WHERE …` fails the
   `revert_conflict` CHECK) so that a change made in between rolls everything back. Foreign keys are deferred
   in the batch, so rows come back in any order; in-batch reference guards are only needed where a cascade
-  would delete silently (lines of a BoM or PO, offers of a part). An undo is itself a change set, so undoing
+  would delete silently (lines of an assembly or PO, offers of a part). An undo is itself a change set, so undoing
   an undo re-applies the change. Undoing an import of thousands of rows is one batch of the same size as the
   import.
 - **D110. Summaries are stored text, in the author's language, without amounts.** They come from the
-  `history.summaries` dictionary at the time of the change ("Edit BoM LAMP-DESK std Rev3"), so the history
+  `history.summaries` dictionary at the time of the change ("Edit assembly LAMP-DESK std Rev3"), so the history
   reads like a log of what people did; an MCP client will write its own. Storing a message key with
   parameters and translating at read time was considered: more columns and a contract with API clients, for
   a mixed-language team that does not exist yet. Summaries never contain an amount: every role reads them.
@@ -417,15 +417,15 @@ Short log of choices made where the brief left room. Newest at the bottom of eac
   or removing a product image deletes the previous file from R2, and so does deleting a part that has an image:
   those change sets are non-revertible too (an undo would point at a missing file). A restore is recorded as
   one non-revertible change set. Undo keeps the price history consistent: every price an undo changes back
-  (standard cost, selling price of a part or BoM variant, offer price) is appended with source `revert` and
-  the note `#<change set>`; a part or BoM that an undo deletes takes its price history with it, as deleting it
+  (standard cost, selling price of a part or assembly variant, offer price) is appended with source `revert` and
+  the note `#<change set>`; a part or assembly that an undo deletes takes its price history with it, as deleting it
   from its page does.
 - **D112. Anyone reads the history; undoing needs the edit rights of everything touched.** The Recent changes
   page and the History tabs are open to every role, with amounts in snapshots nulled by `redactCosts()` (which
   now also matches snake_case `*_cents` keys) and shown through `Money` ("Hidden"); the cost sweep covers the
   history pages and raw cent values. Undo is `POST /history/:id/revert`, declared `history.revert` (operator:
   the lowest role that can edit something), and `revertChangeSet()` also requires the edit action of each
-  table touched (`TABLE_ACTIONS`: parts → `parts.edit`, offers → `prices.edit`, BoM lines → `boms.edit`, PO
+  table touched (`TABLE_ACTIONS`: parts → `parts.edit`, offers → `prices.edit`, assembly lines → `assemblies.edit`, PO
   lines → `purchasing.order`, builds → `builds.plan`, users and settings → `users.manage`…). So an operator
   can undo the planning of a build but not a part edit. Undoing a creation deletes the row with the edit
   right, not the admin-only delete right: the deletion is logged and can itself be undone. D136 adds
@@ -440,7 +440,7 @@ Short log of choices made where the brief left room. Newest at the bottom of eac
   filters on source, user, dates and summary text, 50 per page; a change set's page shows every row it touched,
   field by field ("quantity: 1 → 3"), with names instead of ids, translated kinds, statuses and roles, and
   amounts through `Money`; who/when columns and the deprecated supplier columns of parts are not shown. Parts,
-  suppliers, BoMs and POs have a History tab with their own rows and those of their offers or lines (found
+  suppliers, assemblies and POs have a History tab with their own rows and those of their offers or lines (found
   with `json_extract` on the snapshots). The Undo button shows only to those allowed (D112) on change sets
   that can be undone and are not undone already; a refused undo re-renders the page (409) with the reasons.
   The sidebar label lives in the `history` dictionary section (`NavItem.label`).
@@ -495,9 +495,9 @@ Short log of choices made where the brief left room. Newest at the bottom of eac
   OAuth runs only over HTTPS or on a loopback host (the library refuses anything else), so `wrangler dev`
   needs `--local-upstream localhost:8787 --upstream-protocol http` (README).
 - **D119. Read tools reuse the domain code and speak in references.** Eleven tools over the existing queries
-  (`listParts`, `partBomSummary`, `whereUsed`, `explode`, `CostCalculator`, `listMoves`, `buildPickList`,
+  (`listParts`, `partAssemblySummary`, `whereUsed`, `explode`, `CostCalculator`, `listMoves`, `buildPickList`,
   `computeShortages`, `listPos`…), all annotated `readOnlyHint`. Inputs are what a person would say: part
-  references (case-insensitive), a BoM by id or by the reference of the part it builds (+ variant code or
+  references (case-insensitive), an assembly by id or by the reference of the part it builds (+ variant code or
   revision), build and PO numbers; quantities as decimal strings or numbers, parsed by `parseMilli` (never
   floats); lists have a default and a maximum limit. zod validates every input; errors are sentences that say
   what to do next ("Use search_parts to find it"); unexpected errors are logged and returned without details.
@@ -532,16 +532,16 @@ Short log of choices made where the brief left room. Newest at the bottom of eac
 
 ## MCP write tools
 
-- **D125. Archiving is its own permission.** `parts.archive` and `boms.archive` (admin, as before) are split from
-  `parts.delete` and `boms.delete`: the part archive/unarchive routes and the BoM archive route declare them, and
-  the `*.delete` actions now mean permanent deletes only (parts with their offers and images, suppliers, BoMs,
+- **D125. Archiving is its own permission.** `parts.archive` and `assemblies.archive` (admin, as before) are split from
+  `parts.delete` and `assemblies.delete`: the part archive/unarchive routes and the assembly archive route declare them, and
+  the `*.delete` actions now mean permanent deletes only (parts with their offers and images, suppliers, assemblies,
   POs). That lets `NEVER_OVER_MCP` list every `*.delete` action while `catalog:archive` offers archiving.
-  `TABLE_ACTIONS` is unchanged: archiving is an UPDATE of `parts` or `boms`, undone with `parts.edit` or
-  `boms.edit` like any edit (as D112 lets the edit right undo a creation); a planner could already bring a BoM
-  back with "Set back to draft" or "Activate" (`boms.edit`). Amended by D136: undoing a change of a part's
-  `archived` flag needs `parts.archive`; BoMs stay as described here.
+  `TABLE_ACTIONS` is unchanged: archiving is an UPDATE of `parts` or `assemblies`, undone with `parts.edit` or
+  `assemblies.edit` like any edit (as D112 lets the edit right undo a creation); a planner could already bring an assembly
+  back with "Set back to draft" or "Activate" (`assemblies.edit`). Amended by D136: undoing a change of a part's
+  `archived` flag needs `parts.archive`; assemblies stay as described here.
 - **D126. Write scopes are table rows with their actions.** `catalog:write` → `parts.edit`, `suppliers.edit`,
-  `boms.edit`; `prices:write` → `prices.edit`; `catalog:archive` → `parts.archive`, `boms.archive`;
+  `assemblies.edit`; `prices:write` → `prices.edit`; `catalog:archive` → `parts.archive`, `assemblies.archive`;
   `stock:write` → `stock.adjust`, `stock.count`; `builds:write` → `builds.plan`, `builds.complete`;
   `purchasing:write` → `purchasing.order`, `purchasing.receive`. As D116 planned, consent offers a scope when the
   role has at least one of its actions, and each tool declares one action of its scope (a test checks it), so an
@@ -551,8 +551,8 @@ Short log of choices made where the brief left room. Newest at the bottom of eac
   conflicts are shown.
 - **D127. Each write tool is one change set through the pages' own rules.** A write tool builds the values its
   page would post and runs the same domain validation and statement builders. The route checks that lived in
-  handlers moved to `src/domain` first (`checkPart`, `supplierNameTaken`, `newBomErrors`, `componentError`,
-  `archivedBomCycles`, `buildPlanErrors`, `adjustmentErrors`, `planReceipts`, `offerFormStatements`), and the
+  handlers moved to `src/domain` first (`checkPart`, `supplierNameTaken`, `newAssemblyErrors`, `componentError`,
+  `archivedAssemblyCycles`, `buildPlanErrors`, `adjustmentErrors`, `planReceipts`, `offerFormStatements`), and the
   routes call them too. `saveChange()` (`src/mcp/kit.ts`) runs the statements with `runChangeSet()`: the user's
   email, source `mcp`, the client's name (kept in the grant's encrypted props at consent; grants made before
   show their client ID) and a summary from `history.summaries` in the deployment's `DEFAULT_LOCALE` (summaries
@@ -568,18 +568,18 @@ Short log of choices made where the brief left room. Newest at the bottom of eac
   Price history rows keep the source `form`: `price_history.source` has a CHECK without `mcp`, and adding it
   would rebuild the table, which schema changes avoid on D1; the change set records the origin. Specific choices:
   `complete_build` takes serials per part and sub-assembly choices by reference (every place the part appears,
-  found by exploding the BoM with no stock) or by the `path` that `get_build` now returns, and refuses serials
+  found by exploding the assembly with no stock) or by the `path` that `get_build` now returns, and refuses serials
   the pick list would not use (the page cannot send them); `update_draft_po` sets a quantity per part (`0`
   removes the line), its expected date and notes work on any PO like its page, its lines only on drafts;
   `create_draft_pos` maps the shortage page's supplier checkboxes (`suppliers`) and "order from" selects
   (`order_from`), refusing an `order_from` the page would silently skip.
-- **D128. Over MCP, BoMs change through draft revisions.** `set_bom_lines` replaces every line at once, each
+- **D128. Over MCP, assemblies change through draft revisions.** `set_assembly_lines` replaces every line at once, each
   checked like the editor's (known, not archived, whole units for serial-tracked parts, no cycle), nothing written
-  if one fails. It never edits an active BoM: in one change set it creates the next revision (draft, the active
-  one's notes, no copied lines since they are replaced) and inserts the lines (`bom_id` by a subquery on parent,
-  code and revision), and its result says the active BoM is unchanged. `activate_bom` is the separate, explicit
+  if one fails. It never edits an active assembly: in one change set it creates the next revision (draft, the active
+  one's notes, no copied lines since they are replaced) and inserts the lines (`assembly_id` by a subquery on parent,
+  code and revision), and its result says the active assembly is unchanged. `activate_assembly` is the separate, explicit
   step; it archives the previous active revision, which can be activated again (re-checking cycles, as the page
-  does). Archived BoMs are read-only (`new_bom_revision` copies one). The pages still edit an active BoM line by
+  does). Archived assemblies are read-only (`new_assembly_revision` copies one). The pages still edit an active assembly line by
   line: a person sees each change, while an assistant's batch should be reviewed before builds use it.
 - **D129. `list_recent_changes`.** On `catalog:read`, since every role reads Recent changes. Filters are the
   page's (source, user, text, dates) plus `before` for paging; each change set has its summary, source, client,
@@ -601,7 +601,7 @@ Short log of choices made where the brief left room. Newest at the bottom of eac
   undo of its creation, SQL) leaves grants that the per-call check refuses, and that would work again if the
   person were listed again before they expire (30 days at most).
 - **D131. Server instructions for writes.** The instructions returned at `initialize` and `server/discover` now
-  say to confirm with the user before any write, that BoM edits go through draft revisions activated
+  say to confirm with the user before any write, that assembly edits go through draft revisions activated
   separately, and that every change can be undone from Recent changes except stock and build ledger operations
   (corrected with reverse movements), which the assistant itself cannot undo. Tool descriptions repeat what
   matters for each tool.
@@ -615,7 +615,7 @@ Short log of choices made where the brief left room. Newest at the bottom of eac
   limit), so the same folder loads in Claude Code, Cowork, claude.ai and any Agent Skills client. The skill states
   what the code does, not what the tool descriptions hope: history links only when `revertible`, the several
   shapes of a refusal (a write's "Refused, nothing was changed", a failed lookup, a role or scope refusal answered
-  before the tool runs), `set_bom_lines` not copying lines into the new revision. Rejected: a skill without a
+  before the tool runs), `set_assembly_lines` not copying lines into the new revision. Rejected: a skill without a
   plugin (no connector bundled, two installs); documenting the tools only in the README (not loaded when needed).
 - **D133. Keeping the skill honest: tests, not review.** `test/plugin.test.ts` (Vitest, `?raw` imports, so it runs
   in workerd like the rest) fails when a registered tool is missing from `references/tools.md` (one section each,
@@ -652,16 +652,16 @@ Short log of choices made where the brief left room. Newest at the bottom of eac
   written. The Undo button follows the same rule: `ChangeSetSummary.columnActions` (computed in SQL from the same
   map, with `json_extract` on the snapshots) feeds `missingActions()` in `canPressUndo`, so the list, the detail
   page and the History tabs hide it, and the refusal page says "Archiving parts". A change set that touches a
-  part without changing `archived` still needs only `parts.edit`. Out of scope on purpose: BoMs. Planners can
-  already restore an archived BoM ("Set back to draft", "Activate", `boms.edit`) and activating a revision
-  archives the previous one, so BoM status changes keep using `boms.edit` through `TABLE_ACTIONS`. Adding another
+  part without changing `archived` still needs only `parts.edit`. Out of scope on purpose: assemblies. Planners can
+  already restore an archived assembly ("Set back to draft", "Activate", `assemblies.edit`) and activating a revision
+  archives the previous one, so assembly status changes keep using `assemblies.edit` through `TABLE_ACTIONS`. Adding another
   gated column is one line in `COLUMN_ACTIONS` (plus an `history.rights` label in both dictionaries).
 - **D137. The dashboard is a main column and an alerts rail.** Shortages, upcoming builds and open POs stack in a
   two-thirds column; stock alerts sit in a one-third rail beside them (from `xl`, single column below). Side-by-side
   rows left a void under whichever card was shorter (an empty shortage list next to ten alerts). The rail starts at
   `xl` because at `lg` with the sidebar open it is too narrow for a part reference; alert rows stack the quantity
   above the badge for the same reason. Below `xl` the alerts come after the open POs.
-- **D138. A searchable dialog picks the part, the typed field stays.** The forms that take a part (BoM line, new BoM
+- **D138. A searchable dialog picks the part, the typed field stays.** The forms that take a part (assembly line, new assembly
   product, PO line, stock adjustment) kept a text input with a `<datalist>`: no search beyond the prefix, no photos,
   and the whole catalogue in the page. `PartPicker` (`src/views/part-picker.tsx`) keeps that field as the baseline
   (same name, validation and posts) and adds a "Browse" button that `app.js` reveals, while it drops the input's
@@ -670,8 +670,8 @@ Short log of choices made where the brief left room. Newest at the bottom of eac
   signed-in user, no price or cost): `q` on reference and name (case-insensitive, `%`/`_` escaped), exact reference
   first then prefix then reference, 20 per page, page clamped to the last, one query for the page and one count
   (`src/domain/part-picker.ts`). The form's rules travel as parameters so the picker never offers a part the form
-  refuses: `kinds` (`buy,make` for the PO line and the adjustment, as `isStocked`; `make,kit` for a new BoM) and
-  `exclude` (a BoM's own product; cycles stay checked on save). The new BoM product is a `<select>` of part ids, not
+  refuses: `kinds` (`buy,make` for the PO line and the adjustment, as `isStocked`; `make,kit` for a new assembly) and
+  `exclude` (an assembly's own product; cycles stay checked on save). The new assembly product is a `<select>` of part ids, not
   a text input (the MCP tool posts the same field): it stays one, and a pick sets its value from `data-pick-id`.
   The dialog's own kind filter is a radio group (`kind`) inside `kinds`, never a set of checkboxes, so clearing it
   cannot widen the form's set. Arrow-key navigation is left out: results are buttons, Tab and Enter work.
@@ -684,3 +684,13 @@ Short log of choices made where the brief left room. Newest at the bottom of eac
   (typed `Record<Action, string>`) fails to compile without its label. The one-line role descriptions stay as the
   tooltip of each column header; a cell is a check or a dash with screen-reader text, and the table scrolls
   sideways on a phone.
+- **D140. Bills of materials are called assemblies, everywhere.** "BoM" read as jargon to the people using the app,
+  so the concept is an **assembly** (French **assemblage**): the components, variants and revisions of a make or kit
+  part. The rename covers the interface, URLs (`/assemblies`), permission actions (`assemblies.edit`…), MCP tools
+  (`get_assembly`, `explode_assembly`, `set_assembly_lines`…), the schema (`assemblies`, `assembly_lines`), the CSV
+  import (`assemblies.csv`) and the backup format. Nothing had been deployed, so the migrations were edited in place
+  rather than renamed by a new one; a local database from before needs a reset (version 0.2.0). "Sub-assembly" keeps
+  its meaning: a make part used inside another assembly. Where a line would be named after its assembly (the history
+  label, the import hint), it is a **component**, never an "assembly line" (French: composant, never "ligne
+  d'assemblage"), which would read as a production line; the editor itself keeps "Lines".
+  The skill and the MCP instructions still list "bill of materials", "BoM" and "nomenclature" as synonyms.

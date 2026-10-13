@@ -8,8 +8,8 @@ All on the fictional demo dataset (`examples/demo/`: the modular desk lamp `LAMP
 **User:** Plan 5 warm desk lamps and tell me what to order.
 
 1. `search_parts({ "query": "lamp" })` finds `LAMP-DESK` (make, serial-tracked). `get_part({ "ref": "LAMP-DESK" })`
-   shows two active BoMs: `std Rev2` and `warm Rev1`.
-2. `explode_bom({ "bom": "LAMP-DESK", "code": "warm", "qty": 5, "use_stock": true })`: short on `BASE-PLATE`
+   shows two active assemblies: `std Rev2` and `warm Rev1`.
+2. `explode_assembly({ "assembly": "LAMP-DESK", "code": "warm", "qty": 5, "use_stock": true })`: short on `BASE-PLATE`
    (needs 5, 3 on hand) and `LED-5W-WW` (5, 4 on hand); the 2 `ARM-ASSY` in stock are used, the other arms are
    built from parts that are in stock. `MANUAL` has no cost, so the cost is incomplete.
 
@@ -53,22 +53,22 @@ No write is made without that confirmation.
 
 1. `search_parts({ "query": "felt" })` finds `PAD-FELT`; `search_parts({ "query": "base" })` finds `BASE-ASSY`.
    `get_part({ "ref": "BASE-ASSY" })`: active `std Rev1`, used by `LAMP-DESK` (std Rev2, warm Rev1).
-2. `get_bom({ "bom": "BASE-ASSY" })`: `BASE-PLATE` 1, `PAD-FELT` 4, `SWITCH-INL` 1, `DRV-12V` 1, `CABLE-2C` 1.5,
+2. `get_assembly({ "assembly": "BASE-ASSY" })`: `BASE-PLATE` 1, `PAD-FELT` 4, `SWITCH-INL` 1, `DRV-12V` 1, `CABLE-2C` 1.5,
    `SCREW-M4X10` 3.
 
    > **Claude:** The base has 4 felt pads today. Adding 2 makes 6. Because Rev1 is active I will not edit it: I
    > will create a draft Rev2 with all six lines (felt pads 6, the rest unchanged). Nothing changes for builds
    > until you activate it. It affects both lamp variants. Go ahead?
 
-3. After a yes: `set_bom_lines({ "bom": "BASE-ASSY", "lines": [ { "ref": "BASE-PLATE", "qty": 1 }, { "ref": "PAD-FELT", "qty": 6 }, { "ref": "SWITCH-INL", "qty": 1 }, { "ref": "DRV-12V", "qty": 1 }, { "ref": "CABLE-2C", "qty": 1.5 }, { "ref": "SCREW-M4X10", "qty": 3 } ] })`
+3. After a yes: `set_assembly_lines({ "assembly": "BASE-ASSY", "lines": [ { "ref": "BASE-PLATE", "qty": 1 }, { "ref": "PAD-FELT", "qty": 6 }, { "ref": "SWITCH-INL", "qty": 1 }, { "ref": "DRV-12V", "qty": 1 }, { "ref": "CABLE-2C", "qty": 1.5 }, { "ref": "SCREW-M4X10", "qty": 3 } ] })`
    returns `new_revision: true`, the draft `Rev2` and the undo link.
-4. `get_bom({ "bom": "BASE-ASSY", "revision": "Rev2" })` and `explode_bom` confirm the lines; the unit cost goes up
+4. `get_assembly({ "assembly": "BASE-ASSY", "revision": "Rev2" })` and `explode_assembly` confirm the lines; the unit cost goes up
    by 0.10 (2 pads at 0.05), if costs are visible.
 
    > **Claude:** Draft Rev2 is ready: 6 felt pads, unit cost +0.10. Activate it so builds use it? The current
    > Rev1 would be archived and can be re-activated.
 
-5. Only after the next yes: `activate_bom({ "bom": "BASE-ASSY", "revision": "Rev2" })`. Claude reports Rev1
+5. Only after the next yes: `activate_assembly({ "assembly": "BASE-ASSY", "revision": "Rev2" })`. Claude reports Rev1
    archived, Rev2 active, and the undo link.
 
 ## 4. Refused: not allowed

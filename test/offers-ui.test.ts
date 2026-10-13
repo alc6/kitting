@@ -231,7 +231,7 @@ describe("prices on the part page", () => {
 		).toEqual({ price_cents: 660, note: "From the offer of Lumen Parts Co" });
 	});
 
-	it("shows the selling price and the planned margin on the BoM roll-up", async () => {
+	it("shows the selling price and the planned margin on the assembly roll-up", async () => {
 		await loadDemo({ stock: false });
 		const html = await (await request(`/parts/${await partId("LAMP-DESK")}`)).text();
 		expect(html).toContain("Selling price");

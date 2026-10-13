@@ -7,7 +7,7 @@ import { dict, isLocale, type Locale } from "./i18n";
 import { accessAuth } from "./middleware/auth";
 import { assertWritesHavePermissions, loadRole } from "./middleware/roles";
 import { originCheck, securityHeaders } from "./middleware/security";
-import { bomRoutes } from "./routes/boms";
+import { assemblyRoutes } from "./routes/assemblies";
 import { buildRoutes } from "./routes/builds";
 import { authorizeRoutes, connectedAppRoutes } from "./routes/connect";
 import { dashboardRoutes } from "./routes/dashboard";
@@ -87,7 +87,7 @@ export function createApp() {
 	app.route("/parts", imageRoutes);
 	app.route("/parts", partRoutes);
 	app.route("/builds", buildRoutes);
-	app.route("/boms", bomRoutes);
+	app.route("/assemblies", assemblyRoutes);
 	app.route("/stock", stockRoutes);
 	app.route("/purchasing", purchasingRoutes);
 	app.route("/import", importRoutes);

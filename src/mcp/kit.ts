@@ -5,9 +5,9 @@
 import type { ToolAnnotations } from "@modelcontextprotocol/server";
 import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
-import { boms, builds, purchaseOrders } from "../db/schema";
-import { BomCycleError, type BomGraph, defaultBom } from "../domain/bom-graph";
-import { getBom } from "../domain/boms";
+import { assemblies, builds, purchaseOrders } from "../db/schema";
+import { getAssembly } from "../domain/assemblies";
+import { AssemblyCycleError, type AssemblyGraph, defaultAssembly } from "../domain/assembly-graph";
 import { getBuild } from "../domain/builds";
 import { runChangeSet } from "../domain/history";
 import type { ToolRule } from "../domain/mcp-scopes";
@@ -91,17 +91,17 @@ export const partRef = z
 	.max(64)
 	.describe('A part reference, e.g. "LAMP-DESK" (case-insensitive).');
 
-export const bomSelector = {
-	bom: z
+export const assemblySelector = {
+	assembly: z
 		.union([z.number().int().positive(), z.string().trim().min(1).max(64)])
-		.describe("A BoM id (number), or the reference of the part it builds (string): its active BoM is used."),
+		.describe("An assembly id (number), or the reference of the part it builds (string): its active assembly is used."),
 	code: z
 		.string()
 		.trim()
 		.min(1)
 		.max(64)
 		.optional()
-		.describe('Variant code when giving a part reference (default: "std", else its only active BoM).'),
+		.describe('Variant code when giving a part reference (default: "std", else its only active assembly).'),
 	revision: z
 		.string()
 		.trim()
@@ -135,38 +135,48 @@ export async function partByRef(db: Db, ref: string) {
 	return part;
 }
 
-export async function resolveBom(
+export async function resolveAssembly(
 	db: Db,
-	graph: BomGraph,
-	args: { bom: number | string; code?: string | undefined; revision?: string | undefined },
+	graph: AssemblyGraph,
+	args: { assembly: number | string; code?: string | undefined; revision?: string | undefined },
 ) {
-	if (typeof args.bom === "number") {
-		const found = await getBom(db, args.bom);
-		if (!found) throw new ToolError(`No BoM with id ${args.bom}. Use get_part to list a part's BoMs.`);
+	if (typeof args.assembly === "number") {
+		const found = await getAssembly(db, args.assembly);
+		if (!found) throw new ToolError(`No assembly with id ${args.assembly}. Use get_part to list a part's assemblies.`);
 		return found;
 	}
-	const part = await partByRef(db, args.bom);
+	const part = await partByRef(db, args.assembly);
 	let id: number | undefined;
 	if (args.revision) {
 		const rows = await db
-			.select({ id: boms.id })
-			.from(boms)
-			.where(and(eq(boms.parentPartId, part.id), eq(boms.code, args.code ?? "std"), eq(boms.revision, args.revision)));
+			.select({ id: assemblies.id })
+			.from(assemblies)
+			.where(
+				and(
+					eq(assemblies.parentPartId, part.id),
+					eq(assemblies.code, args.code ?? "std"),
+					eq(assemblies.revision, args.revision),
+				),
+			);
 		id = rows[0]?.id;
 	} else if (args.code) {
-		id = [...graph.boms.values()].find(
+		id = [...graph.assemblies.values()].find(
 			(b) => b.parentPartId === part.id && b.code === args.code && b.status === "active",
 		)?.id;
-	} else id = defaultBom(graph, part.id)?.id;
-	const found = id ? await getBom(db, id) : undefined;
+	} else id = defaultAssembly(graph, part.id)?.id;
+	const found = id ? await getAssembly(db, id) : undefined;
 	if (!found) {
-		const which = args.revision ? `revision ${args.revision}` : args.code ? `active BoM "${args.code}"` : "active BoM";
-		throw new ToolError(`${part.ref} has no ${which}. Use get_part to list its BoMs.`);
+		const which = args.revision
+			? `revision ${args.revision}`
+			: args.code
+				? `active assembly "${args.code}"`
+				: "active assembly";
+		throw new ToolError(`${part.ref} has no ${which}. Use get_part to list its assemblies.`);
 	}
 	return found;
 }
 
-/** A build by number (case-insensitive), with its part and BoM. */
+/** A build by number (case-insensitive), with its part and assembly. */
 export async function buildByNumber(db: Db, number: string) {
 	const hit = await db
 		.select({ id: builds.id })
@@ -194,12 +204,13 @@ export function exploding<T>(fn: () => T): T {
 	try {
 		return fn();
 	} catch (err) {
-		if (err instanceof BomCycleError) throw new ToolError(`This BoM contains a cycle: ${err.refs.join(" → ")}.`);
+		if (err instanceof AssemblyCycleError)
+			throw new ToolError(`This assembly contains a cycle: ${err.refs.join(" → ")}.`);
 		throw err;
 	}
 }
 
-export function refsOf(graph: BomGraph, ids: number[]): string[] {
+export function refsOf(graph: AssemblyGraph, ids: number[]): string[] {
 	return ids.map((id) => graph.parts.get(id)?.ref ?? String(id));
 }
 

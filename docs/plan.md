@@ -1,7 +1,7 @@
 # Plan
 
 Ship in milestones; each one is deployable and useful on its own.
-After M2 the catalogue and BoMs can be loaded; after M4 real builds can run.
+After M2 the catalogue and assemblies can be loaded; after M4 real builds can run.
 
 ## M1: Foundation ✅
 
@@ -17,16 +17,16 @@ After M2 the catalogue and BoMs can be loaded; after M4 real builds can run.
 - [x] CI (typecheck, lint, tests, migrations in sync) and manual deploy workflow
 - [x] README (deploy, Access guide), CLAUDE.md, decisions log
 
-## M2: BoMs ✅
+## M2: assemblies ✅
 
-- [x] BoM list per part; create BoM (parent, variant code, revision, status)
+- [x] assembly list per part; create assembly (parent, variant code, revision, status)
 - [x] Editor: add / remove / reorder lines (htmx), quantities in milli
 - [x] New revision = copy of the current one; activate (archives the previous active of the same code)
-- [x] Cycle check across BoMs on every save (recursive CTE)
+- [x] Cycle check across assemblies on every save (recursive CTE)
 - [x] Tree view (expandable) with qty, cumulative qty, cost roll-up (incomplete flag)
 - [x] Flat exploded list for N units
 - [x] Where-used (direct and indirect) on the part page
-- [x] `boms.csv` import (group by parent/code/revision, replace lines) + export
+- [x] `assemblies.csv` import (group by parent/code/revision, replace lines) + export
 - [x] Cost roll-up shown on part detail for make/kit parts
 
 ## M3: Stock ✅
@@ -40,7 +40,7 @@ After M2 the catalogue and BoMs can be loaded; after M4 real builds can run.
 
 ## M4: Builds ✅
 
-- [x] New build: part + variant (active BoM), qty, serial (required if tracked, unique), planned date
+- [x] New build: part + variant (active assembly), qty, serial (required if tracked, unique), planned date
 - [x] Pick list: exploded components, make lines "use stock" / "build now", checkboxes, serial inputs
 - [x] Atomic completion (one D1 batch): consume moves, output move with serial, build_lines
 - [x] Refuse completion when a serial-tracked component has no serial
@@ -63,15 +63,15 @@ After M2 the catalogue and BoMs can be loaded; after M4 real builds can run.
 - [x] Light / dark / system theme, stored in a cookie (no flash, no inline script)
 - [x] Every page rebuilt on the components (cards, tables, fields, badges, alerts, empty states, stat cards)
 - [x] Dashboard with KPI cards
-- [x] BoM structure diagram (nested sub-assemblies and kits) with depth and "assemblies only" views, zoom and pan
-- [x] Global search across parts, BoMs, builds (incl. serials), POs and suppliers
+- [x] assembly structure diagram (nested sub-assemblies and kits) with depth and "assemblies only" views, zoom and pan
+- [x] Global search across parts, assemblies, builds (incl. serials), POs and suppliers
 
 ## M7: Pricing ✅
 
 - [x] Several suppliers per part (`part_suppliers`), one preferred; `part_suppliers.csv` import/export
 - [x] Shortages and draft POs from the preferred offer; a line can be ordered from another supplier
 - [x] Append-only price history (standard costs, offer prices, selling prices) and paid prices from receipts
-- [x] Selling prices per product, overridable per BoM variant; planned and actual margins, margins page
+- [x] Selling prices per product, overridable per assembly variant; planned and actual margins, margins page
 - [x] Valuation by standard cost (dated from the history) and weighted average cost, side by side
 - [x] Additive migration 0002 (no table rebuild), tested on data; demo dataset with a second supplier and prices
 
@@ -104,7 +104,7 @@ After M2 the catalogue and BoMs can be loaded; after M4 real builds can run.
 - [x] Undo needs the edit permission of every area touched (`history.revert` + `TABLE_ACTIONS`); everyone reads the
       history, amounts redacted without cost visibility
 - [x] Recent changes page (filters: source, user, dates, text), change set page with field-level diffs and
-      conflict messages, History tab on parts, suppliers, BoMs and POs
+      conflict messages, History tab on parts, suppliers, assemblies and POs
 - [x] JSON backup includes the history; a restore suppresses the triggers and records itself
 
 ## M11: MCP server ✅
@@ -116,13 +116,13 @@ AI assistants (Claude, ChatGPT or any MCP client) connect to `/mcp` with OAuth; 
 - [x] Consent page behind Access (scopes the role allows, Allow / Deny), connected apps page with revoke
       (admins see everyone's), token lifetimes documented
 - [x] Scope table mapped onto the permission actions; role read again and costs redacted on every request
-- [x] Read tools: parts, BoMs (tree, explosion), stock, moves, builds (serial search, pick list, as-built),
+- [x] Read tools: parts, assemblies (tree, explosion), stock, moves, builds (serial search, pick list, as-built),
       shortages, purchase orders, recent changes with field diffs
 - [x] README setup (KV namespace, Access bypass, custom connector, local testing with the MCP Inspector)
-- [x] Archiving split from permanent deletes in the permission table (`parts.archive`, `boms.archive`)
+- [x] Archiving split from permanent deletes in the permission table (`parts.archive`, `assemblies.archive`)
 - [x] Write tools (catalogue, prices, archive, stock, builds, purchasing) with their scopes and actions: the pages'
       validation and statement builders, one change set each (source `mcp`, client name), undo link in results
-- [x] BoM edits through draft revisions (`set_bom_lines` never edits an active BoM; `activate_bom` is explicit)
+- [x] assembly edits through draft revisions (`set_assembly_lines` never edits an active assembly; `activate_assembly` is explicit)
 - [x] Never over MCP, tested: permanent deletes, undo, users, backups, imports, image uploads
 - [x] Offboarding: only listed users connect and call `/mcp`; removing a user revokes their connections
 
@@ -146,9 +146,9 @@ The know-how for assistants, installable with the tools (D132–D135).
 - Serial inventory (which serials are in stock) enforced at build time, if the shop starts scanning receipts.
 - Reservations of stock for planned builds; build scheduling.
 - PDF purchase orders.
-- Product images in the BoM diagram and on build pick lists; a purge of images orphaned by a restore.
+- Product images in the assembly diagram and on build pick lists; a purge of images orphaned by a restore.
 - Multi-level "build all missing sub-assemblies" helper from the shortage list.
-- Where-used diagram (the BoM diagram reversed) on the part page; SVG/PDF export of diagrams.
+- Where-used diagram (the assembly diagram reversed) on the part page; SVG/PDF export of diagrams.
 - Choose one valuation method once the accountant decides (D91), and drop the deprecated `parts` supplier columns
   in a planned table rebuild.
 - Customer-specific prices, quotes (out of scope for v1).

@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { loadGraph } from "../src/domain/boms";
+import { loadGraph } from "../src/domain/assemblies";
 import { buildPickList, completionStatements, getBuild } from "../src/domain/builds";
 import { runChangeSet } from "../src/domain/history";
 import { onHandAt } from "../src/domain/stock";
-import { bomId, insertMove, insertPart, loadDemo, one, partId, postForm, request, rows, testDb } from "./helpers";
+import { assemblyId, insertMove, insertPart, loadDemo, one, partId, postForm, request, rows, testDb } from "./helpers";
 
 const onHand = async (ref: string) =>
 	(
@@ -16,7 +16,7 @@ const onHand = async (ref: string) =>
 async function planBuild(ref: string, opts: { serial?: string; qty?: string; code?: string } = {}) {
 	const res = await postForm("/builds", {
 		part_id: String(await partId(ref)),
-		bom_id: String(await bomId(ref, opts.code ?? "std")),
+		assembly_id: String(await assemblyId(ref, opts.code ?? "std")),
 		qty: opts.qty ?? "1",
 		serial: opts.serial ?? "",
 		planned_for: "2026-11-02",
@@ -45,7 +45,12 @@ describe("planning builds", () => {
 	it("numbers builds and enforces serial rules for tracked products", async () => {
 		await loadDemo();
 		const lamp = await partId("LAMP-DESK");
-		const base = { part_id: String(lamp), bom_id: String(await bomId("LAMP-DESK")), planned_for: "", notes: "" };
+		const base = {
+			part_id: String(lamp),
+			assembly_id: String(await assemblyId("LAMP-DESK")),
+			planned_for: "",
+			notes: "",
+		};
 		const noSerial = await postForm("/builds", { ...base, qty: "1", serial: "" });
 		expect(noSerial.status).toBe(422);
 		expect(await noSerial.text()).toContain("This product is serial-tracked: enter its serial number.");
@@ -67,20 +72,20 @@ describe("planning builds", () => {
 		expect(await one("SELECT number FROM builds WHERE id = ?", again)).toEqual({ number: "B-0002" });
 	});
 
-	it("refuses buy parts and BoMs of another part", async () => {
+	it("refuses buy parts and assemblies of another part", async () => {
 		await loadDemo({ stock: false });
 		const res = await postForm("/builds", {
 			part_id: String(await partId("LAMP-DESK")),
-			bom_id: String(await bomId("ARM-ASSY")),
+			assembly_id: String(await assemblyId("ARM-ASSY")),
 			qty: "1",
 			serial: "X",
 			planned_for: "",
 			notes: "",
 		});
-		expect(await res.text()).toContain("Choose an active BoM of this part.");
+		expect(await res.text()).toContain("Choose an active assembly of this part.");
 		const buy = await postForm("/builds", {
 			part_id: String(await partId("PAD-FELT")),
-			bom_id: "",
+			assembly_id: "",
 			qty: "1",
 			serial: "",
 			planned_for: "",
@@ -222,16 +227,16 @@ describe("completing builds", () => {
 			[sub, "CELL"],
 			[top, "SUB"],
 		] as const) {
-			await postForm("/boms", {
+			await postForm("/assemblies", {
 				parent_part_id: String(parent),
 				code: "std",
 				revision: "Rev1",
 				notes: "",
 				copy_from: "",
 			});
-			const b = (await one<{ id: number }>("SELECT id FROM boms WHERE parent_part_id = ?", parent)).id;
-			await postForm(`/boms/${b}/lines`, { component: comp, qty: "1", notes: "" });
-			await postForm(`/boms/${b}/activate`, {});
+			const b = (await one<{ id: number }>("SELECT id FROM assemblies WHERE parent_part_id = ?", parent)).id;
+			await postForm(`/assemblies/${b}/lines`, { component: comp, qty: "1", notes: "" });
+			await postForm(`/assemblies/${b}/activate`, {});
 		}
 		const subBuild = await planBuild("SUB", { serial: "S-1" });
 		await postForm(`/builds/${subBuild}/complete`, { [`serial:${cell}:0`]: "C-1" });
@@ -247,17 +252,23 @@ describe("completing builds", () => {
 		expect(await onHand("TOP")).toBe(1000);
 	});
 
-	it("refuses a build whose sub-assembly has no BoM and must be built", async () => {
+	it("refuses a build whose sub-assembly has no assembly and must be built", async () => {
 		const top = await insertPart("TOP", "make");
-		await insertPart("NOBOM", "make");
-		await postForm("/boms", { parent_part_id: String(top), code: "std", revision: "Rev1", notes: "", copy_from: "" });
-		const b = (await one<{ id: number }>("SELECT id FROM boms")).id;
-		await postForm(`/boms/${b}/lines`, { component: "NOBOM", qty: "1", notes: "" });
-		await postForm(`/boms/${b}/activate`, {});
+		await insertPart("NOASSEMBLY", "make");
+		await postForm("/assemblies", {
+			parent_part_id: String(top),
+			code: "std",
+			revision: "Rev1",
+			notes: "",
+			copy_from: "",
+		});
+		const b = (await one<{ id: number }>("SELECT id FROM assemblies")).id;
+		await postForm(`/assemblies/${b}/lines`, { component: "NOASSEMBLY", qty: "1", notes: "" });
+		await postForm(`/assemblies/${b}/activate`, {});
 		const id = await planBuild("TOP");
 		const res = await postForm(`/builds/${id}/complete`, {});
 		expect(res.status).toBe(422);
-		expect(await res.text()).toContain("NOBOM must be built but has no active BoM.");
+		expect(await res.text()).toContain("NOASSEMBLY must be built but has no active assembly.");
 	});
 
 	it("starts and cancels builds without touching stock", async () => {

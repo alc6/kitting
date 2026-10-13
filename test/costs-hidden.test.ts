@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Role } from "../src/db/schema";
 import {
-	bomId,
+	assemblyId,
 	changeSql,
 	importCsv,
 	insertPart,
@@ -38,7 +38,7 @@ const AMOUNTS = [
 ];
 
 /**
- * Demo data with the amounts above, a PO received in part, a WIDGET BoM, one done build, and one open build
+ * Demo data with the amounts above, a PO received in part, a WIDGET assembly, one done build, and one open build
  * larger than the stock, so the shortage page prices a BOX-LAMP line.
  */
 async function seed() {
@@ -67,13 +67,13 @@ async function seed() {
 
 	const widget = await insertPart("WIDGET", "make");
 	await importCsv(
-		"boms",
+		"assemblies",
 		"parent_ref,code,revision,status,sale_price,component_ref,qty\nWIDGET,std,R1,active,,BOX-LAMP,1\n",
 	);
 	const plan = async (qty: string) => {
 		const res = await postForm("/builds", {
 			part_id: String(widget),
-			bom_id: String(await bomId("WIDGET")),
+			assembly_id: String(await assemblyId("WIDGET")),
 			qty,
 			serial: "",
 			planned_for: "",
@@ -93,8 +93,8 @@ async function seed() {
 		done,
 		open,
 		priced,
-		bom: await bomId("WIDGET"),
-		lampBom: await bomId("LAMP-DESK"),
+		assembly: await assemblyId("WIDGET"),
+		lampAssembly: await assemblyId("LAMP-DESK"),
 	};
 }
 
@@ -106,14 +106,14 @@ function pages(s: Awaited<ReturnType<typeof seed>>): string[] {
 		`/parts/${s.widget}`,
 		"/suppliers",
 		`/suppliers/${s.supplier}`,
-		"/boms",
-		`/boms/${s.bom}`,
-		`/boms/${s.bom}/tree`,
-		`/boms/${s.bom}/diagram`,
-		`/boms/${s.bom}/explode`,
-		`/boms/${s.bom}/explode?qty=1&format=csv`,
-		`/boms/${s.lampBom}`,
-		`/boms/${s.lampBom}/explode`,
+		"/assemblies",
+		`/assemblies/${s.assembly}`,
+		`/assemblies/${s.assembly}/tree`,
+		`/assemblies/${s.assembly}/diagram`,
+		`/assemblies/${s.assembly}/explode`,
+		`/assemblies/${s.assembly}/explode?qty=1&format=csv`,
+		`/assemblies/${s.lampAssembly}`,
+		`/assemblies/${s.lampAssembly}/explode`,
 		"/builds",
 		`/builds/new?part=${s.widget}`,
 		`/builds/${s.done}`,
@@ -133,12 +133,12 @@ function pages(s: Awaited<ReturnType<typeof seed>>): string[] {
 		`/history/${s.priced}`,
 		`/parts/${s.box}/history`,
 		`/suppliers/${s.supplier}/history`,
-		`/boms/${s.lampBom}/history`,
+		`/assemblies/${s.lampAssembly}/history`,
 		`/purchasing/po/${s.poId}/history`,
 		"/connected-apps",
 		// Closed to these roles: refused without leaking anything.
 		"/margins",
-		`/margins/boms/${s.lampBom}`,
+		`/margins/assemblies/${s.lampAssembly}`,
 		"/stock/valuation",
 		`/purchasing/po/${s.poId}/export.csv`,
 		"/import/parts/export.csv",
@@ -179,7 +179,7 @@ describe("cost visibility", () => {
 		await letLowerRolesSeeCosts();
 		await setRole("operator");
 		expect(await (await request(`/parts/${s.box}`, {}, NOT_ADMIN)).text()).toContain("1,234.56");
-		expect(await (await request(`/boms/${s.lampBom}`, {}, NOT_ADMIN)).text()).toContain("9,999.99");
+		expect(await (await request(`/assemblies/${s.lampAssembly}`, {}, NOT_ADMIN)).text()).toContain("9,999.99");
 		expect((await request("/margins", {}, NOT_ADMIN)).status).toBe(200);
 	});
 
@@ -216,9 +216,9 @@ describe("cost visibility", () => {
 		const opPart = await (await request(`/parts/${s.box}`, {}, NOT_ADMIN)).text();
 		expect(opPart).toContain(`href="/stock/adjust?part=${s.box}"`);
 		expect(opPart).not.toContain(`href="/parts/${s.box}/edit"`);
-		const bom = await (await request(`/boms/${s.bom}`, {}, NOT_ADMIN)).text();
-		expect(bom).not.toContain(`action="/boms/${s.bom}/lines"`);
-		expect(bom).not.toContain(`action="/boms/${s.bom}/revision"`);
+		const assembly = await (await request(`/assemblies/${s.assembly}`, {}, NOT_ADMIN)).text();
+		expect(assembly).not.toContain(`action="/assemblies/${s.assembly}/lines"`);
+		expect(assembly).not.toContain(`action="/assemblies/${s.assembly}/revision"`);
 		const supplier = await (await request(`/suppliers/${s.supplier}`, {}, NOT_ADMIN)).text();
 		expect(supplier).not.toContain(`action="/suppliers/${s.supplier}"`);
 	});

@@ -1,5 +1,5 @@
 import type { Db } from "../types";
-import { listBoms } from "./boms";
+import { listAssemblies } from "./assemblies";
 import { listBuilds } from "./builds";
 import { listParts } from "./parts";
 import { listPos } from "./purchasing";
@@ -14,9 +14,9 @@ export const SEARCH_GROUP_LIMIT = 8;
  * Archived and closed records are included: search is for finding anything.
  */
 export async function globalSearch(db: Db, q: string) {
-	const [parts, boms, builds, pos, suppliers] = await Promise.all([
+	const [parts, assemblies, builds, pos, suppliers] = await Promise.all([
 		listParts(db, { q, archived: true }),
-		listBoms(db, { q, status: "all" }),
+		listAssemblies(db, { q, status: "all" }),
 		listBuilds(db, { q, status: "all", limit: 200 }),
 		listPos(db, { q, status: "all" }),
 		listSuppliers(db, q),
@@ -24,7 +24,7 @@ export async function globalSearch(db: Db, q: string) {
 	// Exact reference matches first (typing a full ref is the common case on the shop floor).
 	const needle = q.trim().toLowerCase();
 	parts.sort((a, b) => Number(b.ref.toLowerCase() === needle) - Number(a.ref.toLowerCase() === needle));
-	return { parts, boms, builds, pos, suppliers };
+	return { parts, assemblies, builds, pos, suppliers };
 }
 
 export type SearchResults = Awaited<ReturnType<typeof globalSearch>>;

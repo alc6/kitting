@@ -130,14 +130,20 @@ describe("parts", () => {
 		expect(await upd.text()).toContain("cannot become a kit or a fee");
 	});
 
-	it("keeps parts that own BoMs as make or kit", async () => {
+	it("keeps parts that own assemblies as make or kit", async () => {
 		const id = await insertPart("ASSY", "make");
-		await postForm("/boms", { parent_part_id: String(id), code: "std", revision: "Rev1", notes: "", copy_from: "" });
-		const bomId = (await one<{ id: number }>("SELECT id FROM boms")).id;
-		expect(await (await request(`/parts/${id}`)).text()).toContain(`href="/boms/${bomId}/diagram"`);
+		await postForm("/assemblies", {
+			parent_part_id: String(id),
+			code: "std",
+			revision: "Rev1",
+			notes: "",
+			copy_from: "",
+		});
+		const assemblyId = (await one<{ id: number }>("SELECT id FROM assemblies")).id;
+		expect(await (await request(`/parts/${id}`)).text()).toContain(`href="/assemblies/${assemblyId}/diagram"`);
 		const res = await postForm(`/parts/${id}`, partForm({ ref: "ASSY", kind: "buy" }));
 		expect(res.status).toBe(422);
-		expect(await res.text()).toContain("This part has BoMs: it must stay a make or kit part.");
+		expect(await res.text()).toContain("This part has assemblies: it must stay a make or kit part.");
 		expect((await postForm(`/parts/${id}`, partForm({ ref: "ASSY", kind: "kit" }))).status).toBe(303);
 	});
 

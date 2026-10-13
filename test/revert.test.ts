@@ -4,7 +4,7 @@ import { HISTORY_TABLES } from "../src/db/schema";
 import { runChangeSet } from "../src/domain/history";
 import type { Access } from "../src/domain/permissions";
 import { changeSetEntries, getChangeSet, revertChangeSet, revertStatements, TABLE_ACTIONS } from "../src/domain/revert";
-import { bomId, changeSql, loadDemo, one, partId, postForm, rows, stmt, TESTER, testDb } from "./helpers";
+import { assemblyId, changeSql, loadDemo, one, partId, postForm, rows, stmt, TESTER, testDb } from "./helpers";
 
 const ADMIN: Access = { role: "admin", seeCosts: true };
 const by = { user: TESTER, summary: (s: { id: number; summary: string }) => `Undo #${s.id}: ${s.summary}` };
@@ -86,19 +86,19 @@ describe("undo", () => {
 
 	it("re-inserts deleted rows with their ids, children included", async () => {
 		await loadDemo({ stock: false });
-		const bom = await bomId("LAMP-DESK");
+		const assembly = await assemblyId("LAMP-DESK");
 		const state = await snapshot();
-		await postForm(`/boms/${bom}/archive`, {});
+		await postForm(`/assemblies/${assembly}/archive`, {});
 		const archived = await lastSetId();
-		await postForm(`/boms/${bom}/delete`, {});
+		await postForm(`/assemblies/${assembly}/delete`, {});
 		const deleted = await lastSetId();
-		expect(await rows("SELECT id FROM boms WHERE id = ?", bom)).toEqual([]);
+		expect(await rows("SELECT id FROM assemblies WHERE id = ?", assembly)).toEqual([]);
 
 		expect((await revert(deleted)).ok).toBe(true);
 		expect((await revert(archived)).ok).toBe(true);
 		expect(withoutAudit(await snapshot())).toEqual(withoutAudit(state));
 		// Re-inserted rows come back exactly, who/when included.
-		expect((await snapshot()).bom_lines).toEqual(state.bom_lines);
+		expect((await snapshot()).assembly_lines).toEqual(state.assembly_lines);
 	});
 
 	it("deletes inserted rows, and undoes an undo", async () => {
@@ -121,14 +121,14 @@ describe("undo", () => {
 		]);
 	});
 
-	it("restores a change spanning several rows in reverse order (activating a BoM)", async () => {
+	it("restores a change spanning several rows in reverse order (activating an assembly)", async () => {
 		await loadDemo({ stock: false });
-		const active = await bomId("LAMP-DESK");
-		await postForm(`/boms/${active}/revision`, {});
-		const draft = (await one<{ id: number }>("SELECT max(id) AS id FROM boms")).id;
+		const active = await assemblyId("LAMP-DESK");
+		await postForm(`/assemblies/${active}/revision`, {});
+		const draft = (await one<{ id: number }>("SELECT max(id) AS id FROM assemblies")).id;
 		const state = await snapshot();
-		await postForm(`/boms/${draft}/activate`, {});
-		expect(await one("SELECT status FROM boms WHERE id = ?", active)).toEqual({ status: "archived" });
+		await postForm(`/assemblies/${draft}/activate`, {});
+		expect(await one("SELECT status FROM assemblies WHERE id = ?", active)).toEqual({ status: "archived" });
 		expect((await revert(await lastSetId())).ok).toBe(true);
 		expect(withoutAudit(await snapshot())).toEqual(withoutAudit(state));
 	});
@@ -176,18 +176,18 @@ describe("undo", () => {
 		});
 		expect(await rows("SELECT ref FROM parts WHERE ref = 'NEW-1'")).toEqual([{ ref: "NEW-1" }]);
 
-		// A BoM line removed, then its component deleted: the line cannot come back.
+		// An assembly line removed, then its component deleted: the line cannot come back.
 		await postForm("/parts", { ref: "NEW-2", name: "New", kind: "buy", unit: "pcs" });
-		const bom = await bomId("LAMP-DESK");
-		await postForm(`/boms/${bom}/lines`, { component: "NEW-2", qty: "1", notes: "" });
-		const line = (await one<{ id: number }>("SELECT max(id) AS id FROM bom_lines")).id;
-		await postForm(`/boms/${bom}/lines/${line}/delete`, {});
+		const assembly = await assemblyId("LAMP-DESK");
+		await postForm(`/assemblies/${assembly}/lines`, { component: "NEW-2", qty: "1", notes: "" });
+		const line = (await one<{ id: number }>("SELECT max(id) AS id FROM assembly_lines")).id;
+		await postForm(`/assemblies/${assembly}/lines/${line}/delete`, {});
 		const removed = await lastSetId();
 		await postForm(`/parts/${await partId("NEW-2")}/delete`, {});
 		expect(await revert(removed)).toMatchObject({
 			ok: false,
 			reason: "conflict",
-			conflicts: [{ table: "bom_lines", rowId: line, reason: "parent_missing", other: "parts" }],
+			conflicts: [{ table: "assembly_lines", rowId: line, reason: "parent_missing", other: "parts" }],
 		});
 	});
 
@@ -254,20 +254,26 @@ describe("undo", () => {
 	it("never lets a cascade delete rows added while the undo runs", async () => {
 		await loadDemo({ stock: false });
 		const lamp = await partId("LAMP-DESK");
-		await postForm("/boms", { parent_part_id: String(lamp), code: "alt", revision: "R1", notes: "", copy_from: "" });
+		await postForm("/assemblies", {
+			parent_part_id: String(lamp),
+			code: "alt",
+			revision: "R1",
+			notes: "",
+			copy_from: "",
+		});
 		const created = await lastSetId();
-		const bom = (await one<{ id: number }>("SELECT max(id) AS id FROM boms")).id;
+		const assembly = (await one<{ id: number }>("SELECT max(id) AS id FROM assemblies")).id;
 		const db = testDb();
 		const set = (await getChangeSet(db, created))!;
 		const statements = revertStatements(db, set, await changeSetEntries(db, set.id), TESTER, new Date().toISOString());
-		await postForm(`/boms/${bom}/lines`, { component: "BOX-LAMP", qty: "1", notes: "" });
+		await postForm(`/assemblies/${assembly}/lines`, { component: "BOX-LAMP", qty: "1", notes: "" });
 		const meta = { user: TESTER, source: "revert" as const, summary: "Undo", revertsChangeSetId: set.id };
 		await expect(runChangeSet(db, meta, statements)).rejects.toThrow(/revert_conflict/);
-		expect(await rows("SELECT count(*) AS n FROM bom_lines WHERE bom_id = ?", bom)).toEqual([{ n: 1 }]);
+		expect(await rows("SELECT count(*) AS n FROM assembly_lines WHERE assembly_id = ?", assembly)).toEqual([{ n: 1 }]);
 		// Checked beforehand, the same undo is refused with a reason.
 		expect(await revert(created)).toMatchObject({
 			ok: false,
-			conflicts: [{ table: "boms", rowId: bom, reason: "in_use", other: "bom_lines" }],
+			conflicts: [{ table: "assemblies", rowId: assembly, reason: "in_use", other: "assembly_lines" }],
 		});
 	});
 
@@ -295,7 +301,7 @@ describe("undo", () => {
 		const lamp = await partId("LAMP-DESK");
 		await postForm("/builds", {
 			part_id: String(lamp),
-			bom_id: String(await bomId("LAMP-DESK")),
+			assembly_id: String(await assemblyId("LAMP-DESK")),
 			qty: "1",
 			serial: "L-1",
 			planned_for: "",

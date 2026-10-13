@@ -6,9 +6,9 @@
 		{
 			"name": "kitting",
 			"source": "./plugins/kitting",
-			"description": "The Kitting skill (parts, BoMs, stock, builds, purchase orders) and the MCP connector to your deployment.",
+			"description": "The Kitting skill (parts, assemblies, stock, builds, purchase orders) and the MCP connector to your deployment.",
 			"category": "productivity",
-			"tags": ["mrp", "bom", "inventory", "mcp"]
+			"tags": ["mrp", "assembly", "inventory", "mcp"]
 		}
 	]
 }

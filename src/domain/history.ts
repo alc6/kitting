@@ -6,7 +6,7 @@ import { and, asc, desc, eq, gte, inArray, lt, lte, or, type SQL, sql } from "dr
 import type { BatchResponse } from "drizzle-orm/batch";
 import { AUDIT_COLUMNS } from "../db/history-sql";
 import {
-	boms,
+	assemblies,
 	CHANGE_SOURCES,
 	type ChangeLogRow,
 	type ChangeOp,
@@ -29,7 +29,7 @@ export type ChangeMeta = {
 	/** Email of the signed-in user (or of the user an API client acts for). */
 	user: string;
 	source: ChangeSource;
-	/** One line saying what changed, e.g. "Edit BoM LAMP-DESK std Rev3". Never an amount: every role reads it. */
+	/** One line saying what changed, e.g. "Edit assembly LAMP-DESK std Rev3". Never an amount: every role reads it. */
 	summary: string;
 	/** The API client that made the change (MCP), if any. */
 	clientName?: string | null;
@@ -125,7 +125,7 @@ export type ChangeSetFilters = {
 
 /**
  * Columns whose change needs an action of its own on top of the edit action of the table, also when undone
- * (D136): table → column → action. Only the archived flag of a part now; BoM statuses stay with `boms.edit`.
+ * (D136): table → column → action. Only the archived flag of a part now; assembly statuses stay with `assemblies.edit`.
  */
 export const COLUMN_ACTIONS: Record<string, Record<string, Action>> = {
 	parts: { archived: "parts.archive" },
@@ -211,12 +211,12 @@ export async function changeSetUsers(db: Db): Promise<string[]> {
 }
 
 /** The objects that have a History tab, and the child rows shown with them. */
-export type HistoryTarget = { kind: "part" | "supplier" | "bom" | "po"; id: number };
+export type HistoryTarget = { kind: "part" | "supplier" | "assembly" | "po"; id: number };
 
 const TARGETS: Record<HistoryTarget["kind"], { table: string; children: { table: string; column: string }[] }> = {
 	part: { table: "parts", children: [{ table: "part_suppliers", column: "part_id" }] },
 	supplier: { table: "suppliers", children: [{ table: "part_suppliers", column: "supplier_id" }] },
-	bom: { table: "boms", children: [{ table: "bom_lines", column: "bom_id" }] },
+	assembly: { table: "assemblies", children: [{ table: "assembly_lines", column: "assembly_id" }] },
 	po: { table: "purchase_orders", children: [{ table: "po_lines", column: "po_id" }] },
 };
 
@@ -257,7 +257,7 @@ type Snapshot = Record<string, unknown>;
  */
 const HIDDEN_FIELDS: Record<string, readonly string[]> = {
 	parts: ["supplier_ref", "moq_milli", "pack_size_milli", "lead_days"],
-	bom_lines: ["bom_id"],
+	assembly_lines: ["assembly_id"],
 	po_lines: ["po_id"],
 	part_suppliers: ["part_id", "supplier_id"],
 };
@@ -316,7 +316,7 @@ export const REFERENCE_COLUMNS: Record<string, string> = {
 	component_part_id: "parts",
 	parent_part_id: "parts",
 	supplier_id: "suppliers",
-	bom_id: "boms",
+	assembly_id: "assemblies",
 	po_id: "purchase_orders",
 };
 
@@ -338,10 +338,10 @@ export function rowName(table: string, row: Snapshot | null, labels: Labels): st
 			return s("ref");
 		case "suppliers":
 			return s("name");
-		case "boms":
+		case "assemblies":
 			return `${labelOf(labels, "parts", row.parent_part_id)} ${s("code")} ${s("revision")}`;
-		case "bom_lines":
-			return `${labelOf(labels, "parts", row.component_part_id)} (${labelOf(labels, "boms", row.bom_id)})`;
+		case "assembly_lines":
+			return `${labelOf(labels, "parts", row.component_part_id)} (${labelOf(labels, "assemblies", row.assembly_id)})`;
 		case "part_suppliers":
 			return `${labelOf(labels, "parts", row.part_id)} · ${labelOf(labels, "suppliers", row.supplier_id)}`;
 		case "purchase_orders":
@@ -363,7 +363,7 @@ export async function referenceLabels(db: Db, views: EntryView[]): Promise<Map<s
 	const ids: Record<string, Set<number>> = {
 		parts: new Set(),
 		suppliers: new Set(),
-		boms: new Set(),
+		assemblies: new Set(),
 		purchase_orders: new Set(),
 	};
 	for (const v of views) {
@@ -382,12 +382,15 @@ export async function referenceLabels(db: Db, views: EntryView[]): Promise<Map<s
 		parts: (part) => db.select({ id: parts.id, label: parts.ref }).from(parts).where(inArray(parts.id, part)),
 		suppliers: (part) =>
 			db.select({ id: suppliers.id, label: suppliers.name }).from(suppliers).where(inArray(suppliers.id, part)),
-		boms: (part) =>
+		assemblies: (part) =>
 			db
-				.select({ id: boms.id, label: sql<string>`${parts.ref} || ' ' || ${boms.code} || ' ' || ${boms.revision}` })
-				.from(boms)
-				.innerJoin(parts, eq(boms.parentPartId, parts.id))
-				.where(inArray(boms.id, part)),
+				.select({
+					id: assemblies.id,
+					label: sql<string>`${parts.ref} || ' ' || ${assemblies.code} || ' ' || ${assemblies.revision}`,
+				})
+				.from(assemblies)
+				.innerJoin(parts, eq(assemblies.parentPartId, parts.id))
+				.where(inArray(assemblies.id, part)),
 		purchase_orders: (part) =>
 			db
 				.select({ id: purchaseOrders.id, label: purchaseOrders.number })

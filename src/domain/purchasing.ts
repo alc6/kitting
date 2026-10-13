@@ -16,8 +16,8 @@ import { likePattern } from "../lib/sql";
 import { lineCostCents, MILLI, parseMilli, roundOrderQty } from "../lib/units";
 import { type FieldErrors, field } from "../lib/validation";
 import type { Db } from "../types";
-import { explode, type GraphPart } from "./bom-graph";
-import { loadGraph } from "./boms";
+import { loadGraph } from "./assemblies";
+import { explode, type GraphPart } from "./assembly-graph";
 import { OPEN_STATUSES } from "./builds";
 import { NO_TERMS, type OfferTerms, offersByPart, poUnitPrice } from "./offers";
 import { moveValues, onHandAt } from "./stock";
@@ -66,8 +66,8 @@ export type SupplierGroup = {
 
 export type Shortages = {
 	groups: SupplierGroup[];
-	/** Make/kit parts that must be built for open builds but have no active BoM. */
-	missingBoms: { ref: string; name: string; qtyMilli: number; builds: string[] }[];
+	/** Make/kit parts that must be built for open builds but have no active assembly. */
+	missingAssemblies: { ref: string; name: string; qtyMilli: number; builds: string[] }[];
 	buildCount: number;
 };
 
@@ -99,7 +99,7 @@ export async function computeShortages(db: Db): Promise<Shortages> {
 		onHandAt(db),
 		onOrderMap(db),
 		db
-			.select({ number: builds.number, bomId: builds.bomId, qtyMilli: builds.qtyMilli })
+			.select({ number: builds.number, assemblyId: builds.assemblyId, qtyMilli: builds.qtyMilli })
 			.from(builds)
 			.where(inArray(builds.status, OPEN_STATUSES))
 			.orderBy(sql`${builds.plannedFor} IS NULL`, asc(builds.plannedFor), asc(builds.id)),
@@ -117,9 +117,9 @@ export async function computeShortages(db: Db): Promise<Shortages> {
 		into.set(partId, e);
 	};
 	for (const b of open) {
-		const ex = explode(graph, b.bomId, b.qtyMilli, { available });
+		const ex = explode(graph, b.assemblyId, b.qtyMilli, { available });
 		for (const r of ex.requirements) {
-			if (r.missingBom) add(missing, r.part.id, r.qtyMilli, b.number);
+			if (r.missingAssembly) add(missing, r.part.id, r.qtyMilli, b.number);
 			else if (r.part.kind === "buy") add(need, r.part.id, r.qtyMilli, b.number);
 		}
 	}
@@ -176,7 +176,7 @@ export async function computeShortages(db: Db): Promise<Shortages> {
 	for (const g of sorted) g.lines.sort((a, b) => a.part.ref.localeCompare(b.part.ref));
 	return {
 		groups: sorted,
-		missingBoms: [...missing].map(([partId, m]) => ({
+		missingAssemblies: [...missing].map(([partId, m]) => ({
 			ref: graph.parts.get(partId)?.ref ?? String(partId),
 			name: graph.parts.get(partId)?.name ?? "",
 			qtyMilli: m.qty,

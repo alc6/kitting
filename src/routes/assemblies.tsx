@@ -3,7 +3,32 @@ import type { Context } from "hono";
 import { Hono } from "hono";
 import type { Child } from "hono/jsx";
 import { z } from "zod";
-import { BOM_STATUSES, type Bom, bomLines, boms, type Part, parts } from "../db/schema";
+import { ASSEMBLY_STATUSES, type Assembly, assemblies, assemblyLines, type Part, parts } from "../db/schema";
+import {
+	activateStatements,
+	addAssemblyLineStatements,
+	archivedAssemblyCycles,
+	assemblyInput,
+	assemblyLabel,
+	assemblyLineInput,
+	assemblySalePriceStatements,
+	componentError,
+	createAssemblyStatements,
+	DEFAULT_CODE,
+	DEFAULT_REVISION,
+	deleteAssemblyLineStatements,
+	deleteAssemblyStatement,
+	findAssembly,
+	getAssembly,
+	getAssemblyLines,
+	listAssemblies,
+	loadGraph,
+	newAssemblyErrors,
+	nextRevision,
+	reorderAssemblyLinesStatements,
+	setAssemblyStatusStatement,
+	updateAssemblyLineQtyStatements,
+} from "../domain/assemblies";
 import {
 	type Cost,
 	CostCalculator,
@@ -12,32 +37,7 @@ import {
 	type Explosion,
 	explode,
 	walkTree,
-} from "../domain/bom-graph";
-import {
-	activateStatements,
-	addBomLineStatements,
-	archivedBomCycles,
-	bomInput,
-	bomLabel,
-	bomLineInput,
-	bomSalePriceStatements,
-	componentError,
-	createBomStatements,
-	DEFAULT_CODE,
-	DEFAULT_REVISION,
-	deleteBomLineStatements,
-	deleteBomStatement,
-	findBom,
-	getBom,
-	getBomLines,
-	listBoms,
-	loadGraph,
-	newBomErrors,
-	nextRevision,
-	reorderBomLinesStatements,
-	setBomStatusStatement,
-	updateBomLineQtyStatements,
-} from "../domain/boms";
+} from "../domain/assembly-graph";
 import { type Margin, marginOf, salePriceOf } from "../domain/margins";
 import { onHandMap, partOptions } from "../domain/parts";
 import { can } from "../domain/permissions";
@@ -56,8 +56,8 @@ import {
 import { type FieldErrors, field, validate } from "../lib/validation";
 import { requirePermission } from "../middleware/roles";
 import type { AppEnv } from "../types";
-import { CostView, StatusBadge } from "../views/bom";
-import { BomDiagram, type DiagramView, diagramTree, treeDepth } from "../views/bom-diagram";
+import { CostView, StatusBadge } from "../views/assembly";
+import { AssemblyDiagram, type DiagramView, diagramTree, treeDepth } from "../views/assembly-diagram";
 import { useApp } from "../views/context";
 import { Icon, type IconNode, icons } from "../views/icons";
 import { PartPicker, PartPickerDialog, PartSelectPicker } from "../views/part-picker";
@@ -106,48 +106,48 @@ import { recordHistoryPage } from "./history";
 import { csvResponse } from "./import";
 import { marginTone } from "./margins";
 
-export const bomRoutes = new Hono<AppEnv>();
+export const assemblyRoutes = new Hono<AppEnv>();
 
-type BomRow = Awaited<ReturnType<typeof listBoms>>[number];
-type LineRow = Awaited<ReturnType<typeof getBomLines>>[number];
+type AssemblyRow = Awaited<ReturnType<typeof listAssemblies>>[number];
+type LineRow = Awaited<ReturnType<typeof getAssemblyLines>>[number];
 
 function qtyParam(c: Context<AppEnv>): number {
 	const n = parseMilli(c.req.query("qty") ?? "1");
 	return n !== null && n > 0 ? n : MILLI;
 }
 
-type BomTab = "editor" | "tree" | "diagram" | "explode" | "history";
+type AssemblyTab = "editor" | "tree" | "diagram" | "explode" | "history";
 
-function BomTabs(props: { bom: Bom; active: BomTab }) {
+function AssemblyTabs(props: { assembly: Assembly; active: AssemblyTab }) {
 	const { t } = useApp();
-	const id = props.bom.id;
-	const tabs: { key: BomTab; href: string; label: string; icon: IconNode }[] = [
-		{ key: "editor", href: `/boms/${id}`, label: t.boms.editor, icon: icons.pencil },
-		{ key: "tree", href: `/boms/${id}/tree`, label: t.boms.tree, icon: icons.listTree },
-		{ key: "diagram", href: `/boms/${id}/diagram`, label: t.boms.diagram, icon: icons.diagram },
-		{ key: "explode", href: `/boms/${id}/explode`, label: t.boms.explode, icon: icons.list },
-		{ key: "history", href: `/boms/${id}/history`, label: t.history.tab, icon: icons.history },
+	const id = props.assembly.id;
+	const tabs: { key: AssemblyTab; href: string; label: string; icon: IconNode }[] = [
+		{ key: "editor", href: `/assemblies/${id}`, label: t.assemblies.editor, icon: icons.pencil },
+		{ key: "tree", href: `/assemblies/${id}/tree`, label: t.assemblies.tree, icon: icons.listTree },
+		{ key: "diagram", href: `/assemblies/${id}/diagram`, label: t.assemblies.diagram, icon: icons.diagram },
+		{ key: "explode", href: `/assemblies/${id}/explode`, label: t.assemblies.explode, icon: icons.list },
+		{ key: "history", href: `/assemblies/${id}/history`, label: t.history.tab, icon: icons.history },
 	];
 	return <LinkTabs items={tabs.map((tab) => ({ ...tab, active: tab.key === props.active }))} />;
 }
 
-/** Effective selling price of a BoM variant and its planned margin (standard cost roll-up). */
-type BomPricing = { priceCents: number; ownPrice: boolean; margin: Margin | null; incomplete: boolean };
+/** Effective selling price of an assembly variant and its planned margin (standard cost roll-up). */
+type AssemblyPricing = { priceCents: number; ownPrice: boolean; margin: Margin | null; incomplete: boolean };
 
-function bomPricing(part: Part, bom: Bom, calc: CostCalculator): BomPricing | null {
-	const priceCents = salePriceOf(part, bom);
+function assemblyPricing(part: Part, assembly: Assembly, calc: CostCalculator): AssemblyPricing | null {
+	const priceCents = salePriceOf(part, assembly);
 	if (priceCents === null) return null;
-	const cost = calc.bom(bom.id);
+	const cost = calc.assembly(assembly.id);
 	return {
 		priceCents,
-		ownPrice: bom.salePriceCents !== null,
+		ownPrice: assembly.salePriceCents !== null,
 		margin: marginOf(priceCents, centsOf(cost.millicents)),
 		incomplete: cost.incomplete,
 	};
 }
 
-/** Selling price and planned margin, shown in the BoM header when the variant has a price. */
-function PricingSummary(props: { pricing: BomPricing; bomId: number }) {
+/** Selling price and planned margin, shown in the assembly header when the variant has a price. */
+function PricingSummary(props: { pricing: AssemblyPricing; assemblyId: number }) {
 	const { t, locale } = useApp();
 	const { pricing } = props;
 	const m = pricing.margin;
@@ -163,12 +163,12 @@ function PricingSummary(props: { pricing: BomPricing; bomId: number }) {
 						{t.margins.ownPrice}
 					</Badge>
 				) : (
-					<span class="text-xs">({t.boms.salePriceInherited})</span>
+					<span class="text-xs">({t.assemblies.salePriceInherited})</span>
 				)}
 			</span>
 			{m ? (
 				<span>
-					{t.boms.plannedMargin}:{" "}
+					{t.assemblies.plannedMargin}:{" "}
 					<strong class={cn("font-medium text-foreground", marginTone(m))}>
 						<Money cents={m.marginCents} />
 						{m.rateBp !== null ? ` · ${formatPercent(m.rateBp, locale)}` : null}
@@ -180,7 +180,7 @@ function PricingSummary(props: { pricing: BomPricing; bomId: number }) {
 					) : null}
 				</span>
 			) : null}
-			<a href={`/margins/boms/${props.bomId}`} class="inline-flex items-center gap-1 font-medium">
+			<a href={`/margins/assemblies/${props.assemblyId}`} class="inline-flex items-center gap-1 font-medium">
 				<Icon icon={icons.chartLine} class="size-3.5" />
 				{t.margins.historyTitle}
 			</a>
@@ -188,13 +188,13 @@ function PricingSummary(props: { pricing: BomPricing; bomId: number }) {
 	);
 }
 
-function BomHeader(props: { bom: Bom; part: Part; tab: BomTab; pricing?: BomPricing | null }) {
+function AssemblyHeader(props: { assembly: Assembly; part: Part; tab: AssemblyTab; pricing?: AssemblyPricing | null }) {
 	const view = useApp();
 	const { t, seeCosts } = view;
-	const canEdit = can(view, "boms.edit");
-	const canArchive = can(view, "boms.archive");
-	const canDelete = can(view, "boms.delete");
-	const { bom, part } = props;
+	const canEdit = can(view, "assemblies.edit");
+	const canArchive = can(view, "assemblies.archive");
+	const canDelete = can(view, "assemblies.delete");
+	const { assembly, part } = props;
 	return (
 		<>
 			<PageHeader
@@ -203,50 +203,58 @@ function BomHeader(props: { bom: Bom; part: Part; tab: BomTab; pricing?: BomPric
 					<span class="flex flex-wrap items-center gap-x-3 gap-y-1">
 						<KindBadge kind={part.kind} />
 						<span>
-							{t.boms.code}: <strong class="font-medium text-foreground">{bom.code}</strong>
+							{t.assemblies.code}: <strong class="font-medium text-foreground">{assembly.code}</strong>
 						</span>
 						<span>
-							{t.boms.revision}: <strong class="font-medium text-foreground">{bom.revision}</strong>
+							{t.assemblies.revision}: <strong class="font-medium text-foreground">{assembly.revision}</strong>
 						</span>
-						<StatusBadge status={bom.status} />
-						{seeCosts && props.pricing ? <PricingSummary pricing={props.pricing} bomId={bom.id} /> : null}
+						<StatusBadge status={assembly.status} />
+						{seeCosts && props.pricing ? <PricingSummary pricing={props.pricing} assemblyId={assembly.id} /> : null}
 					</span>
 				}
 				actions={
 					<>
-						{canEdit && bom.status !== "active" ? (
+						{canEdit && assembly.status !== "active" ? (
 							<PostButton
-								action={`/boms/${bom.id}/activate`}
-								label={t.boms.activate}
+								action={`/assemblies/${assembly.id}/activate`}
+								label={t.assemblies.activate}
 								variant="default"
 								icon={icons.check}
 							/>
 						) : null}
-						{canEdit && bom.status === "archived" ? (
-							<PostButton action={`/boms/${bom.id}/draft`} label={t.boms.toDraft} icon={icons.archiveRestore} />
+						{canEdit && assembly.status === "archived" ? (
+							<PostButton
+								action={`/assemblies/${assembly.id}/draft`}
+								label={t.assemblies.toDraft}
+								icon={icons.archiveRestore}
+							/>
 						) : null}
 						{canEdit ? (
 							<>
-								<PostButton action={`/boms/${bom.id}/revision`} label={t.boms.newRevision} icon={icons.copy} />
+								<PostButton
+									action={`/assemblies/${assembly.id}/revision`}
+									label={t.assemblies.newRevision}
+									icon={icons.copy}
+								/>
 								<LinkButton
-									href={`/boms/new?part=${part.id}&copy_from=${bom.id}`}
-									label={t.boms.newVariant}
+									href={`/assemblies/new?part=${part.id}&copy_from=${assembly.id}`}
+									label={t.assemblies.newVariant}
 									variant="outline"
 									icon={icons.layers}
 								/>
 							</>
 						) : null}
-						{canArchive && bom.status !== "archived" ? (
+						{canArchive && assembly.status !== "archived" ? (
 							<PostButton
-								action={`/boms/${bom.id}/archive`}
-								label={t.boms.archive}
+								action={`/assemblies/${assembly.id}/archive`}
+								label={t.assemblies.archive}
 								confirm={t.common.confirmArchive}
 								icon={icons.archive}
 							/>
 						) : null}
 						{canDelete ? (
 							<PostButton
-								action={`/boms/${bom.id}/delete`}
+								action={`/assemblies/${assembly.id}/delete`}
 								label={t.common.delete}
 								confirm={t.common.confirmDelete}
 								variant="destructive"
@@ -256,7 +264,7 @@ function BomHeader(props: { bom: Bom; part: Part; tab: BomTab; pricing?: BomPric
 					</>
 				}
 			/>
-			<BomTabs bom={bom} active={props.tab} />
+			<AssemblyTabs assembly={assembly} active={props.tab} />
 		</>
 	);
 }
@@ -264,46 +272,48 @@ function BomHeader(props: { bom: Bom; part: Part; tab: BomTab; pricing?: BomPric
 // ---------------------------------------------------------------------------
 // List
 
-function BomList(props: { rows: BomRow[]; q: string; status: string }) {
+function AssemblyList(props: { rows: AssemblyRow[]; q: string; status: string }) {
 	const view = useApp();
 	const { t } = view;
 	return (
 		<>
 			<PageHeader
-				title={t.boms.title}
+				title={t.assemblies.title}
 				actions={
-					can(view, "boms.edit") ? <LinkButton href="/boms/new" label={t.boms.new} icon={icons.plus} /> : undefined
+					can(view, "assemblies.edit") ? (
+						<LinkButton href="/assemblies/new" label={t.assemblies.new} icon={icons.plus} />
+					) : undefined
 				}
 			/>
-			<SearchBar action="/boms" q={props.q}>
-				<select name="status" aria-label={t.boms.status} data-slot="native-select" class="w-auto min-w-44">
-					<option value="">{t.boms.statusFilter.open}</option>
-					{BOM_STATUSES.map((s) => (
+			<SearchBar action="/assemblies" q={props.q}>
+				<select name="status" aria-label={t.assemblies.status} data-slot="native-select" class="w-auto min-w-44">
+					<option value="">{t.assemblies.statusFilter.open}</option>
+					{ASSEMBLY_STATUSES.map((s) => (
 						<option value={s} selected={s === props.status}>
-							{t.boms.statuses[s]}
+							{t.assemblies.statuses[s]}
 						</option>
 					))}
 					<option value="all" selected={props.status === "all"}>
-						{t.boms.statusFilter.all}
+						{t.assemblies.statusFilter.all}
 					</option>
 				</select>
 			</SearchBar>
 			<div id="results">
 				{props.rows.length === 0 ? (
-					<EmptyState icon={icons.listTree} description={t.boms.noBoms} />
+					<EmptyState icon={icons.listTree} description={t.assemblies.noAssemblies} />
 				) : (
 					<Card class="gap-0 overflow-hidden py-0">
 						<Table>
 							<TableHeader class="bg-muted/50">
 								<TableRow>
-									<TableHead>{t.boms.parent}</TableHead>
+									<TableHead>{t.assemblies.parent}</TableHead>
 									<TableHead>{t.parts.kind}</TableHead>
-									<TableHead>{t.boms.code}</TableHead>
-									<TableHead>{t.boms.revision}</TableHead>
-									<TableHead>{t.boms.status}</TableHead>
-									<TableHead class="text-right">{t.boms.lines}</TableHead>
+									<TableHead>{t.assemblies.code}</TableHead>
+									<TableHead>{t.assemblies.revision}</TableHead>
+									<TableHead>{t.assemblies.status}</TableHead>
+									<TableHead class="text-right">{t.assemblies.lines}</TableHead>
 									<TableHead class="w-px">
-										<span class="sr-only">{t.boms.diagram}</span>
+										<span class="sr-only">{t.assemblies.diagram}</span>
 									</TableHead>
 								</TableRow>
 							</TableHeader>
@@ -311,7 +321,8 @@ function BomList(props: { rows: BomRow[]; q: string; status: string }) {
 								{props.rows.map((b) => (
 									<TableRow>
 										<TableCell>
-											<a href={`/boms/${b.id}`}>{b.partRef}</a> <span class="text-muted-foreground">{b.partName}</span>
+											<a href={`/assemblies/${b.id}`}>{b.partRef}</a>{" "}
+											<span class="text-muted-foreground">{b.partName}</span>
 										</TableCell>
 										<TableCell>
 											<KindBadge kind={b.partKind} />
@@ -324,12 +335,12 @@ function BomList(props: { rows: BomRow[]; q: string; status: string }) {
 										<TableCell class="text-right tabular-nums">{b.lineCount}</TableCell>
 										<TableCell class="w-px py-1">
 											<Button
-												href={`/boms/${b.id}/diagram`}
+												href={`/assemblies/${b.id}/diagram`}
 												variant="ghost"
 												size="icon-sm"
 												icon={icons.diagram}
-												aria-label={fmt(t.boms.openDiagram, { ref: b.partRef })}
-												title={fmt(t.boms.openDiagram, { ref: b.partRef })}
+												aria-label={fmt(t.assemblies.openDiagram, { ref: b.partRef })}
+												title={fmt(t.assemblies.openDiagram, { ref: b.partRef })}
 											/>
 										</TableCell>
 									</TableRow>
@@ -343,11 +354,11 @@ function BomList(props: { rows: BomRow[]; q: string; status: string }) {
 	);
 }
 
-bomRoutes.get("/", async (c) => {
+assemblyRoutes.get("/", async (c) => {
 	const q = c.req.query("q") ?? "";
 	const status = c.req.query("status") ?? "";
-	const rows = await listBoms(c.var.db, { q, status });
-	return page(c, c.var.t.boms.title, <BomList rows={rows} q={q} status={status} />);
+	const rows = await listAssemblies(c.var.db, { q, status });
+	return page(c, c.var.t.assemblies.title, <AssemblyList rows={rows} q={q} status={status} />);
 });
 
 // ---------------------------------------------------------------------------
@@ -356,7 +367,7 @@ bomRoutes.get("/", async (c) => {
 type ParentOption = { id: number; ref: string; name: string };
 type SourceOption = { id: number; label: string };
 
-function NewBomForm(props: {
+function NewAssemblyForm(props: {
 	values: FormValues;
 	errors: FormErrors;
 	parents: ParentOption[];
@@ -366,27 +377,27 @@ function NewBomForm(props: {
 	const p = { values: props.values, errors: props.errors };
 	return (
 		<Card class="max-w-3xl">
-			<form method="post" action="/boms" class="flex flex-col gap-6">
+			<form method="post" action="/assemblies" class="flex flex-col gap-6">
 				<CardContent>
 					<ErrorBanner show={Object.keys(props.errors).length > 0} />
 					<FieldGroup>
 						<PartSelectPicker
 							name="parent_part_id"
-							label={t.boms.parent}
-							hint={t.boms.parentHint}
+							label={t.assemblies.parent}
+							hint={t.assemblies.parentHint}
 							required
 							options={props.parents}
 							{...p}
 						/>
 						<div class="grid gap-4 md:grid-cols-2">
-							<TextField name="code" label={t.boms.code} hint={t.boms.codeHint} required {...p} />
-							<TextField name="revision" label={t.boms.revision} required {...p} />
+							<TextField name="code" label={t.assemblies.code} hint={t.assemblies.codeHint} required {...p} />
+							<TextField name="revision" label={t.assemblies.revision} required {...p} />
 						</div>
 						<SelectField
 							name="copy_from"
-							label={t.boms.copyFrom}
+							label={t.assemblies.copyFrom}
 							options={[
-								{ value: "", label: t.boms.copyNone },
+								{ value: "", label: t.assemblies.copyNone },
 								...props.sources.map((s) => ({ value: String(s.id), label: s.label })),
 							]}
 							{...p}
@@ -396,7 +407,7 @@ function NewBomForm(props: {
 				</CardContent>
 				<CardFooter class="border-t">
 					<Button icon={icons.plus}>{t.common.create}</Button>
-					<Button href="/boms" variant="outline">
+					<Button href="/assemblies" variant="outline">
 						{t.common.cancel}
 					</Button>
 				</CardFooter>
@@ -406,18 +417,18 @@ function NewBomForm(props: {
 	);
 }
 
-async function newBomOptions(c: Context<AppEnv>) {
+async function newAssemblyOptions(c: Context<AppEnv>) {
 	const [parents, all] = await Promise.all([
 		partOptions(c.var.db, ["make", "kit"]),
-		listBoms(c.var.db, { status: "all" }),
+		listAssemblies(c.var.db, { status: "all" }),
 	]);
 	const sources = all.map((b) => ({ id: b.id, label: `${b.partRef} · ${b.code} · ${b.revision}` }));
 	return { parents, sources };
 }
 
-bomRoutes.get("/new", requirePermission("boms.edit"), async (c) => {
+assemblyRoutes.get("/new", requirePermission("assemblies.edit"), async (c) => {
 	const t = c.var.t;
-	const { parents, sources } = await newBomOptions(c);
+	const { parents, sources } = await newAssemblyOptions(c);
 	const values: FormValues = {
 		parent_part_id: c.req.query("part") ?? "",
 		code: DEFAULT_CODE,
@@ -427,25 +438,25 @@ bomRoutes.get("/new", requirePermission("boms.edit"), async (c) => {
 	if (values.copy_from) values.code = "";
 	return page(
 		c,
-		t.boms.new,
+		t.assemblies.new,
 		<>
-			<PageHeader title={t.boms.new} />
-			<NewBomForm values={values} errors={{}} parents={parents} sources={sources} />
+			<PageHeader title={t.assemblies.new} />
+			<NewAssemblyForm values={values} errors={{}} parents={parents} sources={sources} />
 		</>,
 	);
 });
 
-bomRoutes.post("/", requirePermission("boms.edit"), async (c) => {
+assemblyRoutes.post("/", requirePermission("assemblies.edit"), async (c) => {
 	const t = c.var.t;
 	const db = c.var.db;
 	const body = await c.req.parseBody();
-	const v = validate(bomInput, body);
+	const v = validate(assemblyInput, body);
 	const errors: FieldErrors = v.ok ? {} : { ...v.errors };
 	if (v.ok) {
 		const d = v.data;
 		Object.assign(
 			errors,
-			await newBomErrors(db, {
+			await newAssemblyErrors(db, {
 				parentPartId: d.parent_part_id,
 				code: d.code,
 				revision: d.revision,
@@ -454,13 +465,13 @@ bomRoutes.post("/", requirePermission("boms.edit"), async (c) => {
 		);
 	}
 	if (!v.ok || Object.keys(errors).length > 0) {
-		const { parents, sources } = await newBomOptions(c);
+		const { parents, sources } = await newAssemblyOptions(c);
 		return page(
 			c,
-			t.boms.new,
+			t.assemblies.new,
 			<>
-				<PageHeader title={t.boms.new} />
-				<NewBomForm
+				<PageHeader title={t.assemblies.new} />
+				<NewAssemblyForm
 					values={body as FormValues}
 					errors={translateErrors(c, errors, { ref: "", parent: "" })}
 					parents={parents}
@@ -481,8 +492,8 @@ bomRoutes.post("/", requirePermission("boms.edit"), async (c) => {
 	)[0]?.ref;
 	await saveChanges(
 		c,
-		fmt(t.history.summaries.bomCreate, { bom: bomLabel(parentRef ?? "", d) }),
-		createBomStatements(
+		fmt(t.history.summaries.assemblyCreate, { assembly: assemblyLabel(parentRef ?? "", d) }),
+		createAssemblyStatements(
 			db,
 			{ parentPartId: d.parent_part_id as number, code: d.code, revision: d.revision, notes: d.notes },
 			d.copy_from,
@@ -490,20 +501,20 @@ bomRoutes.post("/", requirePermission("boms.edit"), async (c) => {
 			now,
 		),
 	);
-	const created = await findBom(db, d.parent_part_id as number, d.code, d.revision);
-	return redirectOk(c, `/boms/${created?.id}`);
+	const created = await findAssembly(db, d.parent_part_id as number, d.code, d.revision);
+	return redirectOk(c, `/assemblies/${created?.id}`);
 });
 
 // ---------------------------------------------------------------------------
 // Editor
 
-async function loadBom(c: Context<AppEnv>) {
+async function loadAssembly(c: Context<AppEnv>) {
 	const id = idParam(c);
-	return id ? getBom(c.var.db, id) : undefined;
+	return id ? getAssembly(c.var.db, id) : undefined;
 }
 
 function LinesEditor(props: {
-	bom: Bom;
+	assembly: Assembly;
 	part: Part;
 	lines: LineRow[];
 	costs: Map<number, Cost>;
@@ -515,21 +526,21 @@ function LinesEditor(props: {
 }) {
 	const view = useApp();
 	const { t, locale, seeCosts } = view;
-	const { bom } = props;
-	const editable = bom.status !== "archived" && can(view, "boms.edit");
+	const { assembly } = props;
+	const editable = assembly.status !== "archived" && can(view, "assemblies.edit");
 	const hx = {
-		"hx-target": "#bom-lines",
-		"hx-select": "#bom-lines",
+		"hx-target": "#assembly-lines",
+		"hx-select": "#assembly-lines",
 		"hx-swap": "outerHTML",
 	};
 	return (
 		<>
-			{bom.status === "active" ? <Alert variant="warning">{t.boms.activeWarning}</Alert> : null}
-			{bom.status === "archived" ? <Alert>{t.boms.archivedNote}</Alert> : null}
-			<Card id="bom-lines" class="gap-4">
+			{assembly.status === "active" ? <Alert variant="warning">{t.assemblies.activeWarning}</Alert> : null}
+			{assembly.status === "archived" ? <Alert>{t.assemblies.archivedNote}</Alert> : null}
+			<Card id="assembly-lines" class="gap-4">
 				<CardHeader>
-					<CardTitle>{t.boms.editor}</CardTitle>
-					<CardDescription>{fmt(t.boms.linesCount, { n: props.lines.length })}</CardDescription>
+					<CardTitle>{t.assemblies.editor}</CardTitle>
+					<CardDescription>{fmt(t.assemblies.linesCount, { n: props.lines.length })}</CardDescription>
 				</CardHeader>
 				{props.lines.length === 0 ? (
 					<CardContent>
@@ -540,13 +551,13 @@ function LinesEditor(props: {
 						<TableHeader class="bg-muted/50">
 							<TableRow>
 								{editable ? <TableHead class="w-px" /> : null}
-								<TableHead>{t.boms.component}</TableHead>
+								<TableHead>{t.assemblies.component}</TableHead>
 								<TableHead>{t.parts.kind}</TableHead>
-								<TableHead class="text-right">{t.boms.qty}</TableHead>
+								<TableHead class="text-right">{t.assemblies.qty}</TableHead>
 								{seeCosts ? (
 									<>
-										<TableHead class="text-right">{t.boms.unitCost}</TableHead>
-										<TableHead class="text-right">{t.boms.lineCost}</TableHead>
+										<TableHead class="text-right">{t.assemblies.unitCost}</TableHead>
+										<TableHead class="text-right">{t.assemblies.lineCost}</TableHead>
 									</>
 								) : null}
 								{editable ? <TableHead class="w-px" /> : null}
@@ -555,7 +566,7 @@ function LinesEditor(props: {
 						<TableBody>
 							{props.lines.map((l, i) => {
 								const cost = props.costs.get(l.partId);
-								const lineUrl = `/boms/${bom.id}/lines/${l.id}`;
+								const lineUrl = `/assemblies/${assembly.id}/lines/${l.id}`;
 								return (
 									<TableRow>
 										{editable ? (
@@ -566,7 +577,7 @@ function LinesEditor(props: {
 														hx={hx}
 														hidden={{ dir: "up" }}
 														icon={icons.arrowUp}
-														label={t.boms.moveUp}
+														label={t.assemblies.moveUp}
 														disabled={i === 0}
 													/>
 													<LineActionForm
@@ -574,7 +585,7 @@ function LinesEditor(props: {
 														hx={hx}
 														hidden={{ dir: "down" }}
 														icon={icons.arrowDown}
-														label={t.boms.moveDown}
+														label={t.assemblies.moveDown}
 														disabled={i === props.lines.length - 1}
 													/>
 												</div>
@@ -606,7 +617,7 @@ function LinesEditor(props: {
 														name="qty"
 														inputmode="decimal"
 														value={formatQtyInput(l.qtyMilli, locale)}
-														aria-label={`${t.boms.qty} ${l.ref}`}
+														aria-label={`${t.assemblies.qty} ${l.ref}`}
 														data-select-on-focus
 														class="w-20 text-right tabular-nums"
 													/>
@@ -637,7 +648,12 @@ function LinesEditor(props: {
 										) : null}
 										{editable ? (
 											<TableCell class="w-px py-1">
-												<LineActionForm action={`${lineUrl}/delete`} hx={hx} icon={icons.trash} label={t.boms.remove} />
+												<LineActionForm
+													action={`${lineUrl}/delete`}
+													hx={hx}
+													icon={icons.trash}
+													label={t.assemblies.remove}
+												/>
 											</TableCell>
 										) : null}
 									</TableRow>
@@ -647,7 +663,7 @@ function LinesEditor(props: {
 						{seeCosts ? (
 							<TableFooter>
 								<TableRow class="hover:bg-transparent">
-									<TableCell colspan={editable ? 5 : 4}>{t.boms.totalCost}</TableCell>
+									<TableCell colspan={editable ? 5 : 4}>{t.assemblies.totalCost}</TableCell>
 									<TableCell class="text-right font-semibold">
 										<CostView cost={props.total} refs={props.refs} />
 									</TableCell>
@@ -666,17 +682,17 @@ function LinesEditor(props: {
 					<CardFooter class="flex-col items-stretch border-t">
 						<form
 							method="post"
-							action={`/boms/${bom.id}/lines`}
+							action={`/assemblies/${assembly.id}/lines`}
 							class="flex w-full flex-col gap-3"
-							hx-post={`/boms/${bom.id}/lines`}
+							hx-post={`/assemblies/${assembly.id}/lines`}
 							{...hx}
 						>
 							<ErrorBanner show={Object.keys(props.errors).length > 0} />
 							<div class="grid gap-3 md:grid-cols-[2fr_1fr_2fr_auto] md:items-end">
 								<PartPicker
 									name="component"
-									label={t.boms.component}
-									placeholder={t.boms.componentHint}
+									label={t.assemblies.component}
+									placeholder={t.assemblies.componentHint}
 									listId="part-refs"
 									options={props.options}
 									required
@@ -685,14 +701,14 @@ function LinesEditor(props: {
 								/>
 								<TextField
 									name="qty"
-									label={t.boms.qty}
+									label={t.assemblies.qty}
 									inputmode="decimal"
 									required
 									values={props.values}
 									errors={props.errors}
 								/>
 								<TextField name="notes" label={t.common.notes} values={props.values} errors={props.errors} />
-								<Button icon={icons.plus}>{t.boms.addLine}</Button>
+								<Button icon={icons.plus}>{t.assemblies.addLine}</Button>
 							</div>
 						</form>
 						<PartPickerDialog name="component" scope={{ exclude: props.part.id }} />
@@ -738,7 +754,7 @@ function IncompleteNote(props: { refs: string; class?: string }) {
 	return (
 		<p class={cn("flex items-start gap-2 text-sm font-medium text-warning", props.class)}>
 			<Icon icon={icons.triangleAlert} class="mt-0.5 size-4" />
-			{fmt(t.boms.incomplete, { refs: props.refs })}
+			{fmt(t.assemblies.incomplete, { refs: props.refs })}
 		</p>
 	);
 }
@@ -757,26 +773,26 @@ function SideCard(props: { title: string; icon: IconNode; children: Child }) {
 
 const salePriceInput = z.object({ sale_price: field.money() });
 
-/** The variant's own selling price (empty = the part's), editable unless the BoM is archived. */
-function SalePriceCard(props: { bom: Bom; part: Part; values: FormValues; errors: FormErrors }) {
+/** The variant's own selling price (empty = the part's), editable unless the assembly is archived. */
+function SalePriceCard(props: { assembly: Assembly; part: Part; values: FormValues; errors: FormErrors }) {
 	const view = useApp();
 	const { t, locale, currency, seeCosts } = view;
-	const { bom, part } = props;
+	const { assembly, part } = props;
 	const partPrice = part.salePriceCents;
 	if (!seeCosts) return null;
-	if (bom.status === "archived" || !can(view, "prices.edit")) {
-		const effective = salePriceOf(part, bom);
+	if (assembly.status === "archived" || !can(view, "prices.edit")) {
+		const effective = salePriceOf(part, assembly);
 		return (
-			<SideCard title={t.boms.salePriceTitle} icon={icons.tag}>
+			<SideCard title={t.assemblies.salePriceTitle} icon={icons.tag}>
 				<DetailList
 					items={[
 						{
-							label: t.boms.salePrice,
+							label: t.assemblies.salePrice,
 							value: (
 								<span class="inline-flex flex-wrap items-center gap-1.5">
 									{effective === null ? t.common.none : <Money cents={effective} />}
-									{bom.salePriceCents === null && effective !== null ? (
-										<span class="text-xs text-muted-foreground">({t.boms.salePriceInherited})</span>
+									{assembly.salePriceCents === null && effective !== null ? (
+										<span class="text-xs text-muted-foreground">({t.assemblies.salePriceInherited})</span>
 									) : null}
 								</span>
 							),
@@ -789,17 +805,17 @@ function SalePriceCard(props: { bom: Bom; part: Part; values: FormValues; errors
 	return (
 		<Card id="sale-price" class="gap-4">
 			<CardHeader>
-				<CardTitle icon={icons.tag}>{t.boms.salePriceTitle}</CardTitle>
+				<CardTitle icon={icons.tag}>{t.assemblies.salePriceTitle}</CardTitle>
 			</CardHeader>
-			<form method="post" action={`/boms/${bom.id}/sale-price`} class="flex flex-col gap-4">
+			<form method="post" action={`/assemblies/${assembly.id}/sale-price`} class="flex flex-col gap-4">
 				<CardContent>
 					<DecimalField
 						name="sale_price"
-						label={t.boms.salePrice}
+						label={t.assemblies.salePrice}
 						hint={
 							partPrice === null
-								? t.boms.salePriceHintNone
-								: fmt(t.boms.salePriceHint, { price: formatMoney(partPrice, locale, currency) })
+								? t.assemblies.salePriceHintNone
+								: fmt(t.assemblies.salePriceHint, { price: formatMoney(partPrice, locale, currency) })
 						}
 						values={props.values}
 						errors={props.errors}
@@ -817,7 +833,7 @@ function SalePriceCard(props: { bom: Bom; part: Part; values: FormValues; errors
 
 async function renderEditor(
 	c: Context<AppEnv>,
-	data: { bom: Bom; part: Part },
+	data: { assembly: Assembly; part: Part },
 	form: { values: FormValues; errors: FieldErrors; vars?: Record<string, string> } = {
 		values: { qty: "1" },
 		errors: {},
@@ -827,34 +843,34 @@ async function renderEditor(
 	price?: { values: FormValues; errors: FieldErrors },
 ) {
 	const db = c.var.db;
-	const { bom, part } = data;
+	const { assembly, part } = data;
 	const [lines, graph, options, siblings] = await Promise.all([
-		getBomLines(db, bom.id),
+		getAssemblyLines(db, assembly.id),
 		loadGraph(db),
 		partOptions(db),
 		db
-			.select({ id: boms.id, code: boms.code, revision: boms.revision, status: boms.status })
-			.from(boms)
-			.where(eq(boms.parentPartId, part.id))
-			.orderBy(asc(boms.code), asc(boms.revision)),
+			.select({ id: assemblies.id, code: assemblies.code, revision: assemblies.revision, status: assemblies.status })
+			.from(assemblies)
+			.where(eq(assemblies.parentPartId, part.id))
+			.orderBy(asc(assemblies.code), asc(assemblies.revision)),
 	]);
 	const calc = new CostCalculator(graph);
 	const costs = new Map(lines.map((l) => [l.partId, calc.part(l.partId)]));
-	const total = calc.bom(bom.id);
+	const total = calc.assembly(assembly.id);
 	const refs = new Map([...graph.parts.values()].map((p) => [p.id, p.ref]));
 	const t = c.var.t;
 	const priceValues = price?.values ?? {
-		sale_price: bom.salePriceCents === null ? "" : formatCentsInput(bom.salePriceCents, c.var.locale),
+		sale_price: assembly.salePriceCents === null ? "" : formatCentsInput(assembly.salePriceCents, c.var.locale),
 	};
 	return page(
 		c,
-		`${part.ref} ${bom.code} ${bom.revision}`,
+		`${part.ref} ${assembly.code} ${assembly.revision}`,
 		<>
-			<BomHeader bom={bom} part={part} tab="editor" pricing={bomPricing(part, bom, calc)} />
-			<Flash ok={c.req.query("ok")} message={c.req.query("ok") === "activated" ? t.boms.activated : undefined} />
+			<AssemblyHeader assembly={assembly} part={part} tab="editor" pricing={assemblyPricing(part, assembly, calc)} />
+			<Flash ok={c.req.query("ok")} message={c.req.query("ok") === "activated" ? t.assemblies.activated : undefined} />
 			{c.req.query("err") ? <Alert variant="destructive">{errorText(t, c.req.query("err") ?? "")}</Alert> : null}
 			<LinesEditor
-				bom={bom}
+				assembly={assembly}
 				part={part}
 				lines={lines}
 				costs={costs}
@@ -865,46 +881,51 @@ async function renderEditor(
 				errors={translateErrors(c, form.errors, form.vars)}
 			/>
 			<div class="mt-6 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-				<SalePriceCard bom={bom} part={part} values={priceValues} errors={translateErrors(c, price?.errors ?? {})} />
-				<SideCard title={t.boms.revisions} icon={icons.history}>
+				<SalePriceCard
+					assembly={assembly}
+					part={part}
+					values={priceValues}
+					errors={translateErrors(c, price?.errors ?? {})}
+				/>
+				<SideCard title={t.assemblies.revisions} icon={icons.history}>
 					<ul class="m-0 flex list-none flex-col gap-2 p-0 text-sm">
 						{siblings
-							.filter((s) => s.code === bom.code)
+							.filter((s) => s.code === assembly.code)
 							.map((s) => (
 								<li class="flex items-center justify-between gap-3">
-									{s.id === bom.id ? (
+									{s.id === assembly.id ? (
 										<span class="font-semibold" aria-current="page">
 											{s.revision}
 										</span>
 									) : (
-										<a href={`/boms/${s.id}`}>{s.revision}</a>
+										<a href={`/assemblies/${s.id}`}>{s.revision}</a>
 									)}
 									<StatusBadge status={s.status} />
 								</li>
 							))}
 					</ul>
 				</SideCard>
-				<SideCard title={t.boms.variants} icon={icons.layers}>
+				<SideCard title={t.assemblies.variants} icon={icons.layers}>
 					<ul class="m-0 flex list-none flex-col gap-2 p-0 text-sm">
 						{siblings
 							.filter((s) => s.status === "active")
 							.map((s) => (
 								<li class="flex items-center justify-between gap-3">
-									{s.id === bom.id ? (
+									{s.id === assembly.id ? (
 										<span class="font-semibold" aria-current="page">
 											{s.code}
 										</span>
 									) : (
-										<a href={`/boms/${s.id}`}>{s.code}</a>
+										<a href={`/assemblies/${s.id}`}>{s.code}</a>
 									)}
 									<span class="text-muted-foreground">{s.revision}</span>
 								</li>
 							))}
 					</ul>
 				</SideCard>
-				{bom.notes ? (
+				{assembly.notes ? (
 					<SideCard title={t.common.notes} icon={icons.clipboardList}>
-						<p class="text-sm whitespace-pre-wrap">{bom.notes}</p>
+						<p class="text-sm whitespace-pre-wrap">{assembly.notes}</p>
 					</SideCard>
 				) : null}
 			</div>
@@ -913,21 +934,22 @@ async function renderEditor(
 	);
 }
 
-bomRoutes.get("/:id", async (c) => {
-	const data = await loadBom(c);
+assemblyRoutes.get("/:id", async (c) => {
+	const data = await loadAssembly(c);
 	if (!data) return notFound(c);
 	return renderEditor(c, data);
 });
 
-bomRoutes.post("/:id/lines", requirePermission("boms.edit"), async (c) => {
-	const data = await loadBom(c);
+assemblyRoutes.post("/:id/lines", requirePermission("assemblies.edit"), async (c) => {
+	const data = await loadAssembly(c);
 	if (!data) return notFound(c);
 	const db = c.var.db;
-	const { bom, part } = data;
+	const { assembly, part } = data;
 	const body = await c.req.parseBody();
 	const values = body as FormValues;
-	if (bom.status === "archived") return renderEditor(c, data, { values, errors: { component: "bom_archived" } }, 422);
-	const v = validate(bomLineInput, body);
+	if (assembly.status === "archived")
+		return renderEditor(c, data, { values, errors: { component: "assembly_archived" } }, 422);
+	const v = validate(assemblyLineInput, body);
 	const errors: FieldErrors = v.ok ? {} : { ...v.errors };
 	const vars: Record<string, string> = {};
 	let componentId: number | undefined;
@@ -947,69 +969,79 @@ bomRoutes.post("/:id/lines", requirePermission("boms.edit"), async (c) => {
 	if (!v.ok || componentId === undefined) return renderEditor(c, data, { values, errors, vars }, 422);
 	await saveChanges(
 		c,
-		fmt(c.var.t.history.summaries.bomLineAdd, { ref: componentRef, bom: bomLabel(part.ref, bom) }),
-		addBomLineStatements(
+		fmt(c.var.t.history.summaries.assemblyLineAdd, { ref: componentRef, assembly: assemblyLabel(part.ref, assembly) }),
+		addAssemblyLineStatements(
 			db,
-			bom.id,
+			assembly.id,
 			{ componentPartId: componentId, qtyMilli: v.data.qty, notes: v.data.notes },
 			c.var.user,
 			nowIso(),
 		),
 	);
-	return c.redirect(`/boms/${bom.id}`, 303);
+	return c.redirect(`/assemblies/${assembly.id}`, 303);
 });
 
 async function editableLine(c: Context<AppEnv>) {
-	const data = await loadBom(c);
+	const data = await loadAssembly(c);
 	const lineId = idParam(c, "lineId");
 	if (!data || !lineId) return undefined;
 	const line = (
 		await c.var.db
 			.select()
-			.from(bomLines)
-			.where(and(eq(bomLines.id, lineId), eq(bomLines.bomId, data.bom.id)))
+			.from(assemblyLines)
+			.where(and(eq(assemblyLines.id, lineId), eq(assemblyLines.assemblyId, data.assembly.id)))
 			.limit(1)
 	)[0];
 	return line ? { ...data, line } : undefined;
 }
 
-bomRoutes.post("/:id/lines/:lineId", requirePermission("boms.edit"), async (c) => {
+assemblyRoutes.post("/:id/lines/:lineId", requirePermission("assemblies.edit"), async (c) => {
 	const data = await editableLine(c);
 	if (!data) return notFound(c);
-	if (data.bom.status === "archived") return c.redirect(`/boms/${data.bom.id}?err=bom_archived`, 303);
+	if (data.assembly.status === "archived")
+		return c.redirect(`/assemblies/${data.assembly.id}?err=assembly_archived`, 303);
 	const body = await c.req.parseBody();
 	const qty = parseMilli(typeof body.qty === "string" ? body.qty : "");
-	if (qty === null || qty <= 0) return c.redirect(`/boms/${data.bom.id}?err=invalid_quantity`, 303);
+	if (qty === null || qty <= 0) return c.redirect(`/assemblies/${data.assembly.id}?err=invalid_quantity`, 303);
 	const comp = (await c.var.db.select().from(parts).where(eq(parts.id, data.line.componentPartId)).limit(1))[0];
-	if (comp?.trackSerial && qty % MILLI !== 0) return c.redirect(`/boms/${data.bom.id}?err=serial_whole_qty`, 303);
+	if (comp?.trackSerial && qty % MILLI !== 0)
+		return c.redirect(`/assemblies/${data.assembly.id}?err=serial_whole_qty`, 303);
 	await saveChanges(
 		c,
-		fmt(c.var.t.history.summaries.bomLineQty, { ref: comp?.ref ?? "", bom: bomLabel(data.part.ref, data.bom) }),
-		updateBomLineQtyStatements(c.var.db, data.bom.id, data.line.id, qty, c.var.user, nowIso()),
+		fmt(c.var.t.history.summaries.assemblyLineQty, {
+			ref: comp?.ref ?? "",
+			assembly: assemblyLabel(data.part.ref, data.assembly),
+		}),
+		updateAssemblyLineQtyStatements(c.var.db, data.assembly.id, data.line.id, qty, c.var.user, nowIso()),
 	);
-	return c.redirect(`/boms/${data.bom.id}`, 303);
+	return c.redirect(`/assemblies/${data.assembly.id}`, 303);
 });
 
-bomRoutes.post("/:id/lines/:lineId/delete", requirePermission("boms.edit"), async (c) => {
+assemblyRoutes.post("/:id/lines/:lineId/delete", requirePermission("assemblies.edit"), async (c) => {
 	const data = await editableLine(c);
 	if (!data) return notFound(c);
-	if (data.bom.status === "archived") return c.redirect(`/boms/${data.bom.id}?err=bom_archived`, 303);
+	if (data.assembly.status === "archived")
+		return c.redirect(`/assemblies/${data.assembly.id}?err=assembly_archived`, 303);
 	const comp = (await c.var.db.select().from(parts).where(eq(parts.id, data.line.componentPartId)).limit(1))[0];
 	await saveChanges(
 		c,
-		fmt(c.var.t.history.summaries.bomLineDelete, { ref: comp?.ref ?? "", bom: bomLabel(data.part.ref, data.bom) }),
-		deleteBomLineStatements(c.var.db, data.bom.id, data.line.id, c.var.user, nowIso()),
+		fmt(c.var.t.history.summaries.assemblyLineDelete, {
+			ref: comp?.ref ?? "",
+			assembly: assemblyLabel(data.part.ref, data.assembly),
+		}),
+		deleteAssemblyLineStatements(c.var.db, data.assembly.id, data.line.id, c.var.user, nowIso()),
 	);
-	return c.redirect(`/boms/${data.bom.id}`, 303);
+	return c.redirect(`/assemblies/${data.assembly.id}`, 303);
 });
 
-bomRoutes.post("/:id/lines/:lineId/move", requirePermission("boms.edit"), async (c) => {
+assemblyRoutes.post("/:id/lines/:lineId/move", requirePermission("assemblies.edit"), async (c) => {
 	const data = await editableLine(c);
 	if (!data) return notFound(c);
-	if (data.bom.status === "archived") return c.redirect(`/boms/${data.bom.id}?err=bom_archived`, 303);
+	if (data.assembly.status === "archived")
+		return c.redirect(`/assemblies/${data.assembly.id}?err=assembly_archived`, 303);
 	const body = await c.req.parseBody();
 	const dir = body.dir === "up" ? -1 : 1;
-	const lines = await getBomLines(c.var.db, data.bom.id);
+	const lines = await getAssemblyLines(c.var.db, data.assembly.id);
 	const idx = lines.findIndex((l) => l.id === data.line.id);
 	const other = lines[idx + dir];
 	if (idx >= 0 && other) {
@@ -1018,107 +1050,114 @@ bomRoutes.post("/:id/lines/:lineId/move", requirePermission("boms.edit"), async 
 		[order[idx], order[idx + dir]] = [other.id, data.line.id];
 		await saveChanges(
 			c,
-			fmt(c.var.t.history.summaries.bomLineMove, { bom: bomLabel(data.part.ref, data.bom) }),
-			reorderBomLinesStatements(c.var.db, data.bom.id, order, c.var.user, nowIso()),
+			fmt(c.var.t.history.summaries.assemblyLineMove, { assembly: assemblyLabel(data.part.ref, data.assembly) }),
+			reorderAssemblyLinesStatements(c.var.db, data.assembly.id, order, c.var.user, nowIso()),
 		);
 	}
-	return c.redirect(`/boms/${data.bom.id}`, 303);
+	return c.redirect(`/assemblies/${data.assembly.id}`, 303);
 });
 
 // Variant selling price: empty = use the part's. Logged in the price history (same batch).
-bomRoutes.post("/:id/sale-price", requirePermission("prices.edit"), async (c) => {
-	const data = await loadBom(c);
+assemblyRoutes.post("/:id/sale-price", requirePermission("prices.edit"), async (c) => {
+	const data = await loadAssembly(c);
 	if (!data) return notFound(c);
-	const { bom } = data;
-	if (bom.status === "archived") return c.redirect(`/boms/${bom.id}?err=bom_archived`, 303);
+	const { assembly } = data;
+	if (assembly.status === "archived") return c.redirect(`/assemblies/${assembly.id}?err=assembly_archived`, 303);
 	const body = await c.req.parseBody();
 	const v = validate(salePriceInput, body);
 	if (!v.ok) return renderEditor(c, data, undefined, 422, { values: body as FormValues, errors: v.errors });
 	await saveChanges(
 		c,
-		fmt(c.var.t.history.summaries.bomSalePrice, { bom: bomLabel(data.part.ref, bom) }),
-		bomSalePriceStatements(c.var.db, bom, v.data.sale_price, c.var.user, nowIso()),
+		fmt(c.var.t.history.summaries.assemblySalePrice, { assembly: assemblyLabel(data.part.ref, assembly) }),
+		assemblySalePriceStatements(c.var.db, assembly, v.data.sale_price, c.var.user, nowIso()),
 	);
-	return redirectOk(c, `/boms/${bom.id}`);
+	return redirectOk(c, `/assemblies/${assembly.id}`);
 });
 
 // ---------------------------------------------------------------------------
 // Status changes, revisions, delete
 
-bomRoutes.post("/:id/activate", requirePermission("boms.edit"), async (c) => {
-	const data = await loadBom(c);
+assemblyRoutes.post("/:id/activate", requirePermission("assemblies.edit"), async (c) => {
+	const data = await loadAssembly(c);
 	if (!data) return notFound(c);
-	const { bom, part } = data;
-	if (part.kind !== "make" && part.kind !== "kit") return c.redirect(`/boms/${bom.id}?err=bom_parent_kind`, 303);
-	if (await archivedBomCycles(c.var.db, bom)) return c.redirect(`/boms/${bom.id}?err=bom_cycle`, 303);
+	const { assembly, part } = data;
+	if (part.kind !== "make" && part.kind !== "kit")
+		return c.redirect(`/assemblies/${assembly.id}?err=assembly_parent_kind`, 303);
+	if (await archivedAssemblyCycles(c.var.db, assembly))
+		return c.redirect(`/assemblies/${assembly.id}?err=assembly_cycle`, 303);
 	await saveChanges(
 		c,
-		fmt(c.var.t.history.summaries.bomActivate, { bom: bomLabel(part.ref, bom) }),
-		activateStatements(c.var.db, bom, c.var.user, nowIso()),
+		fmt(c.var.t.history.summaries.assemblyActivate, { assembly: assemblyLabel(part.ref, assembly) }),
+		activateStatements(c.var.db, assembly, c.var.user, nowIso()),
 	);
-	return redirectOk(c, `/boms/${bom.id}`, "activated");
+	return redirectOk(c, `/assemblies/${assembly.id}`, "activated");
 });
 
-bomRoutes.post("/:id/draft", requirePermission("boms.edit"), async (c) => {
-	const data = await loadBom(c);
+assemblyRoutes.post("/:id/draft", requirePermission("assemblies.edit"), async (c) => {
+	const data = await loadAssembly(c);
 	if (!data) return notFound(c);
-	const { bom, part } = data;
-	if (await archivedBomCycles(c.var.db, bom)) return c.redirect(`/boms/${bom.id}?err=bom_cycle`, 303);
-	await saveChanges(c, fmt(c.var.t.history.summaries.bomDraft, { bom: bomLabel(part.ref, bom) }), [
-		setBomStatusStatement(c.var.db, bom.id, "draft", c.var.user, nowIso()),
+	const { assembly, part } = data;
+	if (await archivedAssemblyCycles(c.var.db, assembly))
+		return c.redirect(`/assemblies/${assembly.id}?err=assembly_cycle`, 303);
+	await saveChanges(c, fmt(c.var.t.history.summaries.assemblyDraft, { assembly: assemblyLabel(part.ref, assembly) }), [
+		setAssemblyStatusStatement(c.var.db, assembly.id, "draft", c.var.user, nowIso()),
 	]);
-	return redirectOk(c, `/boms/${bom.id}`);
+	return redirectOk(c, `/assemblies/${assembly.id}`);
 });
 
-bomRoutes.post("/:id/archive", requirePermission("boms.archive"), async (c) => {
-	const data = await loadBom(c);
+assemblyRoutes.post("/:id/archive", requirePermission("assemblies.archive"), async (c) => {
+	const data = await loadAssembly(c);
 	if (!data) return notFound(c);
-	await saveChanges(c, fmt(c.var.t.history.summaries.bomArchive, { bom: bomLabel(data.part.ref, data.bom) }), [
-		setBomStatusStatement(c.var.db, data.bom.id, "archived", c.var.user, nowIso()),
-	]);
-	return redirectOk(c, `/boms/${data.bom.id}`, "archived");
+	await saveChanges(
+		c,
+		fmt(c.var.t.history.summaries.assemblyArchive, { assembly: assemblyLabel(data.part.ref, data.assembly) }),
+		[setAssemblyStatusStatement(c.var.db, data.assembly.id, "archived", c.var.user, nowIso())],
+	);
+	return redirectOk(c, `/assemblies/${data.assembly.id}`, "archived");
 });
 
-bomRoutes.post("/:id/revision", requirePermission("boms.edit"), async (c) => {
-	const data = await loadBom(c);
+assemblyRoutes.post("/:id/revision", requirePermission("assemblies.edit"), async (c) => {
+	const data = await loadAssembly(c);
 	if (!data) return notFound(c);
-	const { bom, part } = data;
+	const { assembly, part } = data;
 	const db = c.var.db;
 	const taken = await db
-		.select({ revision: boms.revision })
-		.from(boms)
-		.where(and(eq(boms.parentPartId, bom.parentPartId), eq(boms.code, bom.code)));
+		.select({ revision: assemblies.revision })
+		.from(assemblies)
+		.where(and(eq(assemblies.parentPartId, assembly.parentPartId), eq(assemblies.code, assembly.code)));
 	const revision = nextRevision(
-		bom.revision,
+		assembly.revision,
 		taken.map((r) => r.revision),
 	);
 	await saveChanges(
 		c,
-		fmt(c.var.t.history.summaries.bomRevision, {
-			bom: bomLabel(part.ref, { code: bom.code, revision }),
-			from: bom.revision,
+		fmt(c.var.t.history.summaries.assemblyRevision, {
+			assembly: assemblyLabel(part.ref, { code: assembly.code, revision }),
+			from: assembly.revision,
 		}),
-		createBomStatements(
+		createAssemblyStatements(
 			db,
-			{ parentPartId: bom.parentPartId, code: bom.code, revision, notes: bom.notes },
-			bom.id,
+			{ parentPartId: assembly.parentPartId, code: assembly.code, revision, notes: assembly.notes },
+			assembly.id,
 			c.var.user,
 			nowIso(),
 		),
 	);
-	const created = await findBom(db, bom.parentPartId, bom.code, revision);
-	return redirectOk(c, `/boms/${created?.id}`);
+	const created = await findAssembly(db, assembly.parentPartId, assembly.code, revision);
+	return redirectOk(c, `/assemblies/${created?.id}`);
 });
 
-bomRoutes.post("/:id/delete", requirePermission("boms.delete"), async (c) => {
-	const data = await loadBom(c);
+assemblyRoutes.post("/:id/delete", requirePermission("assemblies.delete"), async (c) => {
+	const data = await loadAssembly(c);
 	if (!data) return notFound(c);
 	try {
-		await saveChanges(c, fmt(c.var.t.history.summaries.bomDelete, { bom: bomLabel(data.part.ref, data.bom) }), [
-			deleteBomStatement(c.var.db, data.bom.id),
-		]);
+		await saveChanges(
+			c,
+			fmt(c.var.t.history.summaries.assemblyDelete, { assembly: assemblyLabel(data.part.ref, data.assembly) }),
+			[deleteAssemblyStatement(c.var.db, data.assembly.id)],
+		);
 	} catch (err) {
-		if (isConstraintError(err, "FOREIGN KEY")) return c.redirect(`/boms/${data.bom.id}?err=in_use`, 303);
+		if (isConstraintError(err, "FOREIGN KEY")) return c.redirect(`/assemblies/${data.assembly.id}?err=in_use`, 303);
 		throw err;
 	}
 	return redirectOk(c, `/parts/${data.part.id}`, "deleted");
@@ -1145,7 +1184,7 @@ function QtyForm(props: {
 					<input type="hidden" name={k} value={v} />
 				))}
 			<label class="inline-flex items-center gap-2 text-sm font-medium">
-				<span>{t.boms.forQty}</span>
+				<span>{t.assemblies.forQty}</span>
 				<input
 					type="text"
 					name="qty"
@@ -1157,10 +1196,10 @@ function QtyForm(props: {
 			{props.showStock ? (
 				<label class="inline-flex min-h-(--control-h) cursor-pointer items-center gap-2 text-sm font-medium">
 					<input type="checkbox" name="stock" value="on" checked={props.stock} />
-					<span>{t.boms.useStock}</span>
+					<span>{t.assemblies.useStock}</span>
 				</label>
 			) : null}
-			<Button variant="outline">{t.boms.update}</Button>
+			<Button variant="outline">{t.assemblies.update}</Button>
 		</form>
 	);
 }
@@ -1199,7 +1238,9 @@ function TreeNode(props: { node: ExplodedNode; calc: CostCalculator; refs: Map<n
 					<a href={`/parts/${n.part.id}`}>{n.part.ref}</a>
 					<span class="min-w-0 truncate text-muted-foreground">{n.part.name}</span>
 					<KindBadge kind={n.part.kind} />
-					{n.mode === "missing_bom" ? <Badge variant="warning">{t.boms.modes.missing_bom}</Badge> : null}
+					{n.mode === "missing_assembly" ? (
+						<Badge variant="warning">{t.assemblies.modes.missing_assembly}</Badge>
+					) : null}
 				</span>
 			</span>
 			<span class="text-right text-muted-foreground tabular-nums">
@@ -1243,19 +1284,19 @@ function TreeNode(props: { node: ExplodedNode; calc: CostCalculator; refs: Map<n
 	);
 }
 
-bomRoutes.get("/:id/history", async (c) => {
-	const data = await loadBom(c);
+assemblyRoutes.get("/:id/history", async (c) => {
+	const data = await loadAssembly(c);
 	if (!data) return notFound(c);
 	return recordHistoryPage(
 		c,
-		bomLabel(data.part.ref, data.bom),
-		<BomHeader bom={data.bom} part={data.part} tab="history" />,
-		{ kind: "bom", id: data.bom.id },
+		assemblyLabel(data.part.ref, data.assembly),
+		<AssemblyHeader assembly={data.assembly} part={data.part} tab="history" />,
+		{ kind: "assembly", id: data.assembly.id },
 	);
 });
 
-bomRoutes.get("/:id/tree", async (c) => {
-	const data = await loadBom(c);
+assemblyRoutes.get("/:id/tree", async (c) => {
+	const data = await loadAssembly(c);
 	if (!data) return notFound(c);
 	const t = c.var.t;
 	const qty = qtyParam(c);
@@ -1265,18 +1306,23 @@ bomRoutes.get("/:id/tree", async (c) => {
 	let explosion: Explosion | null = null;
 	let error = "";
 	try {
-		explosion = explode(graph, data.bom.id, qty);
+		explosion = explode(graph, data.assembly.id, qty);
 	} catch (err) {
 		error = err instanceof Error ? err.message : String(err);
 	}
-	const unit = calc.bom(data.bom.id);
+	const unit = calc.assembly(data.assembly.id);
 	const seeCosts = c.var.seeCosts;
 	return page(
 		c,
-		`${data.part.ref} · ${t.boms.tree}`,
+		`${data.part.ref} · ${t.assemblies.tree}`,
 		<>
-			<BomHeader bom={data.bom} part={data.part} tab="tree" pricing={bomPricing(data.part, data.bom, calc)} />
-			<QtyForm action={`/boms/${data.bom.id}/tree`} qty={qty} />
+			<AssemblyHeader
+				assembly={data.assembly}
+				part={data.part}
+				tab="tree"
+				pricing={assemblyPricing(data.part, data.assembly, calc)}
+			/>
+			<QtyForm action={`/assemblies/${data.assembly.id}/tree`} qty={qty} />
 			{error ? <Alert variant="destructive">{error}</Alert> : null}
 			<Card class="gap-0 overflow-hidden py-0">
 				<div
@@ -1285,13 +1331,13 @@ bomRoutes.get("/:id/tree", async (c) => {
 						"min-h-10 bg-muted/50 py-0 text-xs font-medium tracking-wide text-muted-foreground uppercase",
 					)}
 				>
-					<span class="pl-6">{t.boms.component}</span>
-					<span class="text-right">{t.boms.perParent}</span>
-					<span class="text-right">{t.boms.cumulative}</span>
+					<span class="pl-6">{t.assemblies.component}</span>
+					<span class="text-right">{t.assemblies.perParent}</span>
+					<span class="text-right">{t.assemblies.cumulative}</span>
 					{seeCosts ? (
 						<>
-							<span class="hidden text-right md:block">{t.boms.unitCost}</span>
-							<span class="hidden text-right md:block">{t.boms.lineCost}</span>
+							<span class="hidden text-right md:block">{t.assemblies.unitCost}</span>
+							<span class="hidden text-right md:block">{t.assemblies.lineCost}</span>
 						</>
 					) : null}
 				</div>
@@ -1323,8 +1369,8 @@ bomRoutes.get("/:id/tree", async (c) => {
 	);
 });
 
-bomRoutes.get("/:id/diagram", async (c) => {
-	const data = await loadBom(c);
+assemblyRoutes.get("/:id/diagram", async (c) => {
+	const data = await loadAssembly(c);
 	if (!data) return notFound(c);
 	const t = c.var.t;
 	const qty = qtyParam(c);
@@ -1337,11 +1383,11 @@ bomRoutes.get("/:id/diagram", async (c) => {
 	let explosion: Explosion | null = null;
 	let error = "";
 	try {
-		explosion = explode(graph, data.bom.id, qty);
+		explosion = explode(graph, data.assembly.id, qty);
 	} catch (err) {
 		error = err instanceof Error ? err.message : String(err);
 	}
-	const base = `/boms/${data.bom.id}/diagram`;
+	const base = `/assemblies/${data.assembly.id}/diagram`;
 	const href = (o: { depth?: number | undefined; assembliesOnly?: boolean }) => {
 		const params = new URLSearchParams();
 		if (qty !== MILLI) params.set("qty", formatQtyInput(qty, c.var.locale));
@@ -1353,34 +1399,39 @@ bomRoutes.get("/:id/diagram", async (c) => {
 	};
 	const view: DiagramView = { depth, assembliesOnly, href };
 	const rootPart = graph.parts.get(data.part.id);
-	const tree = explosion && rootPart ? diagramTree(rootPart, data.bom.id, qty, explosion.tree, calc) : null;
+	const tree = explosion && rootPart ? diagramTree(rootPart, data.assembly.id, qty, explosion.tree, calc) : null;
 	const fullDepth = tree ? treeDepth(tree) : 0;
 	const nodes = explosion ? [...walkTree(explosion.tree)] : [];
-	const unit = calc.bom(data.bom.id);
-	const title = fmt(t.boms.diagramTitle, { ref: data.part.ref });
+	const unit = calc.assembly(data.assembly.id);
+	const title = fmt(t.assemblies.diagramTitle, { ref: data.part.ref });
 	return page(
 		c,
-		`${data.part.ref} · ${t.boms.diagram}`,
+		`${data.part.ref} · ${t.assemblies.diagram}`,
 		<>
-			<BomHeader bom={data.bom} part={data.part} tab="diagram" pricing={bomPricing(data.part, data.bom, calc)} />
+			<AssemblyHeader
+				assembly={data.assembly}
+				part={data.part}
+				tab="diagram"
+				pricing={assemblyPricing(data.part, data.assembly, calc)}
+			/>
 			{error ? <Alert variant="destructive">{error}</Alert> : null}
 			{tree ? (
 				<>
 					<div class={cn("mb-4 grid grid-cols-2 gap-3", c.var.seeCosts ? "md:grid-cols-4" : "md:grid-cols-3")}>
-						<StatCard label={t.boms.stats.levels} value={fullDepth} icon={icons.listTree} />
+						<StatCard label={t.assemblies.stats.levels} value={fullDepth} icon={icons.listTree} />
 						<StatCard
-							label={t.boms.stats.components}
+							label={t.assemblies.stats.components}
 							value={new Set(nodes.map((n) => n.part.id)).size}
 							icon={icons.package}
 						/>
 						<StatCard
-							label={`${t.boms.stats.assemblies} · ${t.boms.stats.kits}`}
+							label={`${t.assemblies.stats.assemblies} · ${t.assemblies.stats.kits}`}
 							value={`${new Set(nodes.filter((n) => n.part.kind === "make").map((n) => n.part.id)).size} · ${new Set(nodes.filter((n) => n.part.kind === "kit").map((n) => n.part.id)).size}`}
 							icon={icons.boxes}
 						/>
 						{c.var.seeCosts ? (
 							<StatCard
-								label={t.boms.totalCost}
+								label={t.assemblies.totalCost}
 								value={<CostView cost={unit} refs={refs} />}
 								icon={icons.clipboardList}
 								tone={unit.incomplete ? "warning" : "default"}
@@ -1395,39 +1446,39 @@ bomRoutes.get("/:id/diagram", async (c) => {
 							hidden={{ depth: depth ? String(depth) : "", only: assembliesOnly ? "assemblies" : "" }}
 						/>
 						<ToggleLinks
-							label={t.boms.levels}
+							label={t.assemblies.levels}
 							items={[
 								...Array.from({ length: Math.min(fullDepth, 4) }, (_, i) => ({
 									href: href({ depth: i + 1 }),
 									label: String(i + 1),
 									active: depth === i + 1,
-									title: `${t.boms.levels}: ${i + 1}`,
+									title: `${t.assemblies.levels}: ${i + 1}`,
 								})),
 								{
 									href: href({ depth: undefined }),
-									label: t.boms.allLevels,
+									label: t.assemblies.allLevels,
 									active: depth === undefined,
 									title: undefined,
 								},
 							]}
 						/>
 						<ToggleLinks
-							label={t.boms.show}
+							label={t.assemblies.show}
 							items={[
-								{ href: href({ assembliesOnly: false }), label: t.boms.showAll, active: !assembliesOnly },
-								{ href: href({ assembliesOnly: true }), label: t.boms.showAssemblies, active: assembliesOnly },
+								{ href: href({ assembliesOnly: false }), label: t.assemblies.showAll, active: !assembliesOnly },
+								{ href: href({ assembliesOnly: true }), label: t.assemblies.showAssemblies, active: assembliesOnly },
 							]}
 						/>
 					</div>
-					<BomDiagram tree={tree} view={view} title={title} />
+					<AssemblyDiagram tree={tree} view={view} title={title} />
 				</>
 			) : null}
 		</>,
 	);
 });
 
-bomRoutes.get("/:id/explode", async (c) => {
-	const data = await loadBom(c);
+assemblyRoutes.get("/:id/explode", async (c) => {
+	const data = await loadAssembly(c);
 	if (!data) return notFound(c);
 	const t = c.var.t;
 	const qty = qtyParam(c);
@@ -1435,7 +1486,7 @@ bomRoutes.get("/:id/explode", async (c) => {
 	const [graph, stock] = await Promise.all([loadGraph(c.var.db), onHandMap(c.var.db)]);
 	const calc = new CostCalculator(graph);
 	const refs = new Map([...graph.parts.values()].map((p) => [p.id, p.ref]));
-	const ex = explode(graph, data.bom.id, qty, useStock ? { stock } : {});
+	const ex = explode(graph, data.assembly.id, qty, useStock ? { stock } : {});
 	const rows = ex.requirements.map((r) => {
 		const onHand = stock.get(r.part.id) ?? 0;
 		return { ...r, onHand, short: Math.max(0, r.qtyMilli - Math.max(0, onHand)), cost: calc.part(r.part.id) };
@@ -1443,42 +1494,55 @@ bomRoutes.get("/:id/explode", async (c) => {
 	const seeCosts = c.var.seeCosts;
 	if (c.req.query("format") === "csv") {
 		const locale = c.var.locale;
-		return csvResponse(c, `${data.part.ref}-${data.bom.code}-${data.bom.revision}-x${formatQtyInput(qty)}.csv`, [
-			["ref", "name", "kind", "unit", "qty", "on_hand", "short", "unit_cost", "extended_cost"],
-			...[...rows, ...ex.fees.map((f) => ({ ...f, onHand: 0, short: 0, cost: calc.part(f.part.id) }))].map((r) => [
-				r.part.ref,
-				r.part.name,
-				r.part.kind,
-				r.part.unit,
-				formatQtyInput(r.qtyMilli, locale),
-				r.part.kind === "fee" ? "" : formatQtyInput(r.onHand, locale),
-				r.part.kind === "fee" ? "" : formatQtyInput(r.short, locale),
-				r.cost.incomplete ? "" : formatCentsInput(centsOf(r.cost.millicents), locale),
-				r.cost.incomplete ? "" : formatCentsInput(centsOf(calc.extended(r.part.id, r.qtyMilli)), locale),
-			]),
-		]);
+		return csvResponse(
+			c,
+			`${data.part.ref}-${data.assembly.code}-${data.assembly.revision}-x${formatQtyInput(qty)}.csv`,
+			[
+				["ref", "name", "kind", "unit", "qty", "on_hand", "short", "unit_cost", "extended_cost"],
+				...[...rows, ...ex.fees.map((f) => ({ ...f, onHand: 0, short: 0, cost: calc.part(f.part.id) }))].map((r) => [
+					r.part.ref,
+					r.part.name,
+					r.part.kind,
+					r.part.unit,
+					formatQtyInput(r.qtyMilli, locale),
+					r.part.kind === "fee" ? "" : formatQtyInput(r.onHand, locale),
+					r.part.kind === "fee" ? "" : formatQtyInput(r.short, locale),
+					r.cost.incomplete ? "" : formatCentsInput(centsOf(r.cost.millicents), locale),
+					r.cost.incomplete ? "" : formatCentsInput(centsOf(calc.extended(r.part.id, r.qtyMilli)), locale),
+				]),
+			],
+		);
 	}
 	const totalMillicents = [...ex.requirements, ...ex.fees].reduce(
 		(s, r) => s + calc.extended(r.part.id, r.qtyMilli),
 		0,
 	);
-	const total = calc.bom(data.bom.id);
+	const total = calc.assembly(data.assembly.id);
 	const query = `qty=${encodeURIComponent(formatQtyInput(qty))}${useStock ? "&stock=on" : ""}`;
 	return page(
 		c,
-		`${data.part.ref} · ${t.boms.explode}`,
+		`${data.part.ref} · ${t.assemblies.explode}`,
 		<>
-			<BomHeader bom={data.bom} part={data.part} tab="explode" pricing={bomPricing(data.part, data.bom, calc)} />
+			<AssemblyHeader
+				assembly={data.assembly}
+				part={data.part}
+				tab="explode"
+				pricing={assemblyPricing(data.part, data.assembly, calc)}
+			/>
 			<div class="mb-4 flex flex-wrap items-center justify-between gap-3">
-				<QtyForm action={`/boms/${data.bom.id}/explode`} qty={qty} stock={useStock} showStock class="" />
-				<Button href={`/boms/${data.bom.id}/explode?${query}&format=csv`} variant="outline" icon={icons.download}>
-					{t.boms.downloadCsv}
+				<QtyForm action={`/assemblies/${data.assembly.id}/explode`} qty={qty} stock={useStock} showStock class="" />
+				<Button
+					href={`/assemblies/${data.assembly.id}/explode?${query}&format=csv`}
+					variant="outline"
+					icon={icons.download}
+				>
+					{t.assemblies.downloadCsv}
 				</Button>
 			</div>
 			{rows
-				.filter((r) => r.missingBom)
+				.filter((r) => r.missingAssembly)
 				.map((r) => (
-					<Alert variant="warning">{fmt(t.boms.missingBom, { ref: r.part.ref })}</Alert>
+					<Alert variant="warning">{fmt(t.assemblies.missingAssembly, { ref: r.part.ref })}</Alert>
 				))}
 			<Card class="gap-0 overflow-hidden py-0">
 				<Table>
@@ -1487,13 +1551,13 @@ bomRoutes.get("/:id/explode", async (c) => {
 							<TableHead>{t.parts.ref}</TableHead>
 							<TableHead>{t.parts.name}</TableHead>
 							<TableHead>{t.parts.kind}</TableHead>
-							<TableHead class="text-right">{t.boms.qty}</TableHead>
-							<TableHead class="text-right">{t.boms.onHand}</TableHead>
-							<TableHead class="text-right">{t.boms.short}</TableHead>
+							<TableHead class="text-right">{t.assemblies.qty}</TableHead>
+							<TableHead class="text-right">{t.assemblies.onHand}</TableHead>
+							<TableHead class="text-right">{t.assemblies.short}</TableHead>
 							{seeCosts ? (
 								<>
-									<TableHead class="text-right">{t.boms.unitCost}</TableHead>
-									<TableHead class="text-right">{t.boms.lineCost}</TableHead>
+									<TableHead class="text-right">{t.assemblies.unitCost}</TableHead>
+									<TableHead class="text-right">{t.assemblies.lineCost}</TableHead>
 								</>
 							) : null}
 						</TableRow>
@@ -1508,7 +1572,7 @@ bomRoutes.get("/:id/explode", async (c) => {
 									{r.part.name}
 									{r.part.kind === "make" ? (
 										<Badge variant="info" class="ml-1.5">
-											{t.boms.fromStock}
+											{t.assemblies.fromStock}
 										</Badge>
 									) : null}
 								</TableCell>
@@ -1547,7 +1611,7 @@ bomRoutes.get("/:id/explode", async (c) => {
 						<TableBody class="border-t">
 							<TableRow class="bg-muted/30 hover:bg-muted/30">
 								<TableHead colspan={seeCosts ? 8 : 6} scope="rowgroup">
-									{t.boms.fees}
+									{t.assemblies.fees}
 								</TableHead>
 							</TableRow>
 							{ex.fees.map((f) => (

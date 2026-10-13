@@ -1,6 +1,6 @@
-CREATE TABLE `bom_lines` (
+CREATE TABLE `assembly_lines` (
 	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
-	`bom_id` integer NOT NULL,
+	`assembly_id` integer NOT NULL,
 	`component_part_id` integer NOT NULL,
 	`qty_milli` integer NOT NULL,
 	`position` integer DEFAULT 0 NOT NULL,
@@ -9,14 +9,14 @@ CREATE TABLE `bom_lines` (
 	`updated_at` text DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) NOT NULL,
 	`created_by` text NOT NULL,
 	`updated_by` text NOT NULL,
-	FOREIGN KEY (`bom_id`) REFERENCES `boms`(`id`) ON UPDATE no action ON DELETE cascade,
+	FOREIGN KEY (`assembly_id`) REFERENCES `assemblies`(`id`) ON UPDATE no action ON DELETE cascade,
 	FOREIGN KEY (`component_part_id`) REFERENCES `parts`(`id`) ON UPDATE no action ON DELETE no action,
-	CONSTRAINT "bom_lines_qty_check" CHECK("bom_lines"."qty_milli" > 0)
+	CONSTRAINT "assembly_lines_qty_check" CHECK("assembly_lines"."qty_milli" > 0)
 );
 --> statement-breakpoint
-CREATE INDEX `bom_lines_bom_idx` ON `bom_lines` (`bom_id`,`position`);--> statement-breakpoint
-CREATE INDEX `bom_lines_component_idx` ON `bom_lines` (`component_part_id`);--> statement-breakpoint
-CREATE TABLE `boms` (
+CREATE INDEX `assembly_lines_assembly_idx` ON `assembly_lines` (`assembly_id`,`position`);--> statement-breakpoint
+CREATE INDEX `assembly_lines_component_idx` ON `assembly_lines` (`component_part_id`);--> statement-breakpoint
+CREATE TABLE `assemblies` (
 	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
 	`parent_part_id` integer NOT NULL,
 	`code` text DEFAULT 'std' NOT NULL,
@@ -28,11 +28,11 @@ CREATE TABLE `boms` (
 	`created_by` text NOT NULL,
 	`updated_by` text NOT NULL,
 	FOREIGN KEY (`parent_part_id`) REFERENCES `parts`(`id`) ON UPDATE no action ON DELETE no action,
-	CONSTRAINT "boms_status_check" CHECK(status IN ('draft', 'active', 'archived'))
+	CONSTRAINT "assemblies_status_check" CHECK(status IN ('draft', 'active', 'archived'))
 );
 --> statement-breakpoint
-CREATE UNIQUE INDEX `boms_parent_code_revision_unique` ON `boms` (`parent_part_id`,`code`,`revision`);--> statement-breakpoint
-CREATE UNIQUE INDEX `boms_one_active_per_code` ON `boms` (`parent_part_id`,`code`) WHERE status = 'active';--> statement-breakpoint
+CREATE UNIQUE INDEX `assemblies_parent_code_revision_unique` ON `assemblies` (`parent_part_id`,`code`,`revision`);--> statement-breakpoint
+CREATE UNIQUE INDEX `assemblies_one_active_per_code` ON `assemblies` (`parent_part_id`,`code`) WHERE status = 'active';--> statement-breakpoint
 CREATE TABLE `build_lines` (
 	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
 	`build_id` integer NOT NULL,
@@ -55,7 +55,7 @@ CREATE TABLE `builds` (
 	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
 	`number` text NOT NULL,
 	`part_id` integer NOT NULL,
-	`bom_id` integer NOT NULL,
+	`assembly_id` integer NOT NULL,
 	`qty_milli` integer DEFAULT 1000 NOT NULL,
 	`serial` text,
 	`status` text DEFAULT 'planned' NOT NULL,
@@ -67,7 +67,7 @@ CREATE TABLE `builds` (
 	`created_by` text NOT NULL,
 	`updated_by` text NOT NULL,
 	FOREIGN KEY (`part_id`) REFERENCES `parts`(`id`) ON UPDATE no action ON DELETE no action,
-	FOREIGN KEY (`bom_id`) REFERENCES `boms`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`assembly_id`) REFERENCES `assemblies`(`id`) ON UPDATE no action ON DELETE no action,
 	CONSTRAINT "builds_status_check" CHECK(status IN ('planned', 'in_progress', 'done', 'cancelled')),
 	CONSTRAINT "builds_qty_check" CHECK("builds"."qty_milli" > 0)
 );

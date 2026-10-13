@@ -1,27 +1,27 @@
-// catalog:write tools (D127): parts, suppliers and BoMs, through the same validation and statement builders as
-// the pages. BoMs change only through draft revisions: set_bom_lines never edits an active BoM in place, and
-// activate_bom is the separate, explicit step (D128).
+// catalog:write tools (D127): parts, suppliers and assemblies, through the same validation and statement builders as
+// the pages. Assemblies change only through draft revisions: set_assembly_lines never edits an active assembly in place, and
+// activate_assembly is the separate, explicit step (D128).
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
-import { type Bom, boms, PART_KINDS, type Part } from "../db/schema";
+import { type Assembly, assemblies, PART_KINDS, type Part } from "../db/schema";
 import {
 	activateStatements,
-	archivedBomCycles,
-	bomInput,
-	bomLabel,
-	bomLineInput,
+	archivedAssemblyCycles,
+	assemblyInput,
+	assemblyLabel,
+	assemblyLineInput,
 	componentError,
-	createBomStatements,
+	createAssemblyStatements,
 	DEFAULT_CODE,
 	DEFAULT_REVISION,
-	findBom,
-	getBomLines,
+	findAssembly,
+	getAssemblyLines,
 	loadGraph,
-	newBomErrors,
+	newAssemblyErrors,
 	nextRevision,
-	replaceBomLinesStatements,
-	setBomStatusStatement,
-} from "../domain/boms";
+	replaceAssemblyLinesStatements,
+	setAssemblyStatusStatement,
+} from "../domain/assemblies";
 import { getOffer } from "../domain/offers";
 import { archivePartStatement, checkPart, getPart, partToForm, savePartStatements } from "../domain/parts";
 import {
@@ -36,7 +36,7 @@ import { fmt } from "../i18n";
 import { validate } from "../lib/validation";
 import type { Db } from "../types";
 import {
-	bomSelector,
+	assemblySelector,
 	decimal,
 	errorMessage,
 	findPart,
@@ -45,7 +45,7 @@ import {
 	partByRef,
 	partRef,
 	refuse,
-	resolveBom,
+	resolveAssembly,
 	saveChange,
 	type ToolContext,
 	ToolError,
@@ -66,8 +66,8 @@ const partView = (p: Part) => ({
 	notes: p.notes,
 });
 
-const bomView = (b: Pick<Bom, "id" | "code" | "revision" | "status">, partRef: string) => ({
-	bomId: b.id,
+const assemblyView = (b: Pick<Assembly, "id" | "code" | "revision" | "status">, partRef: string) => ({
+	assemblyId: b.id,
 	part: partRef,
 	code: b.code,
 	revision: b.revision,
@@ -79,7 +79,9 @@ const partFields = {
 	name: z.string().max(200).describe('Name, e.g. "Desk lamp".'),
 	kind: z
 		.enum(PART_KINDS)
-		.describe("buy: purchased; make: built from a BoM, stocked; kit: phantom BoM, never stocked; fee: cost only."),
+		.describe(
+			"buy: purchased; make: built from an assembly, stocked; kit: phantom assembly, never stocked; fee: cost only.",
+		),
 	unit: z.string().max(20).describe('Unit of quantities, e.g. "pcs" (the default), "m", "kg".'),
 	track_serial: z.boolean().describe("One serial number per unit (buy and make parts only)."),
 	notes: z.string().max(2000),
@@ -125,7 +127,7 @@ const updatePart = tool({
 	name: "update_part",
 	title: "Edit a part",
 	description:
-		"Changes a part's reference, name, kind, unit, serial tracking or notes; fields left out keep their value. Same checks as the part form (a part with stock moves cannot become a kit or fee, a part with BoMs stays make or kit). Prices and offers are not changed here.",
+		"Changes a part's reference, name, kind, unit, serial tracking or notes; fields left out keep their value. Same checks as the part form (a part with stock moves cannot become a kit or fee, a part with assemblies stays make or kit). Prices and offers are not changed here.",
 	rule: { scope: "catalog:write", action: "parts.edit" },
 	annotations: writes({ destructive: true, idempotent: true }),
 	input: z.object({
@@ -238,47 +240,54 @@ const updateSupplier = tool({
 });
 
 // ---------------------------------------------------------------------------
-// BoMs
+// Assemblies
 
-/** The BoM named by a selector, with its parent part. */
-async function selectBom(db: Db, sel: z.output<z.ZodObject<typeof bomSelector>>) {
-	return resolveBom(db, await loadGraph(db), sel);
+/** The assembly named by a selector, with its parent part. */
+async function selectAssembly(db: Db, sel: z.output<z.ZodObject<typeof assemblySelector>>) {
+	return resolveAssembly(db, await loadGraph(db), sel);
 }
 
-/** The next free revision label of a BoM's (parent, code), e.g. Rev2 → Rev3. */
-async function newRevisionLabel(db: Db, bom: Bom): Promise<string> {
+/** The next free revision label of an assembly's (parent, code), e.g. Rev2 → Rev3. */
+async function newRevisionLabel(db: Db, assembly: Assembly): Promise<string> {
 	const taken = await db
-		.select({ revision: boms.revision })
-		.from(boms)
-		.where(and(eq(boms.parentPartId, bom.parentPartId), eq(boms.code, bom.code)));
+		.select({ revision: assemblies.revision })
+		.from(assemblies)
+		.where(and(eq(assemblies.parentPartId, assembly.parentPartId), eq(assemblies.code, assembly.code)));
 	return nextRevision(
-		bom.revision,
+		assembly.revision,
 		taken.map((r) => r.revision),
 	);
 }
 
-async function linesView(db: Db, bomId: number) {
-	return (await getBomLines(db, bomId)).map((l) => ({ ref: l.ref, qtyMilli: l.qtyMilli, notes: l.notes || undefined }));
+async function linesView(db: Db, assemblyId: number) {
+	return (await getAssemblyLines(db, assemblyId)).map((l) => ({
+		ref: l.ref,
+		qtyMilli: l.qtyMilli,
+		notes: l.notes || undefined,
+	}));
 }
 
-const createBom = tool({
-	name: "create_bom",
-	title: "Create a BoM",
+const createAssembly = tool({
+	name: "create_assembly",
+	title: "Create an assembly",
 	description:
-		"Creates a draft BoM for a make or kit part, empty or copied from another BoM (same checks as the new BoM form: (code, revision) new for the part, no cycle). Set its lines with set_bom_lines, then activate it with activate_bom.",
-	rule: { scope: "catalog:write", action: "boms.edit" },
+		"Creates a draft assembly for a make or kit part, empty or copied from another assembly (same checks as the new assembly form: (code, revision) new for the part, no cycle). Set its lines with set_assembly_lines, then activate it with activate_assembly.",
+	rule: { scope: "catalog:write", action: "assemblies.edit" },
 	annotations: writes({ destructive: false, idempotent: false }),
 	input: z.object({
-		part: partRef.describe("Reference of the make or kit part the BoM builds."),
+		part: partRef.describe("Reference of the make or kit part the assembly builds."),
 		code: z.string().max(64).default(DEFAULT_CODE).describe(`Variant code (default "${DEFAULT_CODE}").`),
 		revision: z.string().max(64).default(DEFAULT_REVISION).describe(`Revision label (default "${DEFAULT_REVISION}").`),
 		notes: z.string().max(2000).default(""),
-		copy_from: z.object(bomSelector).optional().describe("A BoM to copy the lines from (of this part or another one)."),
+		copy_from: z
+			.object(assemblySelector)
+			.optional()
+			.describe("An assembly to copy the lines from (of this part or another one)."),
 	}),
 	run: async (a, ctx) => {
 		const part = await partByRef(ctx.db, a.part);
-		const source = a.copy_from ? (await selectBom(ctx.db, a.copy_from)).bom : undefined;
-		const v = validate(bomInput, {
+		const source = a.copy_from ? (await selectAssembly(ctx.db, a.copy_from)).assembly : undefined;
+		const v = validate(assemblyInput, {
 			parent_part_id: String(part.id),
 			code: a.code,
 			revision: a.revision,
@@ -287,7 +296,7 @@ const createBom = tool({
 		});
 		if (!v.ok) refuse(v.errors);
 		const d = v.data;
-		const errors = await newBomErrors(ctx.db, {
+		const errors = await newAssemblyErrors(ctx.db, {
 			parentPartId: part.id,
 			code: d.code,
 			revision: d.revision,
@@ -296,8 +305,8 @@ const createBom = tool({
 		if (Object.keys(errors).length) refuse(errors, {}, { parent_part_id: "part" });
 		const { change } = await saveChange(
 			ctx,
-			fmt(ctx.t.history.summaries.bomCreate, { bom: bomLabel(part.ref, d) }),
-			createBomStatements(
+			fmt(ctx.t.history.summaries.assemblyCreate, { assembly: assemblyLabel(part.ref, d) }),
+			createAssemblyStatements(
 				ctx.db,
 				{ parentPartId: part.id, code: d.code, revision: d.revision, notes: d.notes },
 				d.copy_from,
@@ -305,21 +314,21 @@ const createBom = tool({
 				now(),
 			),
 		);
-		const created = await findBom(ctx.db, part.id, d.code, d.revision);
-		if (!created) throw new Error("created BoM not found");
-		return { ...change, bom: bomView(created, part.ref), lines: await linesView(ctx.db, created.id) };
+		const created = await findAssembly(ctx.db, part.id, d.code, d.revision);
+		if (!created) throw new Error("created assembly not found");
+		return { ...change, assembly: assemblyView(created, part.ref), lines: await linesView(ctx.db, created.id) };
 	},
 });
 
-const setBomLines = tool({
-	name: "set_bom_lines",
-	title: "Set the lines of a BoM",
+const setAssemblyLines = tool({
+	name: "set_assembly_lines",
+	title: "Set the lines of an assembly",
 	description:
-		"Replaces all the lines of a BoM at once, in the given order, with the editor's checks on every line (known part, not archived, whole units for serial-tracked parts, no cycle); nothing changes if one line is refused. An active BoM is never edited in place: a new draft revision is created with these lines, and the active one stays as it is until you call activate_bom on the new revision. Archived BoMs are read-only.",
-	rule: { scope: "catalog:write", action: "boms.edit" },
+		"Replaces all the lines of an assembly at once, in the given order, with the editor's checks on every line (known part, not archived, whole units for serial-tracked parts, no cycle); nothing changes if one line is refused. An active assembly is never edited in place: a new draft revision is created with these lines, and the active one stays as it is until you call activate_assembly on the new revision. Archived assemblies are read-only.",
+	rule: { scope: "catalog:write", action: "assemblies.edit" },
 	annotations: writes({ destructive: true, idempotent: false }),
 	input: z.object({
-		...bomSelector,
+		...assemblySelector,
 		lines: z
 			.array(
 				z.object({
@@ -332,15 +341,17 @@ const setBomLines = tool({
 			.max(500),
 	}),
 	run: async (a, ctx) => {
-		const { bom, part } = await selectBom(ctx.db, a);
-		const label = bomLabel(part.ref, bom);
-		if (bom.status === "archived")
-			throw new ToolError(`BoM ${label} is archived: ${errorMessage("bom_archived")} Copy it with new_bom_revision.`);
+		const { assembly, part } = await selectAssembly(ctx.db, a);
+		const label = assemblyLabel(part.ref, assembly);
+		if (assembly.status === "archived")
+			throw new ToolError(
+				`Assembly ${label} is archived: ${errorMessage("assembly_archived")} Copy it with new_assembly_revision.`,
+			);
 		const lines: { componentPartId: number; qtyMilli: number; notes: string }[] = [];
 		const problems: string[] = [];
 		for (const [i, l] of a.lines.entries()) {
 			const at = `line ${i + 1} (${l.ref})`;
-			const v = validate(bomLineInput, { component: l.ref, qty: formValue(l.qty), notes: l.notes });
+			const v = validate(assemblyLineInput, { component: l.ref, qty: formValue(l.qty), notes: l.notes });
 			if (!v.ok) {
 				problems.push(...Object.entries(v.errors).map(([f, key]) => `${at} ${f}: ${errorMessage(key)}`));
 				continue;
@@ -352,119 +363,130 @@ const setBomLines = tool({
 		}
 		if (problems.length) throw new ToolError(`Refused, nothing was changed. ${problems.join(" ")}`);
 		const t = ctx.t.history.summaries;
-		if (bom.status === "active") {
-			// The guardrail (D128): the active BoM stays as it is; the lines go on a new draft revision.
-			const revision = await newRevisionLabel(ctx.db, bom);
-			const target = { parentPartId: bom.parentPartId, code: bom.code, revision };
+		if (assembly.status === "active") {
+			// The guardrail (D128): the active assembly stays as it is; the lines go on a new draft revision.
+			const revision = await newRevisionLabel(ctx.db, assembly);
+			const target = { parentPartId: assembly.parentPartId, code: assembly.code, revision };
 			const stamp = now();
 			const { change } = await saveChange(
 				ctx,
-				fmt(t.bomRevisionLines, { bom: bomLabel(part.ref, target), from: bom.revision }),
+				fmt(t.assemblyRevisionLines, { assembly: assemblyLabel(part.ref, target), from: assembly.revision }),
 				[
-					...createBomStatements(ctx.db, { ...target, notes: bom.notes }, null, ctx.user, stamp),
-					...replaceBomLinesStatements(ctx.db, target, lines, ctx.user, stamp),
+					...createAssemblyStatements(ctx.db, { ...target, notes: assembly.notes }, null, ctx.user, stamp),
+					...replaceAssemblyLinesStatements(ctx.db, target, lines, ctx.user, stamp),
 				],
 			);
-			const created = await findBom(ctx.db, bom.parentPartId, bom.code, revision);
+			const created = await findAssembly(ctx.db, assembly.parentPartId, assembly.code, revision);
 			if (!created) throw new Error("new revision not found");
 			return {
 				...change,
-				bom: bomView(created, part.ref),
+				assembly: assemblyView(created, part.ref),
 				newRevision: true,
-				activeBom: bomView(bom, part.ref),
-				note: `${label} is active and was left unchanged: the lines were set on the new draft revision ${revision}. Call activate_bom on ${revision} to make builds use it.`,
+				activeAssembly: assemblyView(assembly, part.ref),
+				note: `${label} is active and was left unchanged: the lines were set on the new draft revision ${revision}. Call activate_assembly on ${revision} to make builds use it.`,
 				lines: await linesView(ctx.db, created.id),
 			};
 		}
 		const { change } = await saveChange(
 			ctx,
-			fmt(t.bomLines, { bom: label }),
-			replaceBomLinesStatements(ctx.db, bom.id, lines, ctx.user, now()),
+			fmt(t.assemblyLines, { assembly: label }),
+			replaceAssemblyLinesStatements(ctx.db, assembly.id, lines, ctx.user, now()),
 		);
-		return { ...change, bom: bomView(bom, part.ref), newRevision: false, lines: await linesView(ctx.db, bom.id) };
+		return {
+			...change,
+			assembly: assemblyView(assembly, part.ref),
+			newRevision: false,
+			lines: await linesView(ctx.db, assembly.id),
+		};
 	},
 });
 
-const newBomRevision = tool({
-	name: "new_bom_revision",
-	title: "New BoM revision",
+const newAssemblyRevision = tool({
+	name: "new_assembly_revision",
+	title: "New assembly revision",
 	description:
-		"Copies a BoM (any status) into a new draft revision of the same part and variant code (Rev2 → Rev3), as the BoM page's New revision button does. The original is not changed.",
-	rule: { scope: "catalog:write", action: "boms.edit" },
+		"Copies an assembly (any status) into a new draft revision of the same part and variant code (Rev2 → Rev3), as the assembly page's New revision button does. The original is not changed.",
+	rule: { scope: "catalog:write", action: "assemblies.edit" },
 	annotations: writes({ destructive: false, idempotent: false }),
-	input: z.object(bomSelector),
+	input: z.object(assemblySelector),
 	run: async (a, ctx) => {
-		const { bom, part } = await selectBom(ctx.db, a);
-		const revision = await newRevisionLabel(ctx.db, bom);
+		const { assembly, part } = await selectAssembly(ctx.db, a);
+		const revision = await newRevisionLabel(ctx.db, assembly);
 		const { change } = await saveChange(
 			ctx,
-			fmt(ctx.t.history.summaries.bomRevision, {
-				bom: bomLabel(part.ref, { code: bom.code, revision }),
-				from: bom.revision,
+			fmt(ctx.t.history.summaries.assemblyRevision, {
+				assembly: assemblyLabel(part.ref, { code: assembly.code, revision }),
+				from: assembly.revision,
 			}),
-			createBomStatements(
+			createAssemblyStatements(
 				ctx.db,
-				{ parentPartId: bom.parentPartId, code: bom.code, revision, notes: bom.notes },
-				bom.id,
+				{ parentPartId: assembly.parentPartId, code: assembly.code, revision, notes: assembly.notes },
+				assembly.id,
 				ctx.user,
 				now(),
 			),
 		);
-		const created = await findBom(ctx.db, bom.parentPartId, bom.code, revision);
+		const created = await findAssembly(ctx.db, assembly.parentPartId, assembly.code, revision);
 		if (!created) throw new Error("new revision not found");
 		return {
 			...change,
-			bom: bomView(created, part.ref),
-			from: bomView(bom, part.ref),
+			assembly: assemblyView(created, part.ref),
+			from: assemblyView(assembly, part.ref),
 			lines: await linesView(ctx.db, created.id),
 		};
 	},
 });
 
-const activateBom = tool({
-	name: "activate_bom",
-	title: "Activate a BoM",
+const activateAssembly = tool({
+	name: "activate_assembly",
+	title: "Activate an assembly",
 	description:
-		"Makes a draft or archived BoM the active one of its part and variant code: builds and explosions use it from now on. The previously active revision is archived (and can be activated again later). Give the BoM id or the part with its revision.",
-	rule: { scope: "catalog:write", action: "boms.edit" },
+		"Makes a draft or archived assembly the active one of its part and variant code: builds and explosions use it from now on. The previously active revision is archived (and can be activated again later). Give the assembly id or the part with its revision.",
+	rule: { scope: "catalog:write", action: "assemblies.edit" },
 	annotations: writes({ destructive: true, idempotent: true }),
-	input: z.object(bomSelector),
+	input: z.object(assemblySelector),
 	run: async (a, ctx: ToolContext) => {
-		const { bom, part } = await selectBom(ctx.db, a);
-		const label = bomLabel(part.ref, bom);
-		if (bom.status === "active")
-			return { ...NOTHING_CHANGED, bom: bomView(bom, part.ref), note: `${label} is already active.` };
-		if (part.kind !== "make" && part.kind !== "kit") refuse({ bom: "bom_parent_kind" });
-		if (await archivedBomCycles(ctx.db, bom))
+		const { assembly, part } = await selectAssembly(ctx.db, a);
+		const label = assemblyLabel(part.ref, assembly);
+		if (assembly.status === "active")
+			return { ...NOTHING_CHANGED, assembly: assemblyView(assembly, part.ref), note: `${label} is already active.` };
+		if (part.kind !== "make" && part.kind !== "kit") refuse({ assembly: "assembly_parent_kind" });
+		if (await archivedAssemblyCycles(ctx.db, assembly))
 			throw new ToolError(
 				`Refused: activating ${label} would create a cycle (one of its parts now contains ${part.ref}).`,
 			);
 		const previous = await ctx.db
 			.select()
-			.from(boms)
-			.where(and(eq(boms.parentPartId, bom.parentPartId), eq(boms.code, bom.code), eq(boms.status, "active")));
+			.from(assemblies)
+			.where(
+				and(
+					eq(assemblies.parentPartId, assembly.parentPartId),
+					eq(assemblies.code, assembly.code),
+					eq(assemblies.status, "active"),
+				),
+			);
 		const { change } = await saveChange(
 			ctx,
-			fmt(ctx.t.history.summaries.bomActivate, { bom: label }),
-			activateStatements(ctx.db, bom, ctx.user, now()),
+			fmt(ctx.t.history.summaries.assemblyActivate, { assembly: label }),
+			activateStatements(ctx.db, assembly, ctx.user, now()),
 		);
 		return {
 			...change,
-			bom: { ...bomView(bom, part.ref), status: "active" },
-			archived: previous.map((b) => ({ ...bomView(b, part.ref), status: "archived" })),
+			assembly: { ...assemblyView(assembly, part.ref), status: "active" },
+			archived: previous.map((b) => ({ ...assemblyView(b, part.ref), status: "archived" })),
 		};
 	},
 });
 
 // ---------------------------------------------------------------------------
-// catalog:archive (D125): archiving hides a part or BoM and is undone by unarchiving; deleting is never offered.
+// catalog:archive (D125): archiving hides a part or assembly and is undone by unarchiving; deleting is never offered.
 
 function archivePartTool(archived: boolean) {
 	return tool({
 		name: archived ? "archive_part" : "unarchive_part",
 		title: archived ? "Archive a part" : "Unarchive a part",
 		description: archived
-			? "Archives a part: it disappears from lists and pickers (new BoM lines, POs), but its stock, BoMs, builds and history stay. unarchive_part brings it back. Parts are never deleted over MCP."
+			? "Archives a part: it disappears from lists and pickers (new assembly lines, POs), but its stock, assemblies, builds and history stay. unarchive_part brings it back. Parts are never deleted over MCP."
 			: "Brings an archived part back into lists and pickers.",
 		rule: { scope: "catalog:archive", action: "parts.archive" },
 		annotations: writes({ destructive: archived, idempotent: true }),
@@ -488,23 +510,23 @@ function archivePartTool(archived: boolean) {
 	});
 }
 
-const archiveBom = tool({
-	name: "archive_bom",
-	title: "Archive a BoM",
+const archiveAssembly = tool({
+	name: "archive_assembly",
+	title: "Archive an assembly",
 	description:
-		"Archives a BoM revision: it becomes read-only and is no longer used by builds or explosions (archiving the active one leaves its part and variant without an active BoM until another is activated). activate_bom can bring it back. BoMs are never deleted over MCP.",
-	rule: { scope: "catalog:archive", action: "boms.archive" },
+		"Archives an assembly revision: it becomes read-only and is no longer used by builds or explosions (archiving the active one leaves its part and variant without an active assembly until another is activated). activate_assembly can bring it back. Assemblies are never deleted over MCP.",
+	rule: { scope: "catalog:archive", action: "assemblies.archive" },
 	annotations: writes({ destructive: true, idempotent: true }),
-	input: z.object(bomSelector),
+	input: z.object(assemblySelector),
 	run: async (a, ctx) => {
-		const { bom, part } = await selectBom(ctx.db, a);
-		const label = bomLabel(part.ref, bom);
-		if (bom.status === "archived")
-			return { ...NOTHING_CHANGED, bom: bomView(bom, part.ref), note: `${label} is already archived.` };
-		const { change } = await saveChange(ctx, fmt(ctx.t.history.summaries.bomArchive, { bom: label }), [
-			setBomStatusStatement(ctx.db, bom.id, "archived", ctx.user, now()),
+		const { assembly, part } = await selectAssembly(ctx.db, a);
+		const label = assemblyLabel(part.ref, assembly);
+		if (assembly.status === "archived")
+			return { ...NOTHING_CHANGED, assembly: assemblyView(assembly, part.ref), note: `${label} is already archived.` };
+		const { change } = await saveChange(ctx, fmt(ctx.t.history.summaries.assemblyArchive, { assembly: label }), [
+			setAssemblyStatusStatement(ctx.db, assembly.id, "archived", ctx.user, now()),
 		]);
-		return { ...change, bom: { ...bomView(bom, part.ref), status: "archived" } };
+		return { ...change, assembly: { ...assemblyView(assembly, part.ref), status: "archived" } };
 	},
 });
 
@@ -513,11 +535,11 @@ export const CATALOG_TOOLS: readonly ToolSpec[] = [
 	updatePart,
 	createSupplier,
 	updateSupplier,
-	createBom,
-	setBomLines,
-	newBomRevision,
-	activateBom,
+	createAssembly,
+	setAssemblyLines,
+	newAssemblyRevision,
+	activateAssembly,
 	archivePartTool(true),
 	archivePartTool(false),
-	archiveBom,
+	archiveAssembly,
 ];

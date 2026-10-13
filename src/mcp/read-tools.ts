@@ -1,8 +1,8 @@
 // The read-only MCP tools (D119): catalogue, stock, builds and purchasing, over the existing domain queries.
 import { z } from "zod";
 import { BUILD_STATUSES, MOVE_REASONS, PART_KINDS, PO_STATUSES } from "../db/schema";
-import { CostCalculator, centsOf, type ExplodedNode, explode } from "../domain/bom-graph";
-import { loadGraph, partBomSummary, whereUsed } from "../domain/boms";
+import { loadGraph, partAssemblySummary, whereUsed } from "../domain/assemblies";
+import { CostCalculator, centsOf, type ExplodedNode, explode } from "../domain/assembly-graph";
 import { buildPickList, getBuildLines, listBuilds, makeNodes, serialCount } from "../domain/builds";
 import { partOffers } from "../domain/offers";
 import { listParts, onHandMap, onHandOf } from "../domain/parts";
@@ -10,7 +10,7 @@ import { computeShortages, getPoLines, listPos } from "../domain/purchasing";
 import { isStocked, listMoves, onHandAt } from "../domain/stock";
 import { lineCostCents, MILLI, roundDiv } from "../lib/units";
 import {
-	bomSelector,
+	assemblySelector,
 	buildByNumber,
 	date,
 	exploding,
@@ -20,7 +20,7 @@ import {
 	poByNumber,
 	quantity,
 	refsOf,
-	resolveBom,
+	resolveAssembly,
 	type ToolSpec,
 	tool,
 } from "./kit";
@@ -32,7 +32,7 @@ const searchParts = tool({
 	name: "search_parts",
 	title: "Search parts",
 	description:
-		"Search the parts catalogue by reference, name or any supplier's reference. Returns each part's kind (buy: purchased, make: built from a BoM, kit: phantom BoM, fee: cost only), unit, on-hand quantity, preferred supplier and standard cost.",
+		"Search the parts catalogue by reference, name or any supplier's reference. Returns each part's kind (buy: purchased, make: built from an assembly, kit: phantom assembly, fee: cost only), unit, on-hand quantity, preferred supplier and standard cost.",
 	rule: { scope: "catalog:read" },
 	input: z.object({
 		query: z.string().trim().max(100).optional().describe("Text to look for; omit to list every part."),
@@ -64,14 +64,14 @@ const getPartTool = tool({
 	name: "get_part",
 	title: "Part details",
 	description:
-		"One part: details, standard cost and selling price, supplier offers (preferred first), on-hand quantity, its BoMs with their unit cost, and where it is used (directly or through sub-assemblies).",
+		"One part: details, standard cost and selling price, supplier offers (preferred first), on-hand quantity, its assemblies with their unit cost, and where it is used (directly or through sub-assemblies).",
 	rule: { scope: "catalog:read" },
 	input: z.object({ ref: partRef }),
 	run: async (a, { db }) => {
 		const part = await partByRef(db, a.ref);
 		const [onHand, summary, used, offers] = await Promise.all([
 			onHandOf(db, part.id),
-			partBomSummary(db, part.id),
+			partAssemblySummary(db, part.id),
 			whereUsed(db, part.id),
 			partOffers(db, part.id),
 		]);
@@ -98,8 +98,8 @@ const getPartTool = tool({
 				packSizeMilli: o.packSizeMilli,
 				leadDays: o.leadDays,
 			})),
-			boms: summary.boms.map((b) => ({
-				bomId: b.id,
+			assemblies: summary.assemblies.map((b) => ({
+				assemblyId: b.id,
 				code: b.code,
 				revision: b.revision,
 				status: b.status,
@@ -117,7 +117,7 @@ const getPartTool = tool({
 			whereUsed: used.map((w) => ({
 				parent: w.parentRef,
 				parentName: w.parentName,
-				bomId: w.bomId,
+				assemblyId: w.assemblyId,
 				code: w.code,
 				revision: w.revision,
 				status: w.status,
@@ -147,28 +147,28 @@ function treeNode(n: ExplodedNode, calc: CostCalculator): Record<string, unknown
 	};
 }
 
-const getBomTool = tool({
-	name: "get_bom",
-	title: "BoM tree",
+const getAssemblyTool = tool({
+	name: "get_assembly",
+	title: "Assembly tree",
 	description:
-		"The full structure of a BoM as a tree: per line the quantity per parent (per_parent) and the cumulative quantity for the requested quantity (qty), with unit and extended costs and the cost roll-up. Sub-assemblies (make) and kits are expanded through their active BoMs.",
+		"The full structure of an assembly as a tree: per line the quantity per parent (per_parent) and the cumulative quantity for the requested quantity (qty), with unit and extended costs and the cost roll-up. Sub-assemblies (make) and kits are expanded through their active assemblies.",
 	rule: { scope: "catalog:read" },
-	input: z.object({ ...bomSelector, qty: quantity.optional().describe('How many to build (default "1").') }),
+	input: z.object({ ...assemblySelector, qty: quantity.optional().describe('How many to build (default "1").') }),
 	run: async (a, { db }) => {
 		const graph = await loadGraph(db);
-		const { bom, part } = await resolveBom(db, graph, a);
+		const { assembly, part } = await resolveAssembly(db, graph, a);
 		const qty = a.qty ?? MILLI;
 		const calc = new CostCalculator(graph);
-		const ex = exploding(() => explode(graph, bom.id, qty));
-		const unit = calc.bom(bom.id);
+		const ex = exploding(() => explode(graph, assembly.id, qty));
+		const unit = calc.assembly(assembly.id);
 		return {
-			bom: {
-				bomId: bom.id,
+			assembly: {
+				assemblyId: assembly.id,
 				part: part.ref,
 				name: part.name,
-				code: bom.code,
-				revision: bom.revision,
-				status: bom.status,
+				code: assembly.code,
+				revision: assembly.revision,
+				status: assembly.status,
 			},
 			qtyMilli: qty,
 			cost: {
@@ -182,18 +182,18 @@ const getBomTool = tool({
 	},
 });
 
-const explodeBom = tool({
-	name: "explode_bom",
-	title: "Explode a BoM",
+const explodeAssembly = tool({
+	name: "explode_assembly",
+	title: "Explode an assembly",
 	description:
-		"The flat list of components needed to build a quantity of a BoM, with on-hand and shortfall per component. With use_stock, sub-assemblies already in stock are taken from stock instead of being built (their components are then not needed). Fee lines are listed separately (cost only).",
+		"The flat list of components needed to build a quantity of an assembly, with on-hand and shortfall per component. With use_stock, sub-assemblies already in stock are taken from stock instead of being built (their components are then not needed). Fee lines are listed separately (cost only).",
 	rule: { scope: "catalog:read" },
-	input: z.object({ ...bomSelector, qty: quantity, use_stock: z.boolean().default(false) }),
+	input: z.object({ ...assemblySelector, qty: quantity, use_stock: z.boolean().default(false) }),
 	run: async (a, { db }) => {
 		const [graph, stock] = await Promise.all([loadGraph(db), onHandMap(db)]);
-		const { bom, part } = await resolveBom(db, graph, a);
+		const { assembly, part } = await resolveAssembly(db, graph, a);
 		const calc = new CostCalculator(graph);
-		const ex = exploding(() => explode(graph, bom.id, a.qty, a.use_stock ? { stock } : {}));
+		const ex = exploding(() => explode(graph, assembly.id, a.qty, a.use_stock ? { stock } : {}));
 		let total = 0;
 		const line = (r: (typeof ex.requirements)[number], withStock: boolean) => {
 			const cost = calc.part(r.part.id);
@@ -207,7 +207,7 @@ const explodeBom = tool({
 				unit: r.part.unit,
 				qtyMilli: r.qtyMilli,
 				...(withStock ? { onHandMilli: onHand, shortMilli: Math.max(0, r.qtyMilli - Math.max(0, onHand)) } : {}),
-				missingBom: r.missingBom || undefined,
+				missingAssembly: r.missingAssembly || undefined,
 				unitCostCents: centsOf(cost.millicents),
 				extendedCostCents: centsOf(extended),
 				costIncomplete: cost.incomplete,
@@ -215,9 +215,15 @@ const explodeBom = tool({
 		};
 		const components = ex.requirements.map((r) => line(r, true));
 		const fees = ex.fees.map((f) => line(f, false));
-		const unit = calc.bom(bom.id);
+		const unit = calc.assembly(assembly.id);
 		return {
-			bom: { bomId: bom.id, part: part.ref, code: bom.code, revision: bom.revision, status: bom.status },
+			assembly: {
+				assemblyId: assembly.id,
+				part: part.ref,
+				code: assembly.code,
+				revision: assembly.revision,
+				status: assembly.status,
+			},
 			qtyMilli: a.qty,
 			useStock: a.use_stock,
 			components,
@@ -344,7 +350,7 @@ const listBuildsTool = tool({
 				unit: b.unit,
 				qtyMilli: b.qtyMilli,
 				serial: b.serial,
-				bom: `${b.bomCode} ${b.bomRevision}`,
+				assembly: `${b.assemblyCode} ${b.assemblyRevision}`,
 				plannedFor: b.plannedFor,
 				doneAt: b.doneAt,
 			})),
@@ -360,7 +366,7 @@ const getBuildTool = tool({
 	rule: { scope: "builds:read" },
 	input: z.object({ number: z.string().trim().min(1).max(32).describe('The build number, e.g. "B-0001".') }),
 	run: async (a, { db }) => {
-		const { build, part, bom } = await buildByNumber(db, a.number);
+		const { build, part, assembly } = await buildByNumber(db, a.number);
 		const header = {
 			number: build.number,
 			status: build.status,
@@ -369,7 +375,7 @@ const getBuildTool = tool({
 			unit: part.unit,
 			qtyMilli: build.qtyMilli,
 			serial: build.serial,
-			bom: { bomId: bom.id, code: bom.code, revision: bom.revision },
+			assembly: { assemblyId: assembly.id, code: assembly.code, revision: assembly.revision },
 			plannedFor: build.plannedFor,
 			doneAt: build.doneAt,
 			notes: build.notes || undefined,
@@ -410,12 +416,12 @@ const getBuildTool = tool({
 					onHandMilli: stock,
 					shortMilli: Math.max(0, r.qtyMilli - Math.max(0, stock)),
 					serialsToScan: r.part.trackSerial ? serialCount(r) : undefined,
-					missingBom: r.missingBom || undefined,
+					missingAssembly: r.missingAssembly || undefined,
 				};
 			}),
 			subAssemblies: makeNodes(pick.explosion).map((n) => ({
 				ref: n.part.ref,
-				// The node's path in the BoM tree: complete_build can take or build each one separately.
+				// The node's path in the assembly tree: complete_build can take or build each one separately.
 				path: n.path,
 				qtyMilli: n.qtyMilli,
 				fromStockMilli: n.fromStockMilli,
@@ -434,7 +440,7 @@ const getShortages = tool({
 	name: "get_shortages",
 	title: "Shortages",
 	description:
-		"What to buy for all planned and in-progress builds: per purchased part, need − on hand − on order, rounded up to the preferred supplier's MOQ and pack size, grouped by supplier. Also lists make or kit parts that must be built but have no active BoM.",
+		"What to buy for all planned and in-progress builds: per purchased part, need − on hand − on order, rounded up to the preferred supplier's MOQ and pack size, grouped by supplier. Also lists make or kit parts that must be built but have no active assembly.",
 	rule: { scope: "purchasing:read" },
 	input: z.object({}),
 	run: async (_a, { db }) => {
@@ -461,7 +467,12 @@ const getShortages = tool({
 					builds: l.builds,
 				})),
 			})),
-			missingBoms: s.missingBoms.map((m) => ({ ref: m.ref, name: m.name, qtyMilli: m.qtyMilli, builds: m.builds })),
+			missingAssemblies: s.missingAssemblies.map((m) => ({
+				ref: m.ref,
+				name: m.name,
+				qtyMilli: m.qtyMilli,
+				builds: m.builds,
+			})),
 		};
 	},
 });
@@ -539,8 +550,8 @@ const getPurchaseOrder = tool({
 export const READ_TOOLS: readonly ToolSpec[] = [
 	searchParts,
 	getPartTool,
-	getBomTool,
-	explodeBom,
+	getAssemblyTool,
+	explodeAssembly,
 	stockOnHand,
 	listMovesTool,
 	listBuildsTool,

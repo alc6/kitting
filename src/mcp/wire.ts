@@ -3,7 +3,7 @@
 // turned into decimals with snake_case keys: `onHandMilli: 1500` → `on_hand: "1.5"`, `unitCostCents: 1230` →
 // `unit_cost: "12.30"`. When the user may not see costs, amounts are dropped (not shown as null, which means
 // "unknown cost") and the result says `costs_hidden: true`.
-import { centsOf } from "../domain/bom-graph";
+import { centsOf } from "../domain/assembly-graph";
 import { type Access, redactCosts } from "../domain/permissions";
 import { formatCentsInput, formatQtyInput } from "../lib/units";
 

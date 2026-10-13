@@ -20,19 +20,19 @@ const READ = ["catalog:read", "stock:read", "builds:read", "purchasing:read"];
 
 /** Every tool, by scope (sorted): the list the README documents. */
 const TOOLS_BY_SCOPE: Record<string, string[]> = {
-	"catalog:read": ["explode_bom", "get_bom", "get_part", "list_recent_changes", "search_parts"],
+	"catalog:read": ["explode_assembly", "get_assembly", "get_part", "list_recent_changes", "search_parts"],
 	"catalog:write": [
-		"activate_bom",
-		"create_bom",
+		"activate_assembly",
+		"create_assembly",
 		"create_part",
 		"create_supplier",
-		"new_bom_revision",
-		"set_bom_lines",
+		"new_assembly_revision",
+		"set_assembly_lines",
 		"update_part",
 		"update_supplier",
 	],
 	"prices:write": ["set_sale_price", "set_standard_cost", "upsert_supplier_offer"],
-	"catalog:archive": ["archive_bom", "archive_part", "unarchive_part"],
+	"catalog:archive": ["archive_assembly", "archive_part", "unarchive_part"],
 	"stock:read": ["list_moves", "stock_on_hand"],
 	"stock:write": ["adjust_stock", "count_stock"],
 	"builds:read": ["get_build", "list_builds"],
@@ -102,7 +102,7 @@ describe("MCP scopes", () => {
 		for (const a of [
 			"parts.delete",
 			"suppliers.delete",
-			"boms.delete",
+			"assemblies.delete",
 			"purchasing.delete",
 			"history.revert",
 			"users.manage",

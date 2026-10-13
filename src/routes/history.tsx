@@ -1,5 +1,5 @@
 // Change history pages (D114): Recent changes (/history), a change set's details, Undo, and the History tab
-// that parts, suppliers, BoMs and POs mount with recordHistoryPage().
+// that parts, suppliers, assemblies and POs mount with recordHistoryPage().
 import type { Context } from "hono";
 import { Hono } from "hono";
 import type { Child } from "hono/jsx";
@@ -331,7 +331,7 @@ historyRoutes.post("/:id/revert", requirePermission("history.revert"), async (c)
 // The History tab of a record
 
 /**
- * Renders the History tab of a part, supplier, BoM or PO: `header` is the record's page header and tabs.
+ * Renders the History tab of a part, supplier, assembly or PO: `header` is the record's page header and tabs.
  * Only the rows of this record (and of its lines or offers) are listed; the change set page has them all.
  */
 export async function recordHistoryPage(c: Context<AppEnv>, title: string, header: Child, target: HistoryTarget) {

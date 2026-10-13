@@ -1,7 +1,7 @@
-// Pure BoM logic over an in-memory graph: explosion, cost roll-up, cycle detection.
+// Pure assembly logic over an in-memory graph: explosion, cost roll-up, cycle detection.
 // The whole catalogue is small (tens to hundreds of parts), so loading it once per
 // request and walking it in TypeScript is simpler and easier to test than SQL.
-import type { BomStatus, PartKind } from "../db/schema";
+import type { AssemblyStatus, PartKind } from "../db/schema";
 import { MILLI, mulMilli, roundDiv } from "../lib/units";
 
 export type GraphPart = {
@@ -17,43 +17,43 @@ export type GraphPart = {
 
 export type GraphLine = { id: number; componentPartId: number; qtyMilli: number; position: number; notes: string };
 
-export type GraphBom = {
+export type GraphAssembly = {
 	id: number;
 	parentPartId: number;
 	code: string;
 	revision: string;
-	status: BomStatus;
+	status: AssemblyStatus;
 	lines: GraphLine[];
 };
 
-export type BomGraph = {
+export type AssemblyGraph = {
 	parts: Map<number, GraphPart>;
-	boms: Map<number, GraphBom>;
+	assemblies: Map<number, GraphAssembly>;
 };
 
 export function buildGraph(
 	parts: GraphPart[],
-	boms: Omit<GraphBom, "lines">[],
-	lines: (GraphLine & { bomId: number })[],
+	assemblies: Omit<GraphAssembly, "lines">[],
+	lines: (GraphLine & { assemblyId: number })[],
 ) {
-	const graph: BomGraph = { parts: new Map(parts.map((p) => [p.id, p])), boms: new Map() };
-	for (const b of boms) graph.boms.set(b.id, { ...b, lines: [] });
-	for (const l of lines) graph.boms.get(l.bomId)?.lines.push(l);
-	for (const b of graph.boms.values()) b.lines.sort((x, y) => x.position - y.position || x.id - y.id);
+	const graph: AssemblyGraph = { parts: new Map(parts.map((p) => [p.id, p])), assemblies: new Map() };
+	for (const b of assemblies) graph.assemblies.set(b.id, { ...b, lines: [] });
+	for (const l of lines) graph.assemblies.get(l.assemblyId)?.lines.push(l);
+	for (const b of graph.assemblies.values()) b.lines.sort((x, y) => x.position - y.position || x.id - y.id);
 	return graph;
 }
 
-/** Active BoMs of a part (one per variant code). */
-export function activeBoms(graph: BomGraph, partId: number): GraphBom[] {
-	return [...graph.boms.values()].filter((b) => b.parentPartId === partId && b.status === "active");
+/** Active assemblies of a part (one per variant code). */
+export function activeAssemblies(graph: AssemblyGraph, partId: number): GraphAssembly[] {
+	return [...graph.assemblies.values()].filter((b) => b.parentPartId === partId && b.status === "active");
 }
 
 /**
- * The BoM used when a part is exploded below the top level: its active `std` variant,
- * else its only active BoM, else the active BoM with the lowest id (deterministic).
+ * The assembly used when a part is exploded below the top level: its active `std` variant,
+ * else its only active assembly, else the active assembly with the lowest id (deterministic).
  */
-export function defaultBom(graph: BomGraph, partId: number): GraphBom | undefined {
-	const active = activeBoms(graph, partId).sort((a, b) => a.id - b.id);
+export function defaultAssembly(graph: AssemblyGraph, partId: number): GraphAssembly | undefined {
+	const active = activeAssemblies(graph, partId).sort((a, b) => a.id - b.id);
 	return active.find((b) => b.code === "std") ?? active[0];
 }
 
@@ -70,22 +70,22 @@ export type NodeMode =
 	| "stock" // make part fully taken from stock
 	| "build" // make part fully built now (exploded)
 	| "split" // make part partly from stock, rest built
-	| "missing_bom"; // make/kit part that must be built but has no active BoM
+	| "missing_assembly"; // make/kit part that must be built but has no active assembly
 
 export type ExplodedNode = {
-	/** Path of BoM line ids from the root, e.g. "12/40/41": stable key for overrides. */
+	/** Path of assembly line ids from the root, e.g. "12/40/41": stable key for overrides. */
 	path: string;
 	lineId: number;
 	part: GraphPart;
 	depth: number;
-	/** Quantity per one unit of the parent line (the BoM line quantity). */
+	/** Quantity per one unit of the parent line (the assembly line quantity). */
 	perParentMilli: number;
 	/** Total quantity needed for the requested root quantity. */
 	qtyMilli: number;
 	mode: NodeMode;
 	fromStockMilli: number;
 	toBuildMilli: number;
-	bomId: number | null;
+	assemblyId: number | null;
 	notes: string;
 	children: ExplodedNode[];
 };
@@ -93,12 +93,12 @@ export type ExplodedNode = {
 export type Requirement = {
 	part: GraphPart;
 	qtyMilli: number;
-	/** True for make/kit parts that must be built but have no active BoM. */
-	missingBom: boolean;
+	/** True for make/kit parts that must be built but have no active assembly. */
+	missingAssembly: boolean;
 };
 
 export type Explosion = {
-	bom: GraphBom;
+	assembly: GraphAssembly;
 	qtyMilli: number;
 	tree: ExplodedNode[];
 	/** Parts consumed from stock: buy parts, make parts taken from stock, unresolved make parts. */
@@ -121,38 +121,43 @@ export type ExplodeOptions = {
 
 export const MAX_DEPTH = 32;
 
-export class BomCycleError extends Error {
+export class AssemblyCycleError extends Error {
 	constructor(public readonly refs: string[]) {
-		super(`BoM cycle: ${refs.join(" → ")}`);
+		super(`Assembly cycle: ${refs.join(" → ")}`);
 	}
 }
 
 /**
- * Explodes `qtyMilli` units of a BoM into leaf requirements.
- * - `kit` lines always explode into their default BoM.
+ * Explodes `qtyMilli` units of an assembly into leaf requirements.
+ * - `kit` lines always explode into their default assembly.
  * - `make` lines are taken from `stock` up to what is available (shared across the whole
  *   explosion), the remainder explodes; `choices` can force "stock" or "build" per line.
  * - `fee` lines are listed separately: cost only.
  */
-export function explode(graph: BomGraph, bomId: number, qtyMilli: number, opts: ExplodeOptions = {}): Explosion {
-	const bom = graph.boms.get(bomId);
-	if (!bom) throw new Error(`Unknown BoM ${bomId}`);
+export function explode(
+	graph: AssemblyGraph,
+	assemblyId: number,
+	qtyMilli: number,
+	opts: ExplodeOptions = {},
+): Explosion {
+	const assembly = graph.assemblies.get(assemblyId);
+	if (!assembly) throw new Error(`Unknown assembly ${assemblyId}`);
 	const available = opts.available ?? new Map(opts.stock ?? []);
 	const useStock = opts.stock !== undefined || opts.available !== undefined;
 	const reqs = new Map<number, Requirement>();
 	const fees = new Map<number, Requirement>();
-	const add = (into: Map<number, Requirement>, part: GraphPart, qty: number, missingBom = false) => {
+	const add = (into: Map<number, Requirement>, part: GraphPart, qty: number, missingAssembly = false) => {
 		if (qty <= 0) return;
 		const r = into.get(part.id);
 		if (r) {
 			r.qtyMilli += qty;
-			r.missingBom ||= missingBom;
-		} else into.set(part.id, { part, qtyMilli: qty, missingBom });
+			r.missingAssembly ||= missingAssembly;
+		} else into.set(part.id, { part, qtyMilli: qty, missingAssembly });
 	};
 
-	const walk = (b: GraphBom, units: number, prefix: string, depth: number, stack: number[]): ExplodedNode[] => {
+	const walk = (b: GraphAssembly, units: number, prefix: string, depth: number, stack: number[]): ExplodedNode[] => {
 		if (depth > MAX_DEPTH || stack.includes(b.parentPartId)) {
-			throw new BomCycleError([...stack, b.parentPartId].map((id) => graph.parts.get(id)?.ref ?? String(id)));
+			throw new AssemblyCycleError([...stack, b.parentPartId].map((id) => graph.parts.get(id)?.ref ?? String(id)));
 		}
 		const nextStack = [...stack, b.parentPartId];
 		return b.lines.map((line) => {
@@ -170,7 +175,7 @@ export function explode(graph: BomGraph, bomId: number, qtyMilli: number, opts: 
 				mode: "buy",
 				fromStockMilli: 0,
 				toBuildMilli: 0,
-				bomId: null,
+				assemblyId: null,
 				notes: line.notes,
 				children: [],
 			};
@@ -181,14 +186,14 @@ export function explode(graph: BomGraph, bomId: number, qtyMilli: number, opts: 
 				node.fromStockMilli = need;
 				add(reqs, part, need);
 			} else if (part.kind === "kit") {
-				const sub = defaultBom(graph, part.id);
+				const sub = defaultAssembly(graph, part.id);
 				node.toBuildMilli = need;
 				if (sub) {
 					node.mode = "kit";
-					node.bomId = sub.id;
+					node.assemblyId = sub.id;
 					node.children = walk(sub, need, path, depth + 1, nextStack);
 				} else {
-					node.mode = "missing_bom";
+					node.mode = "missing_assembly";
 					add(reqs, part, need, true);
 				}
 			} else {
@@ -207,12 +212,12 @@ export function explode(graph: BomGraph, bomId: number, qtyMilli: number, opts: 
 				node.toBuildMilli = toBuild;
 				node.mode = toBuild === 0 ? "stock" : fromStock > 0 ? "split" : "build";
 				if (toBuild > 0) {
-					const sub = defaultBom(graph, part.id);
+					const sub = defaultAssembly(graph, part.id);
 					if (sub) {
-						node.bomId = sub.id;
+						node.assemblyId = sub.id;
 						node.children = walk(sub, toBuild, path, depth + 1, nextStack);
 					} else {
-						node.mode = fromStock > 0 ? "split" : "missing_bom";
+						node.mode = fromStock > 0 ? "split" : "missing_assembly";
 						add(reqs, part, toBuild, true);
 					}
 				}
@@ -221,10 +226,10 @@ export function explode(graph: BomGraph, bomId: number, qtyMilli: number, opts: 
 		});
 	};
 
-	const tree = walk(bom, qtyMilli, "", 0, []);
+	const tree = walk(assembly, qtyMilli, "", 0, []);
 	const byRef = (a: Requirement, b: Requirement) => a.part.ref.localeCompare(b.part.ref);
 	return {
-		bom,
+		assembly,
 		qtyMilli,
 		tree,
 		requirements: [...reqs.values()].sort(byRef),
@@ -246,7 +251,7 @@ export function* walkTree(nodes: ExplodedNode[]): Generator<ExplodedNode> {
 export type Cost = {
 	/** Unit cost in millicents. */
 	millicents: number;
-	/** True when some leaf has no known cost (or a make/kit part has no BoM and no cost). */
+	/** True when some leaf has no known cost (or a make/kit part has no assembly and no cost). */
 	incomplete: boolean;
 	/** Parts responsible for incompleteness. */
 	missing: number[];
@@ -257,11 +262,11 @@ export const centsOf = (millicents: number): number => roundDiv(millicents, MILL
 export class CostCalculator {
 	private memo = new Map<number, Cost>();
 	private inProgress = new Set<number>();
-	constructor(private readonly graph: BomGraph) {}
+	constructor(private readonly graph: AssemblyGraph) {}
 
 	/**
-	 * Unit cost of a part: standard cost for buy/fee parts, rolled up from the default BoM
-	 * for make/kit parts (falling back to their own standard cost when they have no BoM).
+	 * Unit cost of a part: standard cost for buy/fee parts, rolled up from the default assembly
+	 * for make/kit parts (falling back to their own standard cost when they have no assembly).
 	 */
 	part(partId: number): Cost {
 		const cached = this.memo.get(partId);
@@ -269,11 +274,11 @@ export class CostCalculator {
 		const part = this.graph.parts.get(partId);
 		// Unknown part, or a cycle (prevented on save, guarded here anyway).
 		if (!part || this.inProgress.has(partId)) return { millicents: 0, incomplete: true, missing: [partId] };
-		const bom = part.kind === "make" || part.kind === "kit" ? defaultBom(this.graph, part.id) : undefined;
+		const assembly = part.kind === "make" || part.kind === "kit" ? defaultAssembly(this.graph, part.id) : undefined;
 		let cost: Cost;
-		if (bom) {
+		if (assembly) {
 			this.inProgress.add(partId);
-			cost = this.bom(bom.id);
+			cost = this.assembly(assembly.id);
 			this.inProgress.delete(partId);
 		} else if (part.costCents === null) {
 			cost = { millicents: 0, incomplete: true, missing: [part.id] };
@@ -284,14 +289,14 @@ export class CostCalculator {
 		return cost;
 	}
 
-	/** Cost of one unit of a BoM's parent, built from this BoM. */
-	bom(bomId: number): Cost {
-		const bom = this.graph.boms.get(bomId);
-		if (!bom) return { millicents: 0, incomplete: true, missing: [] };
+	/** Cost of one unit of an assembly's parent, built from this assembly. */
+	assembly(assemblyId: number): Cost {
+		const assembly = this.graph.assemblies.get(assemblyId);
+		if (!assembly) return { millicents: 0, incomplete: true, missing: [] };
 		let millicents = 0;
 		let incomplete = false;
 		const missing = new Set<number>();
-		for (const line of bom.lines) {
+		for (const line of assembly.lines) {
 			const c = this.part(line.componentPartId);
 			millicents += roundDiv(line.qtyMilli * c.millicents, MILLI);
 			if (c.incomplete) {
@@ -309,12 +314,12 @@ export class CostCalculator {
 }
 
 // ---------------------------------------------------------------------------
-// Cycle detection across non-archived BoMs
+// Cycle detection across non-archived assemblies
 
 /** Returns the refs forming a cycle (first and last equal), or null when the graph is acyclic. */
-export function findCycle(graph: BomGraph): string[] | null {
+export function findCycle(graph: AssemblyGraph): string[] | null {
 	const children = new Map<number, Set<number>>();
-	for (const b of graph.boms.values()) {
+	for (const b of graph.assemblies.values()) {
 		if (b.status === "archived") continue;
 		const set = children.get(b.parentPartId) ?? new Set<number>();
 		for (const l of b.lines) set.add(l.componentPartId);

@@ -1,7 +1,7 @@
 import { and, asc, eq, ne, type SQL, sql } from "drizzle-orm";
 import { z } from "zod";
 import {
-	boms,
+	assemblies,
 	PART_KINDS,
 	type Part,
 	type PartKind,
@@ -202,7 +202,7 @@ export function archivePartStatement(db: Db, partId: number, archived: boolean, 
 	return db.update(parts).set({ archived, updatedAt: now, updatedBy: user }).where(eq(parts.id, partId));
 }
 
-/** Deletes a part with its offers; fails with a FOREIGN KEY error while BoMs, moves, POs or builds use it. */
+/** Deletes a part with its offers; fails with a FOREIGN KEY error while assemblies, moves, POs or builds use it. */
 export function deletePartStatement(db: Db, partId: number) {
 	return db.delete(parts).where(eq(parts.id, partId));
 }
@@ -210,18 +210,18 @@ export function deletePartStatement(db: Db, partId: number) {
 /** Business rules shared by the form and the CSV import. Returns field -> error key. */
 export function partRuleErrors(
 	d: { kind: PartKind; trackSerial: boolean },
-	ctx: { hasMoves: boolean; hasBoms?: boolean },
+	ctx: { hasMoves: boolean; hasAssemblies?: boolean },
 ): FieldErrors {
 	const errors: FieldErrors = {};
 	if (d.trackSerial && (d.kind === "kit" || d.kind === "fee")) errors.track_serial = "serial_kind";
 	if (ctx.hasMoves && (d.kind === "kit" || d.kind === "fee")) errors.kind = "kind_has_stock";
-	if (ctx.hasBoms && d.kind !== "make" && d.kind !== "kit") errors.kind = "kind_has_boms";
+	if (ctx.hasAssemblies && d.kind !== "make" && d.kind !== "kit") errors.kind = "kind_has_assemblies";
 	return errors;
 }
 
 /**
  * Validates a part as the form and the MCP tools do (string values, as posted): the fields, a reference unique
- * ignoring case, and the kind/serial rules against the existing part's stock and BoMs. `clashRef` is the other
+ * ignoring case, and the kind/serial rules against the existing part's stock and assemblies. `clashRef` is the other
  * part's reference, for the ref_case message.
  */
 export async function checkPart(db: Db, body: Record<string, unknown>, existing?: Pick<Part, "id">) {
@@ -232,14 +232,21 @@ export async function checkPart(db: Db, body: Record<string, unknown>, existing?
 	const clash = await findRefClash(db, d.ref, existing?.id);
 	if (clash) errors.ref = clash.ref === d.ref ? "duplicate_ref" : "ref_case";
 	const hasMoves = existing ? await hasStockMoves(db, existing.id) : false;
-	const ownsBoms = existing ? await hasBoms(db, existing.id) : false;
-	Object.assign(errors, partRuleErrors({ kind: d.kind, trackSerial: d.track_serial }, { hasMoves, hasBoms: ownsBoms }));
+	const ownsAssemblies = existing ? await hasAssemblies(db, existing.id) : false;
+	Object.assign(
+		errors,
+		partRuleErrors({ kind: d.kind, trackSerial: d.track_serial }, { hasMoves, hasAssemblies: ownsAssemblies }),
+	);
 	if (Object.keys(errors).length > 0) return { ok: false as const, errors, clashRef: clash?.ref };
 	return { ok: true as const, data: d };
 }
 
-export async function hasBoms(db: Db, partId: number): Promise<boolean> {
-	const rows = await db.select({ id: boms.id }).from(boms).where(eq(boms.parentPartId, partId)).limit(1);
+export async function hasAssemblies(db: Db, partId: number): Promise<boolean> {
+	const rows = await db
+		.select({ id: assemblies.id })
+		.from(assemblies)
+		.where(eq(assemblies.parentPartId, partId))
+		.limit(1);
 	return rows.length > 0;
 }
 

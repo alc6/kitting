@@ -1,8 +1,14 @@
-// BoM structure diagram: the exploded tree of a BoM drawn as boxes and links, server-rendered
+// Assembly structure diagram: the exploded tree of an assembly drawn as boxes and links, server-rendered
 // as inline SVG (strict CSP: classes and SVG attributes only, no style=). Layout comes from
 // src/domain/tree-layout.ts; zoom and drag-to-pan are added by public/static/app.js.
 import type { Child } from "hono/jsx";
-import { type CostCalculator, centsOf, type ExplodedNode, type GraphPart, type NodeMode } from "../domain/bom-graph";
+import {
+	type CostCalculator,
+	centsOf,
+	type ExplodedNode,
+	type GraphPart,
+	type NodeMode,
+} from "../domain/assembly-graph";
 import { layoutTree, type PlacedNode, type TreeInput } from "../domain/tree-layout";
 import { type Dict, fmt, type Locale } from "../i18n";
 import { cn } from "../lib/cn";
@@ -17,13 +23,13 @@ const OPTS = { nodeWidth: NODE_W, nodeHeight: NODE_H, colGap: 64, rowGap: 14, pa
 
 export type DiagramDatum = {
 	part: GraphPart;
-	/** BoM line quantity (null for the root). */
+	/** Quantity per parent (null for the root). */
 	perParentMilli: number | null;
 	/** Total for the requested quantity of the root. */
 	qtyMilli: number;
 	mode: NodeMode | "root";
-	/** BoM used for this node (its own diagram), if any. */
-	bomId: number | null;
+	/** Assembly used for this node (its own diagram), if any. */
+	assemblyId: number | null;
 	/** Extended cost in millicents and whether it is complete. */
 	costMillicents: number;
 	incomplete: boolean;
@@ -37,10 +43,10 @@ export type DiagramView = {
 	href: (opts: { depth?: number | undefined; assembliesOnly?: boolean }) => string;
 };
 
-/** Converts an explosion (structure, no stock) into the diagram's tree, root = the BoM's parent. */
+/** Converts an explosion (structure, no stock) into the diagram's tree, root = the assembly's parent. */
 export function diagramTree(
 	root: GraphPart,
-	rootBomId: number,
+	rootAssemblyId: number,
 	qtyMilli: number,
 	tree: ExplodedNode[],
 	calc: CostCalculator,
@@ -53,21 +59,21 @@ export function diagramTree(
 				perParentMilli: n.perParentMilli,
 				qtyMilli: n.qtyMilli,
 				mode: n.mode,
-				bomId: n.bomId,
+				assemblyId: n.assemblyId,
 				costMillicents: calc.extended(n.part.id, n.qtyMilli),
 				incomplete: cost.incomplete,
 			},
 			children: n.children.map(convert),
 		};
 	};
-	const unit = calc.bom(rootBomId);
+	const unit = calc.assembly(rootAssemblyId);
 	return {
 		data: {
 			part: root,
 			perParentMilli: null,
 			qtyMilli,
 			mode: "root",
-			bomId: rootBomId,
+			assemblyId: rootAssemblyId,
 			costMillicents: roundDiv(unit.millicents * qtyMilli, MILLI),
 			incomplete: unit.incomplete,
 		},
@@ -95,7 +101,7 @@ const LOOKS = {
 		box: "fill-card stroke-destructive",
 		bar: "fill-destructive",
 		dashed: true,
-		label: (t) => t.boms.modes.missing_bom,
+		label: (t) => t.assemblies.modes.missing_assembly,
 	},
 	make: { box: "fill-card stroke-success/50", bar: "fill-success", dashed: false, label: (t) => t.kinds.make },
 	kit: { box: "fill-card stroke-warning/60", bar: "fill-warning", dashed: true, label: (t) => t.kinds.kit },
@@ -105,7 +111,7 @@ const LOOKS = {
 
 function lookOf(d: DiagramDatum): Look {
 	if (d.mode === "root") return LOOKS.root;
-	if (d.mode === "missing_bom") return LOOKS.missing;
+	if (d.mode === "missing_assembly") return LOOKS.missing;
 	return LOOKS[d.part.kind];
 }
 
@@ -126,7 +132,7 @@ function DiagramNode(props: { node: PlacedNode<DiagramDatum>; view: DiagramView;
 	const text = root ? "fill-primary-foreground" : "fill-foreground";
 	const muted = root ? "fill-primary-foreground/70" : "fill-muted-foreground";
 	const cost = `${formatMoney(centsOf(d.costMillicents), locale, currency)}${d.incomplete ? " *" : ""}`;
-	const opensDiagram = !root && d.bomId !== null && isAssembly(d);
+	const opensDiagram = !root && d.assemblyId !== null && isAssembly(d);
 	return (
 		<g transform={`translate(${node.x} ${node.y})`} data-kind={d.part.kind} data-mode={d.mode}>
 			<a href={`/parts/${d.part.id}`} class="group outline-none">
@@ -167,8 +173,8 @@ function DiagramNode(props: { node: PlacedNode<DiagramDatum>; view: DiagramView;
 				) : null}
 			</a>
 			{opensDiagram ? (
-				<a href={`/boms/${d.bomId}/diagram`} class="group outline-none">
-					<title>{fmt(t.boms.openDiagram, { ref: d.part.ref })}</title>
+				<a href={`/assemblies/${d.assemblyId}/diagram`} class="group outline-none">
+					<title>{fmt(t.assemblies.openDiagram, { ref: d.part.ref })}</title>
 					<circle
 						cx={NODE_W - 2}
 						cy="2"
@@ -193,7 +199,7 @@ function DiagramNode(props: { node: PlacedNode<DiagramDatum>; view: DiagramView;
 					}
 					class="group outline-none"
 				>
-					<title>{fmt(t.boms.hiddenTitle, { n: node.hidden })}</title>
+					<title>{fmt(t.assemblies.hiddenTitle, { n: node.hidden })}</title>
 					{/* Right of a leaf; on the bottom edge when links already leave from the right side. */}
 					<rect
 						x={props.hasChildren ? NODE_W - 52 : NODE_W + 8}
@@ -238,7 +244,7 @@ function LegendItem(props: { look: Look; children: Child }) {
 }
 
 /** The diagram with its legend and zoom controls (shown by app.js). */
-export function BomDiagram(props: { tree: TreeInput<DiagramDatum>; view: DiagramView; title: string }) {
+export function AssemblyDiagram(props: { tree: TreeInput<DiagramDatum>; view: DiagramView; title: string }) {
 	const { t, locale } = useApp();
 	const layout = layoutTree([props.tree], {
 		...OPTS,
@@ -254,29 +260,44 @@ export function BomDiagram(props: { tree: TreeInput<DiagramDatum>; view: Diagram
 		<div data-diagram class="flex flex-col gap-3">
 			<div class="flex flex-wrap items-center justify-between gap-3">
 				<div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-					<LegendItem look={LOOKS.buy}>{t.boms.legend.buy}</LegendItem>
-					<LegendItem look={LOOKS.make}>{t.boms.legend.make}</LegendItem>
-					<LegendItem look={LOOKS.kit}>{t.boms.legend.kit}</LegendItem>
-					<LegendItem look={LOOKS.fee}>{t.boms.legend.fee}</LegendItem>
-					<LegendItem look={LOOKS.missing}>{t.boms.legend.missing}</LegendItem>
+					<LegendItem look={LOOKS.buy}>{t.assemblies.legend.buy}</LegendItem>
+					<LegendItem look={LOOKS.make}>{t.assemblies.legend.make}</LegendItem>
+					<LegendItem look={LOOKS.kit}>{t.assemblies.legend.kit}</LegendItem>
+					<LegendItem look={LOOKS.fee}>{t.assemblies.legend.fee}</LegendItem>
+					<LegendItem look={LOOKS.missing}>{t.assemblies.legend.missing}</LegendItem>
 				</div>
 				<div data-diagram-controls hidden class="flex items-center gap-1">
-					<button type="button" data-zoom="out" class={buttonClass("outline", "icon-sm", zoom)} title={t.boms.zoomOut}>
-						<Icon icon={icons.zoomOut} label={t.boms.zoomOut} />
+					<button
+						type="button"
+						data-zoom="out"
+						class={buttonClass("outline", "icon-sm", zoom)}
+						title={t.assemblies.zoomOut}
+					>
+						<Icon icon={icons.zoomOut} label={t.assemblies.zoomOut} />
 					</button>
 					<button
 						type="button"
 						data-zoom="reset"
 						class={buttonClass("outline", "sm", "tabular-nums")}
-						title={t.boms.zoomReset}
+						title={t.assemblies.zoomReset}
 					>
 						<span data-zoom-level>100%</span>
 					</button>
-					<button type="button" data-zoom="in" class={buttonClass("outline", "icon-sm", zoom)} title={t.boms.zoomIn}>
-						<Icon icon={icons.zoomIn} label={t.boms.zoomIn} />
+					<button
+						type="button"
+						data-zoom="in"
+						class={buttonClass("outline", "icon-sm", zoom)}
+						title={t.assemblies.zoomIn}
+					>
+						<Icon icon={icons.zoomIn} label={t.assemblies.zoomIn} />
 					</button>
-					<button type="button" data-zoom="fit" class={buttonClass("outline", "icon-sm", zoom)} title={t.boms.zoomFit}>
-						<Icon icon={icons.maximize} label={t.boms.zoomFit} />
+					<button
+						type="button"
+						data-zoom="fit"
+						class={buttonClass("outline", "icon-sm", zoom)}
+						title={t.assemblies.zoomFit}
+					>
+						<Icon icon={icons.maximize} label={t.assemblies.zoomFit} />
 					</button>
 				</div>
 			</div>
@@ -289,12 +310,12 @@ export function BomDiagram(props: { tree: TreeInput<DiagramDatum>; view: Diagram
 					width={width}
 					height={height}
 					viewBox={`0 0 ${width} ${height}`}
-					aria-labelledby="bom-diagram-title"
+					aria-labelledby="assembly-diagram-title"
 					class="block font-sans"
 					data-width={width}
 					data-height={height}
 				>
-					<title id="bom-diagram-title">{props.title}</title>
+					<title id="assembly-diagram-title">{props.title}</title>
 					<g class="fill-none stroke-muted-foreground/45" stroke-width="1.5">
 						{layout.edges.map((e) => (
 							<path d={e.d} />
@@ -322,7 +343,7 @@ export function BomDiagram(props: { tree: TreeInput<DiagramDatum>; view: Diagram
 					))}
 				</svg>
 			</div>
-			<p class="text-sm text-muted-foreground">{t.boms.diagramHint}</p>
+			<p class="text-sm text-muted-foreground">{t.assemblies.diagramHint}</p>
 		</div>
 	);
 }

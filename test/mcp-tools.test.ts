@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
-	bomId,
+	assemblyId,
 	changeSql,
 	importCsv,
 	insertPart,
@@ -26,7 +26,7 @@ beforeEach(async () => {
 async function planBuild(ref: string, opts: { serial?: string; qty?: string } = {}): Promise<number> {
 	const res = await postForm("/builds", {
 		part_id: String(await partId(ref)),
-		bom_id: String(await bomId(ref)),
+		assembly_id: String(await assemblyId(ref)),
 		qty: opts.qty ?? "1",
 		serial: opts.serial ?? "",
 		planned_for: "",
@@ -72,7 +72,7 @@ async function seed() {
 
 	await insertPart("WIDGET", "make");
 	await importCsv(
-		"boms",
+		"assemblies",
 		"parent_ref,code,revision,status,sale_price,component_ref,qty\nWIDGET,std,R1,active,,BOX-LAMP,1\n",
 	);
 	const widget = await planBuild("WIDGET", { qty: "100" });
@@ -94,10 +94,10 @@ function calls(s: Awaited<ReturnType<typeof seed>>): [string, Record<string, unk
 		["search_parts", { query: "BOX" }],
 		["get_part", { ref: "BOX-LAMP" }],
 		["get_part", { ref: "LAMP-DESK" }],
-		["get_bom", { bom: "LAMP-DESK" }],
-		["get_bom", { bom: "WIDGET", qty: "8" }],
-		["explode_bom", { bom: "WIDGET", qty: "8" }],
-		["explode_bom", { bom: "LAMP-DESK", qty: "1", use_stock: true }],
+		["get_assembly", { assembly: "LAMP-DESK" }],
+		["get_assembly", { assembly: "WIDGET", qty: "8" }],
+		["explode_assembly", { assembly: "WIDGET", qty: "8" }],
+		["explode_assembly", { assembly: "LAMP-DESK", qty: "1", use_stock: true }],
 		["stock_on_hand", {}],
 		["list_moves", {}],
 		["list_builds", { status: "all" }],
@@ -158,7 +158,7 @@ describe("cost redaction over MCP", () => {
 });
 
 describe("read tools", () => {
-	it("searches parts and returns one part with its offers, BoMs and where-used", async () => {
+	it("searches parts and returns one part with its offers, assemblies and where-used", async () => {
 		await loadDemo();
 		const token = await connect(["catalog:read"]);
 		const found = await callTool(token, "search_parts", { query: "head kit", kind: "kit" });
@@ -175,7 +175,7 @@ describe("read tools", () => {
 		expect(used).toContainEqual(expect.objectContaining({ parent: "LAMP-DESK", depth: 2, via: "HEAD-KIT-CW" }));
 
 		const lamp = await callTool(token, "get_part", { ref: "LAMP-DESK" });
-		expect((lamp.data.boms as { code: string; status: string }[]).map((b) => `${b.code}:${b.status}`)).toEqual([
+		expect((lamp.data.assemblies as { code: string; status: string }[]).map((b) => `${b.code}:${b.status}`)).toEqual([
 			"std:archived",
 			"std:active",
 			"warm:active",
@@ -183,11 +183,11 @@ describe("read tools", () => {
 		expect(lamp.data.rolled_up_cost).toMatchObject({ unit_cost: "37.83", incomplete: true, missing_costs: ["MANUAL"] });
 	});
 
-	it("returns a BoM tree with per-parent and cumulative quantities and the cost roll-up", async () => {
+	it("returns an assembly tree with per-parent and cumulative quantities and the cost roll-up", async () => {
 		await loadDemo();
 		const token = await connect(["catalog:read"]);
-		const tree = await callTool(token, "get_bom", { bom: "LAMP-DESK", qty: "2" });
-		expect(tree.data.bom).toMatchObject({ part: "LAMP-DESK", code: "std", revision: "Rev2", status: "active" });
+		const tree = await callTool(token, "get_assembly", { assembly: "LAMP-DESK", qty: "2" });
+		expect(tree.data.assembly).toMatchObject({ part: "LAMP-DESK", code: "std", revision: "Rev2", status: "active" });
 		expect(tree.data.cost).toMatchObject({ unit_cost: "37.83", total_cost: "75.66", incomplete: true });
 		const lines = tree.data.lines as { ref: string; per_parent: string; qty: string; children?: unknown[] }[];
 		const base = lines.find((l) => l.ref === "BASE-ASSY");
@@ -195,26 +195,26 @@ describe("read tools", () => {
 		expect(base?.children).toContainEqual(expect.objectContaining({ ref: "PAD-FELT", per_parent: "4", qty: "8" }));
 		expect(base?.children).toContainEqual(expect.objectContaining({ ref: "CABLE-2C", per_parent: "1.5", qty: "3" }));
 
-		const warm = await callTool(token, "get_bom", { bom: "LAMP-DESK", code: "warm" });
-		expect(warm.data.bom).toMatchObject({ code: "warm", revision: "Rev1" });
-		const old = await callTool(token, "get_bom", { bom: "LAMP-DESK", revision: "Rev1" });
-		expect(old.data.bom).toMatchObject({ code: "std", revision: "Rev1", status: "archived" });
-		const byId = await callTool(token, "get_bom", { bom: await bomId("ARM-ASSY") });
-		expect(byId.data.bom).toMatchObject({ part: "ARM-ASSY" });
+		const warm = await callTool(token, "get_assembly", { assembly: "LAMP-DESK", code: "warm" });
+		expect(warm.data.assembly).toMatchObject({ code: "warm", revision: "Rev1" });
+		const old = await callTool(token, "get_assembly", { assembly: "LAMP-DESK", revision: "Rev1" });
+		expect(old.data.assembly).toMatchObject({ code: "std", revision: "Rev1", status: "archived" });
+		const byId = await callTool(token, "get_assembly", { assembly: await assemblyId("ARM-ASSY") });
+		expect(byId.data.assembly).toMatchObject({ part: "ARM-ASSY" });
 	});
 
-	it("explodes a BoM, taking sub-assemblies from stock when asked", async () => {
+	it("explodes an assembly, taking sub-assemblies from stock when asked", async () => {
 		await loadDemo();
 		const token = await connect(["catalog:read"]);
 		type Line = { ref: string; qty: string; on_hand?: string; short?: string };
-		const flat = await callTool(token, "explode_bom", { bom: "LAMP-DESK", qty: 3 });
+		const flat = await callTool(token, "explode_assembly", { assembly: "LAMP-DESK", qty: 3 });
 		const comps = flat.data.components as Line[];
 		expect(comps.find((c) => c.ref === "ARM-TUBE-300")).toMatchObject({ qty: "6", on_hand: "10", short: "0" });
 		expect(comps.find((c) => c.ref === "BASE-PLATE")).toMatchObject({ qty: "3", on_hand: "3", short: "0" });
 		expect(comps.find((c) => c.ref === "ARM-ASSY")).toBeUndefined();
 		expect(flat.data.fees).toEqual([expect.objectContaining({ ref: "FEE-WEEE", qty: "3" })]);
 
-		const stocked = await callTool(token, "explode_bom", { bom: "LAMP-DESK", qty: "1", use_stock: true });
+		const stocked = await callTool(token, "explode_assembly", { assembly: "LAMP-DESK", qty: "1", use_stock: true });
 		const used = stocked.data.components as Line[];
 		expect(used.find((c) => c.ref === "ARM-ASSY")).toMatchObject({ qty: "2", on_hand: "2" });
 		expect(used.find((c) => c.ref === "ARM-TUBE-300")).toBeUndefined();
@@ -288,14 +288,14 @@ describe("read tools", () => {
 		const unknown = await callTool(token, "get_part", { ref: "NOPE" });
 		expect(unknown).toMatchObject({ isError: true });
 		expect(unknown.text).toContain('No part with reference "NOPE"');
-		const negative = await callTool(token, "explode_bom", { bom: "LAMP-DESK", qty: "-2" });
+		const negative = await callTool(token, "explode_assembly", { assembly: "LAMP-DESK", qty: "-2" });
 		expect(negative.isError).toBe(true);
 		expect(negative.text).toContain("positive decimal number");
-		const tooPrecise = await callTool(token, "explode_bom", { bom: "LAMP-DESK", qty: "1.0001" });
+		const tooPrecise = await callTool(token, "explode_assembly", { assembly: "LAMP-DESK", qty: "1.0001" });
 		expect(tooPrecise.isError).toBe(true);
-		const noBom = await callTool(token, "get_bom", { bom: "PAD-FELT" });
-		expect(noBom.text).toContain("PAD-FELT has no active BoM");
-		const noRevision = await callTool(token, "get_bom", { bom: "LAMP-DESK", revision: "Rev9" });
+		const noAssembly = await callTool(token, "get_assembly", { assembly: "PAD-FELT" });
+		expect(noAssembly.text).toContain("PAD-FELT has no active assembly");
+		const noRevision = await callTool(token, "get_assembly", { assembly: "LAMP-DESK", revision: "Rev9" });
 		expect(noRevision.text).toContain("no revision Rev9");
 	});
 });
