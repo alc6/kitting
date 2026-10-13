@@ -782,3 +782,7 @@ Short log of choices made where the brief left room. Newest at the bottom of eac
     a past price. `parts.cost_cents`, offers and selling prices never change.
   - *Not over MCP.* `prices.delete` is in `NEVER_OVER_MCP`, with the other permanent deletes.
   - Tracking `price_history` row by row (to make this undoable) was left out, for the reason given in D142.
+- **D144. `/health` is public.** Deploy tooling (a runner that checks a new version answers) and uptime monitors
+  need a route that works without an Access session. `GET`/`HEAD /health` returns `ok` before any authentication and
+  reveals nothing else; any other path or method stays behind Access. The Terraform module's bypass application
+  (formerly MCP-only) now always covers `health`, plus the OAuth paths when MCP is on.

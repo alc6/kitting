@@ -62,6 +62,14 @@ describe("Access middleware", () => {
 		expect((await request("/", {}, PROD)).status).toBe(403);
 	});
 
+	it("answers /health without a token, and nothing else", async () => {
+		const res = await request("/health", {}, PROD);
+		expect(res.status).toBe(200);
+		expect(await res.text()).toBe("ok");
+		expect((await request("/health/x", {}, PROD)).status).toBe(403);
+		expect((await request("/health", { method: "POST" }, PROD)).status).toBe(403);
+	});
+
 	it("ignores DEV_AUTH_EMAIL outside development", async () => {
 		const res = await request("/", {}, { ...PROD, DEV_AUTH_EMAIL: "dev@example.com" });
 		expect(res.status).toBe(403);

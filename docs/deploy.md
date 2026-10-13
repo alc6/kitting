@@ -46,6 +46,10 @@ Access lets people in; the Worker then checks every request again.
 5. **Team domain.** Your team domain looks like `acme.cloudflareaccess.com`; it appears in the URL of the login
    page and under *Settings → Custom pages*. It goes in `TEAM_DOMAIN`.
 
+Only `/health` answers without Access: it returns `ok` and nothing else, for uptime checks and deploy tooling. If
+you use one, add a second Access application on the path `health` with a *Bypass* policy (*Include → Everyone*);
+the Terraform module does it for you.
+
 The Worker only accepts requests that carry a valid `Cf-Access-Jwt-Assertion` header signed for your team and
 audience, and answers 403 to anything else. The `workers.dev` and preview URLs are disabled, so the app is only
 reachable on the hostname Access protects.

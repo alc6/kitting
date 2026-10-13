@@ -23,7 +23,7 @@ This is optional. Without the setup below, the MCP routes answer 404 and the res
 
 2. **Let the OAuth paths through Access.** These paths check OAuth tokens themselves, so Access must not block
    them. In Zero Trust, add a second self-hosted application, for example "Kitting MCP", on your hostname with
-   four paths: `mcp`, `token`, `register` and `.well-known/*`. Give it a single policy with the action *Bypass*
+   five paths: `health`, `mcp`, `token`, `register` and `.well-known/*`. Give it a single policy with the action *Bypass*
    and *Include → Everyone*. Access applies the most specific path, so the rest of the app, including the
    consent page, stays behind your main application.
 

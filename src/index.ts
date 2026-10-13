@@ -11,6 +11,10 @@ const app = createApp();
 export default {
 	fetch(request: Request, env: Env, ctx: ExecutionContext): Response | Promise<Response> {
 		const url = new URL(request.url);
+		// A liveness check for deploy tooling: public (Access lets it through, see infra/terraform), reveals nothing.
+		if (url.pathname === "/health" && (request.method === "GET" || request.method === "HEAD")) {
+			return new Response("ok", { headers: { "content-type": "text/plain", "cache-control": "no-store" } });
+		}
 		if (oauthKv(env) && isOAuthPath(url.pathname)) {
 			if (!oauthOriginOk(url.origin)) {
 				return new Response("Not found: MCP needs HTTPS, or http://localhost (see docs/mcp.md).", { status: 404 });

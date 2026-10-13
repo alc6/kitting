@@ -8,6 +8,8 @@ locals {
 
   # These paths check OAuth tokens themselves, so Access must let them through (docs/mcp.md).
   mcp_paths = ["mcp", "token", "register", ".well-known/*"]
+  # Paths that skip Access: the health check always, the OAuth paths with MCP. The Worker checks them itself.
+  public_paths = concat(["health"], var.enable_mcp ? local.mcp_paths : [])
 
   # An Allow rule matches any of these (they are ORed).
   allow_include = concat(
@@ -76,26 +78,27 @@ resource "cloudflare_zero_trust_access_application" "app" {
   policies = [{ id = cloudflare_zero_trust_access_policy.allow[0].id, precedence = 1 }]
 }
 
-# Access: a second application on four paths with a Bypass policy, for the MCP server. Access applies the most
-# specific path, so everything else (including the consent page) stays behind the main application.
-resource "cloudflare_zero_trust_access_policy" "mcp_bypass" {
-  count = var.manage_access && var.enable_mcp ? 1 : 0
+# Access: a second application with a Bypass policy on the public paths (/health, plus the MCP and OAuth paths with
+# MCP). Access applies the most specific path, so everything else (including the consent page) stays behind the main
+# application.
+resource "cloudflare_zero_trust_access_policy" "bypass" {
+  count = var.manage_access ? 1 : 0
 
   account_id = var.account_id
-  name       = "${var.name} mcp bypass"
+  name       = "${var.name} public paths"
   decision   = "bypass"
   include    = [{ everyone = {} }]
 }
 
-resource "cloudflare_zero_trust_access_application" "mcp" {
-  count = var.manage_access && var.enable_mcp ? 1 : 0
+resource "cloudflare_zero_trust_access_application" "public" {
+  count = var.manage_access ? 1 : 0
 
   account_id           = var.account_id
-  name                 = "${var.name} mcp"
+  name                 = "${var.name} public paths"
   type                 = "self_hosted"
-  domain               = "${var.hostname}/${local.mcp_paths[0]}"
-  destinations         = [for path in local.mcp_paths : { type = "public", uri = "${var.hostname}/${path}" }]
+  domain               = "${var.hostname}/${local.public_paths[0]}"
+  destinations         = [for path in local.public_paths : { type = "public", uri = "${var.hostname}/${path}" }]
   app_launcher_visible = false
 
-  policies = [{ id = cloudflare_zero_trust_access_policy.mcp_bypass[0].id, precedence = 1 }]
+  policies = [{ id = cloudflare_zero_trust_access_policy.bypass[0].id, precedence = 1 }]
 }
