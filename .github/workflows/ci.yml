@@ -26,6 +26,8 @@ jobs:
         run: npm run lint
       - name: Test (workerd + D1)
         run: npm test
+      - name: Test the release and deploy scripts (Node)
+        run: npm run test:scripts
       - name: Migrations are up to date with the schema
         run: |
           npx drizzle-kit generate --name ci-check

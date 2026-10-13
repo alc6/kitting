@@ -1,0 +1,73 @@
+# Publishes a release when a version tag is pushed (`git tag v0.2.0 && git push origin v0.2.0`).
+# The release carries kitting-<version>.tar.gz and its sha256: the built Worker, the static files, the D1
+# migrations and the deploy script. Installers pin a tag and deploy that bundle with their own settings, without
+# copying the code (docs/deploy.md, "Install with Terraform"; decision D141).
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the GitHub release and upload its files
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: The tag matches the version in package.json
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          if [ "${GITHUB_REF_NAME}" != "v${version}" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match package.json version ${version} (expected v${version})"
+            exit 1
+          fi
+      - run: npm ci
+      - name: Check (CSS, typecheck, lint, tests)
+        run: npm run check
+      - name: Migrations are up to date with the schema
+        run: |
+          npx drizzle-kit generate --name ci-check
+          if [ -n "$(git status --porcelain -- migrations)" ]; then
+            echo "::error::src/db/schema.ts changed without a migration. Run: npm run db:generate"
+            git status --porcelain -- migrations
+            exit 1
+          fi
+      - name: Build the release bundle
+        run: npm run release:bundle
+      - name: Smoke test, deploying the bundle in a dry run
+        # An empty folder, no node_modules and no source: only what the bundle carries.
+        # wrangler checks the upload and the generated configuration; nothing reaches Cloudflare.
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          (cd dist && sha256sum -c "kitting-${version}.tar.gz.sha256")
+          smoke="$(mktemp -d)"
+          tar -xzf "dist/kitting-${version}.tar.gz" -C "$smoke"
+          cd "$smoke/kitting-${version}"
+          KITTING_DOMAIN=kitting.yourco.example \
+          D1_DATABASE_ID=00000000-0000-0000-0000-000000000000 \
+          TEAM_DOMAIN=yourco.cloudflareaccess.com \
+          ACCESS_AUD=smoke-test \
+          ADMIN_EMAILS=admin@yourco.example \
+          IMAGES_BUCKET=kitting-images \
+          OAUTH_KV_ID=00000000000000000000000000000000 \
+          node scripts/deploy-release.mjs --dry-run
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          gh release create "${GITHUB_REF_NAME}" \
+            "dist/kitting-${version}.tar.gz" "dist/kitting-${version}.tar.gz.sha256" \
+            --verify-tag --generate-notes --title "Kitting ${version}"
