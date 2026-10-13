@@ -18,7 +18,7 @@ const viewer = { role: "viewer", seeCosts: false } as const;
 const operator = { role: "operator", seeCosts: false } as const;
 const READ = ["catalog:read", "stock:read", "builds:read", "purchasing:read"];
 
-/** Every tool, by scope (sorted): the list the README documents. */
+/** Every tool, by scope (sorted): the list docs/mcp.md documents. */
 const TOOLS_BY_SCOPE: Record<string, string[]> = {
 	"catalog:read": ["explode_assembly", "get_assembly", "get_part", "list_recent_changes", "search_parts"],
 	"catalog:write": [

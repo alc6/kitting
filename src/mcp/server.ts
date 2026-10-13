@@ -28,7 +28,7 @@ export const INSTRUCTIONS = [
 	"Assembly edits go through draft revisions: set_assembly_lines never changes an active assembly, it creates a new draft revision and edits that; activate_assembly then makes it the one builds use (the previous revision is archived and can be activated again).",
 	"Every change can be undone from Recent changes in the app (each write result gives its change set and history page), except stock and build ledger operations (adjustments, counts, receipts, build completions), which are corrected with reverse movements. You cannot undo changes yourself.",
 	"Costs, prices and margins may be hidden for this user's role: they are then left out and the result has costs_hidden: true. Never guess them.",
-	'A fuller Kitting skill (domain primer, step-by-step workflows, safety rules) exists: install the Kitting plugin from the project\'s repository (Claude Code and Cowork: add the repository as a plugin marketplace), or upload the skill zip to claude.ai (see the README, "Use Kitting from Claude").',
+	'A fuller Kitting skill (domain primer, step-by-step workflows, safety rules) exists: install the Kitting plugin from the project\'s repository (Claude Code and Cowork: add the repository as a plugin marketplace), or upload the skill zip to claude.ai (see docs/mcp.md, "Using Kitting from Claude").',
 ].join("\n");
 
 /** One MCP server for one request, with only the tools this request may use. */

@@ -371,7 +371,7 @@ export const en = {
 		removeImage: "Remove",
 		confirmRemoveImage: "Remove this image?",
 		openImage: "Open the full-size image",
-		imagesDisabled: "Images are not set up: add an R2 bucket to the deployment (see the README).",
+		imagesDisabled: "Images are not set up: add an R2 bucket to the deployment (see docs/deploy.md).",
 		setStandardHint: "Planned costs and margins follow the standard cost. Currently {cost}.",
 		priceHistory: "Price history",
 		priceHistoryHint: "Standard cost changes and prices paid on receipts.",

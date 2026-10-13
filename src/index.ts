@@ -13,7 +13,7 @@ export default {
 		const url = new URL(request.url);
 		if (oauthKv(env) && isOAuthPath(url.pathname)) {
 			if (!oauthOriginOk(url.origin)) {
-				return new Response("Not found: MCP needs HTTPS, or http://localhost (see the README).", { status: 404 });
+				return new Response("Not found: MCP needs HTTPS, or http://localhost (see docs/mcp.md).", { status: 404 });
 			}
 			return oauthProvider(url.origin).fetch(request, env, ctx);
 		}

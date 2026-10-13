@@ -3,7 +3,7 @@
 #   Variables: KITTING_DOMAIN, D1_DATABASE_ID, TEAM_DOMAIN, ACCESS_AUD, ADMIN_EMAILS
 #              optional: WORKER_NAME, D1_DATABASE_NAME, DEFAULT_LOCALE, CURRENCY,
 #                        IMAGES_BUCKET (an R2 bucket created beforehand, for product images)
-#                        OAUTH_KV_ID (a KV namespace created beforehand, for the MCP server; see README)
+#                        OAUTH_KV_ID (a KV namespace created beforehand, for the MCP server; see docs/mcp.md)
 name: Deploy
 
 on:

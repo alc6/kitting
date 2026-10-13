@@ -378,7 +378,7 @@ export const fr: Dict = {
 		removeImage: "Supprimer",
 		confirmRemoveImage: "Supprimer cette image ?",
 		openImage: "Ouvrir l’image en grand",
-		imagesDisabled: "Les images ne sont pas configurées : ajoutez un bucket R2 au déploiement (voir le README).",
+		imagesDisabled: "Les images ne sont pas configurées : ajoutez un bucket R2 au déploiement (voir docs/deploy.md).",
 		setStandardHint: "Les coûts et marges prévus suivent le coût standard. Actuellement {cost}.",
 		priceHistory: "Historique des prix",
 		priceHistoryHint: "Changements du coût standard et prix payés aux réceptions.",
