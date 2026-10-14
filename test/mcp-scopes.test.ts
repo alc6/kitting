@@ -106,7 +106,7 @@ describe("MCP scopes", () => {
 		expect(isMcpScope("builds:read")).toBe(true);
 	});
 
-	it("never deletes permanently, undoes, manages users, backs up, imports, uploads images or manages connections", () => {
+	it("never deletes permanently, undoes, manages users, backs up, imports, uploads images or files, or manages connections", () => {
 		for (const a of [
 			"parts.delete",
 			"suppliers.delete",
@@ -121,6 +121,7 @@ describe("MCP scopes", () => {
 			"import.commit",
 			"apps.connect",
 			"apps.manage",
+			"files.edit",
 		] as const)
 			expect(NEVER_OVER_MCP).toContain(a);
 		const actions: Action[] = [

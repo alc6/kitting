@@ -35,8 +35,9 @@ export const MCP_SCOPE_NAMES = Object.keys(MCP_SCOPES) as McpScope[];
 /**
  * Never reachable over MCP, now or later: permanent deletes (parts and their offers and images, suppliers, assemblies,
  * POs), undoing a change (it stays in the app, where its conflicts are shown), user management, backup and
- * restore, CSV import, and these connections themselves. Image uploads share parts.edit, so that rule is on tool
- * names (test/mcp-scopes.test.ts checks both).
+ * restore, CSV import, these connections themselves, and files (uploads and their edits stay in the app; the read
+ * tools list them, D165). Image uploads share parts.edit, so that rule is on tool names (test/mcp-scopes.test.ts
+ * checks both).
  */
 export const NEVER_OVER_MCP: readonly Action[] = [
 	"parts.delete",
@@ -52,6 +53,7 @@ export const NEVER_OVER_MCP: readonly Action[] = [
 	"import.commit",
 	"apps.connect",
 	"apps.manage",
+	"files.edit",
 ];
 
 export function isMcpScope(value: unknown): value is McpScope {

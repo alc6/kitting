@@ -25,6 +25,7 @@ import {
 	type GraphMachineType,
 	type GraphPart,
 } from "./assembly-graph";
+import { copyFilesStatement } from "./files";
 import { priceRecordStatement } from "./prices";
 
 export const assemblyInput = z.object({
@@ -460,6 +461,8 @@ export function createAssemblyStatements(
 					(SELECT id FROM assemblies WHERE parent_part_id = ${b.parentPartId} AND code = ${b.code} AND revision = ${b.revision}),
 					component_part_id, qty_milli, position, notes, ${now}, ${now}, ${user}, ${user}
 				FROM assembly_lines WHERE assembly_id = ${sourceAssemblyId}`),
+			// The files go with the revision they describe: same objects, only the rows are copied (D164).
+			copyFilesStatement(db, b, sourceAssemblyId, user, now),
 		);
 	}
 	return stmts;

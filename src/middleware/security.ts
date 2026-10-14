@@ -26,7 +26,9 @@ export const CONTENT_SECURITY_POLICY = contentSecurityPolicy();
 export const securityHeaders = createMiddleware<AppEnv>(async (c, next) => {
 	await next();
 	const formAction = c.get("formActionOrigin");
-	c.header("Content-Security-Policy", formAction ? contentSecurityPolicy(formAction) : CONTENT_SECURITY_POLICY);
+	// File downloads set a stricter policy of their own (D163); every page gets this one.
+	if (!c.res.headers.has("Content-Security-Policy"))
+		c.header("Content-Security-Policy", formAction ? contentSecurityPolicy(formAction) : CONTENT_SECURITY_POLICY);
 	c.header("X-Content-Type-Options", "nosniff");
 	c.header("X-Frame-Options", "DENY");
 	c.header("Referrer-Policy", "same-origin");

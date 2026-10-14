@@ -1,7 +1,7 @@
 import { asc, desc, eq } from "drizzle-orm";
 import type { Context } from "hono";
 import { Hono } from "hono";
-import { PART_KINDS, type Part, type PartKind, parts, stockMoves, suppliers } from "../db/schema";
+import { type FileRow, PART_KINDS, type Part, type PartKind, parts, stockMoves, suppliers } from "../db/schema";
 import {
 	assemblyLabel,
 	createAssemblyStatements,
@@ -15,6 +15,7 @@ import {
 import { type Cost, centsOf } from "../domain/assembly-graph";
 import { listBuilds } from "../domain/builds";
 import { type AverageCost, averageUnitCents } from "../domain/costing";
+import { partFiles } from "../domain/files";
 import { imagesBucket, imageUrl } from "../domain/images";
 import { marginOf } from "../domain/margins";
 import {
@@ -62,6 +63,7 @@ import type { AppEnv } from "../types";
 import { CostView, StatusBadge } from "../views/assembly";
 import { StepChart } from "../views/chart";
 import { useApp } from "../views/context";
+import { FilesCard } from "../views/files";
 import { RecordTabs } from "../views/history";
 import { Icon, type IconNode, icons } from "../views/icons";
 import { Duration } from "../views/machines";
@@ -427,6 +429,7 @@ function PartDetail(props: {
 	usedIn: WhereUsedRow[];
 	builds: Awaited<ReturnType<typeof listBuilds>>;
 	imagesEnabled: boolean;
+	files: FileRow[];
 	/** The "Add a past price" form, for those who may edit prices and see costs. */
 	pastPrice?: PastPriceFormProps | undefined;
 	ok?: string | undefined;
@@ -598,6 +601,14 @@ function PartDetail(props: {
 						/>
 					) : null}
 				</div>
+				{props.files.length > 0 || can(view, "files.edit") ? (
+					<FilesCard
+						files={props.files}
+						uploadAction={`/parts/${p.id}/files`}
+						enabled={props.imagesEnabled}
+						editable={true}
+					/>
+				) : null}
 				{p.kind === "buy" || props.offers.length > 0 ? (
 					<OffersCard part={p} offers={props.offers} lastPaid={props.lastPaid} />
 				) : null}
@@ -659,6 +670,12 @@ const PART_ERRORS = new Set([
 	"image_too_large",
 	"image_type",
 	"images_disabled",
+	"file_missing",
+	"file_too_large",
+	"file_type",
+	"file_upload",
+	"files_disabled",
+	"invalid",
 ]);
 
 /** The product image (D100): shown, uploaded (resized in the browser when JavaScript runs), removed by admins. */
@@ -1584,6 +1601,7 @@ async function partPage(
 		history,
 		paid,
 		allSuppliers,
+		files,
 	] = await Promise.all([
 		part.supplierId
 			? db
@@ -1607,6 +1625,7 @@ async function partPage(
 		partPriceHistory(db, part.id),
 		paidPrices(db, part.id),
 		showPastPrice ? supplierOptions(c) : Promise.resolve([]),
+		partFiles(db, part.id),
 	]);
 	return page(
 		c,
@@ -1626,6 +1645,7 @@ async function partPage(
 			usedIn={usedIn}
 			builds={recent}
 			imagesEnabled={imagesBucket(c.env) !== null}
+			files={files}
 			pastPrice={
 				showPastPrice
 					? { values: pastPrice?.values ?? {}, errors: pastPrice?.errors ?? {}, suppliers: allSuppliers }

@@ -58,6 +58,14 @@ export type ChangeOp = (typeof CHANGE_OPS)[number];
 export const MACHINE_STATUSES = ["active", "maintenance", "retired"] as const;
 export type MachineStatus = (typeof MACHINE_STATUSES)[number];
 
+/** What an attached file is for (D159): chosen by people, separate from its format. */
+export const FILE_KINDS = ["cad", "print", "drawing", "instructions", "datasheet", "other"] as const;
+export type FileKind = (typeof FILE_KINDS)[number];
+
+/** What an attached file is, recognised from its content (D162). */
+export const FILE_FORMATS = ["step", "3mf", "stl", "pdf", "dxf", "jpeg", "png", "webp"] as const;
+export type FileFormat = (typeof FILE_FORMATS)[number];
+
 /** What a signed-in user may do, from least to most. Each role can do everything the previous one can. */
 export const ROLES = ["viewer", "operator", "planner", "admin"] as const;
 export type Role = (typeof ROLES)[number];
@@ -399,6 +407,41 @@ export const partSuppliers = sqliteTable(
 	],
 );
 
+// A file attached to a part (whatever its recipe) or to one assembly revision (D159). The bytes are an object in the
+// IMAGES R2 bucket that the app never deletes (D160): new revisions copy the row and share the object, and removing a
+// file deletes the row only, so an undo can bring it back.
+export const files = sqliteTable(
+	"files",
+	{
+		id: integer("id").primaryKey({ autoIncrement: true }),
+		partId: integer("part_id").references(() => parts.id, { onDelete: "cascade" }),
+		assemblyId: integer("assembly_id").references(() => assemblies.id, { onDelete: "cascade" }),
+		// Shown and used as the download name (the format's extension is added when it has none).
+		name: text("name").notNull(),
+		kind: text("kind", { enum: FILE_KINDS }).notNull(),
+		format: text("format", { enum: FILE_FORMATS }).notNull(),
+		sizeBytes: integer("size_bytes").notNull(),
+		// Hex SHA-256 of the content: identical uploads share one object.
+		sha256: text("sha256").notNull(),
+		// "files/<uuid>" in the bucket: immutable, never reused for other content.
+		objectKey: text("object_key").notNull(),
+		note: text("note").notNull().default(""),
+		// The upload itself, kept when a new revision copies the row (the audit columns say who attached it here).
+		uploadedAt: text("uploaded_at").notNull(),
+		uploadedBy: text("uploaded_by").notNull(),
+		...audit(),
+	},
+	(t) => [
+		index("files_part_idx").on(t.partId),
+		index("files_assembly_idx").on(t.assemblyId),
+		index("files_sha256_idx").on(t.sha256),
+		check("files_owner_check", sql`(${t.partId} IS NULL) <> (${t.assemblyId} IS NULL)`),
+		check("files_kind_check", inList("kind", FILE_KINDS)),
+		check("files_format_check", inList("format", FILE_FORMATS)),
+		check("files_size_check", sql`${t.sizeBytes} > 0`),
+	],
+);
+
 // Append-only log of price changes (standard cost, supplier offers, selling prices). Never UPDATE or
 // DELETE: a change is a new row. Prices actually paid are in the ledger (receipt moves at the PO price).
 export const priceHistory = sqliteTable(
@@ -538,6 +581,7 @@ export const HISTORY_TABLES: SQLiteTable[] = [
 	settings,
 	machineTypes,
 	machines,
+	files,
 ];
 
 /**
@@ -573,3 +617,4 @@ export type PriceHistoryRow = typeof priceHistory.$inferSelect;
 export type MachineType = typeof machineTypes.$inferSelect;
 export type Machine = typeof machines.$inferSelect;
 export type BuildMachineTime = typeof buildMachineTimes.$inferSelect;
+export type FileRow = typeof files.$inferSelect;

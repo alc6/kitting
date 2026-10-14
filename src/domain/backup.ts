@@ -13,6 +13,7 @@ import {
 	builds,
 	changeLog,
 	changeSets,
+	files,
 	machineRateHistory,
 	machines,
 	machineTypes,
@@ -47,6 +48,8 @@ const TABLES: SQLiteTable[] = [
 	stockMoves,
 	partSuppliers,
 	priceHistory,
+	// File rows, not their content: the objects stay in the R2 bucket (D160, docs/administration.md).
+	files,
 	// Roles and admin options: a restore brings back who may do what (ADMIN_EMAILS still apply).
 	users,
 	settings,

@@ -15,6 +15,7 @@ import type { ChangedBy, RevertConflict } from "../domain/revert";
 import { fmt } from "../i18n";
 import { formatMinutes, formatQty, MILLI } from "../lib/units";
 import { type AppView, useApp } from "./context";
+import { formatBytes } from "./files";
 import { icons } from "./icons";
 import { Alert, Badge, CardEmpty, LinkTabs, Money, PostButton, shortDateTime, TableCard } from "./ui";
 
@@ -83,6 +84,12 @@ function recordHref(table: string, rowId: number, row: Row): string | null {
 			return `/machines/types/${rowId}`;
 		case "machines":
 			return `/machines/${rowId}`;
+		case "files":
+			return num(row.part_id)
+				? `/parts/${row.part_id}#files`
+				: num(row.assembly_id)
+					? `/assemblies/${row.assembly_id}#files`
+					: null;
 		default:
 			return null;
 	}
@@ -104,6 +111,12 @@ function FieldValue(props: { table: string; column: string; value: unknown; labe
 	const ref = REFERENCE_COLUMNS[column];
 	if (ref) return <span>{labelOf(props.labels, ref, value)}</span>;
 	const text = String(value);
+	if (table === "files") {
+		if (column === "kind") return <span>{(t.files.kinds as Record<string, string>)[text] ?? text}</span>;
+		if (column === "format") return <span>{(t.files.formats as Record<string, string>)[text] ?? text}</span>;
+		if (column === "size_bytes" && typeof value === "number")
+			return <span class="num">{formatBytes(value, view)}</span>;
+	}
 	if (column === "kind") return <span>{(t.kinds as Record<string, string>)[text] ?? text}</span>;
 	if (column === "role") return <span>{(t.roles.names as Record<string, string>)[text] ?? text}</span>;
 	if (column === "status") {
