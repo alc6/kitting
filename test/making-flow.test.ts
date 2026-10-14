@@ -5,6 +5,7 @@ import { computeShortages } from "../src/domain/purchasing";
 import { revertChangeSet } from "../src/domain/revert";
 import {
 	assemblyId,
+	insertMove,
 	insertPart,
 	loadDemo,
 	NOT_ADMIN,
@@ -42,6 +43,16 @@ async function clipPack(clips: string) {
 	);
 	expect((await postForm(`/assemblies/${id}/activate`, {})).status).toBe(303);
 	return pack;
+}
+
+/** A make part with an active recipe of these lines, set up from its page. */
+async function madePart(ref: string, lines: [string, string][]) {
+	const id = await insertPart(ref, "make");
+	const created = await postForm(`/parts/${id}/recipe`, {});
+	const assembly = Number(/\/assemblies\/(\d+)$/.exec(created.headers.get("Location") ?? "")?.[1]);
+	for (const [component, qty] of lines) await postForm(`/assemblies/${assembly}/lines`, { component, qty, notes: "" });
+	expect((await postForm(`/assemblies/${assembly}/activate`, {})).status).toBe(303);
+	return id;
 }
 
 const toMake = async () =>
@@ -149,20 +160,65 @@ describe("what to make for the open builds", () => {
 		]);
 	});
 
-	it("puts deeper parts first", async () => {
+	it("lists what a part is made from before it, whatever the depth", async () => {
+		await loadDemo();
+		await clipPack("30");
+		// WRAP holds one pack; BOX holds a WRAP, then a pack of its own. 30 clips are in stock: the pack inside WRAP
+		// (deeper, exploded first) takes them, the box's own pack needs its 30 clips printed.
+		await insertMove(await partId("LAMP-CLIP"), 30_000);
+		await madePart("WRAP", [["CLIP-PACK", "1"]]);
+		await madePart("BOX", [
+			["WRAP", "1"],
+			["CLIP-PACK", "1"],
+		]);
+		await planBuild("BOX");
+		// The pack sits deeper than the clips it needs (inside WRAP), but the clips are made first.
+		expect((await toMake()).map((l) => [l.ref, l.short])).toEqual([
+			["LAMP-CLIP", 30_000],
+			["CLIP-PACK", 2_000],
+			["WRAP", 1_000],
+		]);
+		expect((await computeShortages(testDb())).toMake.map((l) => l.level)).toEqual([0, 1, 2]);
+	});
+
+	it("counts a made part's deficit before what its planned builds will add", async () => {
+		await loadDemo();
+		const arm = await partId("ARM-ASSY");
+		// 2 arms in stock, then 5 used outside any build: −3. Planning 5 arms only brings it back to 2.
+		await insertMove(arm, -5_000);
+		await planBuild("ARM-ASSY", { qty: "5" });
+		for (let i = 1; i <= 2; i++) await planBuild("LAMP-DESK", { serial: `L-${i}` });
+		// 4 arms needed, 2 available once the deficit is filled: 2 to make.
+		expect((await toMake()).find((l) => l.ref === "ARM-ASSY")).toMatchObject({
+			short: 2_000,
+			onHand: -3_000,
+			planned: 5_000,
+		});
+	});
+
+	it("buys what the whole runs use, and counts the machine time of the parent and its runs", async () => {
 		await loadDemo();
 		const pack = await clipPack("30");
-		// A box of 2 packs: the packs are made from clips, so the clips come first.
-		const box = await insertPart("CLIP-BOX", "make");
-		const created = await postForm(`/parts/${box}/recipe`, {});
-		const id = Number(/\/assemblies\/(\d+)$/.exec(created.headers.get("Location") ?? "")?.[1]);
-		await postForm(`/assemblies/${id}/lines`, { component: "CLIP-PACK", qty: "2", notes: "" });
-		await postForm(`/assemblies/${id}/activate`, {});
-		await planBuild("CLIP-BOX");
-		expect((await toMake()).map((l) => [l.ref, l.short])).toEqual([
-			["LAMP-CLIP", 60_000],
-			["CLIP-PACK", 2_000],
-		]);
+		const fdm = (await one<{ id: number }>("SELECT id FROM machine_types WHERE name = 'FDM printer'")).id;
+		// Packing takes 10 min on the printer bench too.
+		const packAssembly = await assemblyId("CLIP-PACK");
+		expect(
+			(
+				await postForm(`/assemblies/${packAssembly}/production`, {
+					batch_qty: "1",
+					machine_type_id: String(fdm),
+					machine_time: "10",
+				})
+			).status,
+		).toBe(303);
+		// 0.4 kg of PLA left: enough for 30 clips (0.325 kg), not for the 48 of two plates (0.52 kg).
+		await insertMove(await partId("PLA-BLACK"), -2_000);
+		await planBuild("CLIP-PACK");
+		const s = await computeShortages(testDb());
+		const pla = s.groups.flatMap((g) => g.lines).find((l) => l.part.ref === "PLA-BLACK");
+		expect([pla?.needMilli, pla?.onHandMilli, pla?.builds]).toEqual([520, 400, ["B-0001"]]);
+		// The pack's own 10 min, plus two plates of 3 h 10.
+		expect(s.machines.map((m) => m.minutesMilli)).toEqual([390_000]);
 		expect(pack).toBeGreaterThan(0);
 	});
 });

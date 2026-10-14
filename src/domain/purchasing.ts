@@ -20,6 +20,7 @@ import type { Db } from "../types";
 import { loadGraph } from "./assemblies";
 import {
 	defaultAssembly,
+	type ExplodedNode,
 	explode,
 	type GraphMachineType,
 	type GraphPart,
@@ -101,14 +102,17 @@ export type ToMakeLine = {
 	runs: number;
 	/** Machine time of `toMakeMilli` on its machine type, or null. */
 	machine: { machineType: GraphMachineType; minutesMilli: number } | null;
-	/** Depth below the builds that need it (0 = a direct component): deeper parts are made first. */
-	depth: number;
+	/**
+	 * Order of making (D156): 0 when it is made from bought parts and stock only, else 1 + the level of the made parts it
+	 * is made from. The list goes from 0 up: what a part is made from comes before it.
+	 */
+	level: number;
 	builds: string[];
 };
 
 export type Shortages = {
 	groups: SupplierGroup[];
-	/** Made parts to make for the open builds, deepest first (D156). */
+	/** Made parts to make for the open builds, what they are made from first (D156). */
 	toMake: ToMakeLine[];
 	/** Make/kit parts that must be built for open builds but have no active assembly. */
 	missingAssemblies: { ref: string; name: string; qtyMilli: number; builds: string[] }[];
@@ -129,6 +133,14 @@ export async function onOrderMap(db: Db): Promise<Map<number, number>> {
 		.where(inArray(purchaseOrders.status, OPEN_PO_STATUSES))
 		.groupBy(poLines.partId);
 	return new Map(rows.map((r) => [r.partId, r.qty]));
+}
+
+/** The made parts built inside a node (through kits, which are phantoms): what it is made from, for the order (D156). */
+function* subBuilds(node: ExplodedNode): Generator<ExplodedNode> {
+	for (const child of node.children) {
+		if (child.part.kind === "make" && child.toBuildMilli > 0 && child.assemblyId !== null) yield child;
+		else if (child.mode === "kit") yield* subBuilds(child);
+	}
 }
 
 /**
@@ -167,9 +179,11 @@ export async function computeShortages(db: Db): Promise<Shortages> {
 	// Stock to come from the open builds (D156): what they will make is available to the builds that need it.
 	const planned = new Map<number, number>();
 	for (const b of open) planned.set(b.partId, (planned.get(b.partId) ?? 0) + b.qtyMilli);
+	// Planned output first fills a deficit: 5 arms planned with stock at −3 make 2 available (explode() clamps at 0).
 	const available = new Map(onHand);
-	for (const [partId, qty] of planned) available.set(partId, Math.max(0, available.get(partId) ?? 0) + qty);
-	const toMake = new Map<number, { qty: number; depth: number; builds: Set<string> }>();
+	for (const [partId, qty] of planned) available.set(partId, (available.get(partId) ?? 0) + qty);
+	/** Per made part to make: how many, for which builds, and the made parts it is built from (`uses`). */
+	const toMake = new Map<number, { qty: number; builds: Set<string>; uses: Set<number> }>();
 	const need = new Map<number, { qty: number; builds: Set<string> }>();
 	const missing = new Map<number, { qty: number; builds: Set<string> }>();
 	const add = (into: typeof need, partId: number, qty: number, build: string) => {
@@ -197,11 +211,12 @@ export async function computeShortages(db: Db): Promise<Shortages> {
 		// runs as they will be made (D156).
 		const subTime = new Map<number, number>();
 		for (const node of walkTree(ex.tree)) {
-			if (node.part.kind !== "make" || node.toBuildMilli <= 0 || node.mode === "missing_assembly") continue;
-			const e = toMake.get(node.part.id) ?? { qty: 0, depth: node.depth, builds: new Set<string>() };
+			// A make part built now, with an assembly to build it from (one without is in missingAssemblies).
+			if (node.part.kind !== "make" || node.toBuildMilli <= 0 || node.assemblyId === null) continue;
+			const e = toMake.get(node.part.id) ?? { qty: 0, builds: new Set<string>(), uses: new Set<number>() };
 			e.qty += node.toBuildMilli;
-			e.depth = Math.max(e.depth, node.depth);
 			e.builds.add(b.number);
+			for (const sub of subBuilds(node)) e.uses.add(sub.part.id);
 			toMake.set(node.part.id, e);
 			const sub = node.assemblyId === null ? undefined : graph.assemblies.get(node.assemblyId);
 			if (sub?.machineTypeId != null && sub.machineMinutes > 0)
@@ -216,6 +231,56 @@ export async function computeShortages(db: Db): Promise<Shortages> {
 			if (own > 0) addLoad(m.machineType, own, [b.number]);
 		}
 	}
+	// What to make, in whole runs (D156); what a part is made from comes first.
+	const level = new Map<number, number>();
+	const levelOf = (partId: number, stack: number[] = []): number => {
+		const known = level.get(partId);
+		if (known !== undefined) return known;
+		if (stack.includes(partId)) return 0;
+		const uses = [...(toMake.get(partId)?.uses ?? [])];
+		const l = uses.length ? 1 + Math.max(...uses.map((u) => levelOf(u, [...stack, partId]))) : 0;
+		level.set(partId, l);
+		return l;
+	};
+	const toMakeLines: ToMakeLine[] = [];
+	for (const [partId, m] of toMake) {
+		const part = graph.parts.get(partId);
+		const assembly = defaultAssembly(graph, partId);
+		if (!part || !assembly) continue;
+		const runs = Math.ceil(m.qty / assembly.batchMilli);
+		const toMakeMilli = assembly.batchMilli === MILLI ? m.qty : runs * assembly.batchMilli;
+		const machineType =
+			assembly.machineTypeId !== null && assembly.machineMinutes > 0
+				? graph.machineTypes.get(assembly.machineTypeId)
+				: undefined;
+		toMakeLines.push({
+			part,
+			assembly: { id: assembly.id, code: assembly.code, revision: assembly.revision, batchMilli: assembly.batchMilli },
+			shortMilli: m.qty,
+			onHandMilli: onHand.get(partId) ?? 0,
+			plannedMilli: planned.get(partId) ?? 0,
+			toMakeMilli,
+			runs,
+			machine: machineType ? { machineType, minutesMilli: machineNeed(assembly, toMakeMilli) } : null,
+			level: levelOf(partId),
+			builds: [...m.builds],
+		});
+		// Rounded up to whole runs: what the rest of the last run uses is bought too, so making the suggested quantity
+		// never takes stock below zero. Its own machine time is in the line; that of sub-assemblies inside it is not.
+		if (toMakeMilli > m.qty) {
+			const extra = explode(graph, assembly.id, toMakeMilli - m.qty, { available });
+			for (const r of extra.requirements) {
+				const into = r.missingAssembly ? missing : r.part.kind === "buy" ? need : undefined;
+				if (!into) continue;
+				const e = into.get(r.part.id) ?? { qty: 0, builds: new Set<string>() };
+				e.qty += r.qtyMilli;
+				for (const build of m.builds) e.builds.add(build);
+				into.set(r.part.id, e);
+			}
+		}
+	}
+	toMakeLines.sort((a, b) => a.level - b.level || a.part.ref.localeCompare(b.part.ref));
+	for (const l of toMakeLines) if (l.machine) addLoad(l.machine.machineType, l.machine.minutesMilli, l.builds);
 	// Parts already below zero are short of their deficit even without open builds.
 	for (const [partId, qty] of onHand) {
 		if (qty < 0 && graph.parts.get(partId)?.kind === "buy" && !need.has(partId))
@@ -267,32 +332,6 @@ export async function computeShortages(db: Db): Promise<Shortages> {
 		a.supplierId === null ? 1 : b.supplierId === null ? -1 : a.supplierName.localeCompare(b.supplierName),
 	);
 	for (const g of sorted) g.lines.sort((a, b) => a.part.ref.localeCompare(b.part.ref));
-	const toMakeLines: ToMakeLine[] = [];
-	for (const [partId, m] of toMake) {
-		const part = graph.parts.get(partId);
-		const assembly = defaultAssembly(graph, partId);
-		if (!part || !assembly) continue;
-		const runs = Math.ceil(m.qty / assembly.batchMilli);
-		const toMakeMilli = assembly.batchMilli === MILLI ? m.qty : runs * assembly.batchMilli;
-		const machineType =
-			assembly.machineTypeId !== null && assembly.machineMinutes > 0
-				? graph.machineTypes.get(assembly.machineTypeId)
-				: undefined;
-		toMakeLines.push({
-			part,
-			assembly: { id: assembly.id, code: assembly.code, revision: assembly.revision, batchMilli: assembly.batchMilli },
-			shortMilli: m.qty,
-			onHandMilli: onHand.get(partId) ?? 0,
-			plannedMilli: planned.get(partId) ?? 0,
-			toMakeMilli,
-			runs,
-			machine: machineType ? { machineType, minutesMilli: machineNeed(assembly, toMakeMilli) } : null,
-			depth: m.depth,
-			builds: [...m.builds],
-		});
-	}
-	toMakeLines.sort((a, b) => b.depth - a.depth || a.part.ref.localeCompare(b.part.ref));
-	for (const l of toMakeLines) if (l.machine) addLoad(l.machine.machineType, l.machine.minutesMilli, l.builds);
 	return {
 		groups: sorted,
 		toMake: toMakeLines,
