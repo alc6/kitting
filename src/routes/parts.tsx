@@ -1264,7 +1264,7 @@ function HowItsMade(props: { part: Part; summary: Awaited<ReturnType<typeof part
 							{active ? null : <StatusBadge status={recipe.assembly.status} />}
 							{recipe.assembly.batchMilli !== MILLI ? (
 								<span>
-									{t.assemblies.makes} <Qty milli={recipe.assembly.batchMilli} unit={part.unit} /> {t.assemblies.perRun}
+									{t.assemblies.batchQty}: <Qty milli={recipe.assembly.batchMilli} unit={part.unit} />
 								</span>
 							) : null}
 							{seeCosts ? (

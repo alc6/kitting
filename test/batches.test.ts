@@ -117,7 +117,7 @@ describe("batch recipes in the app", () => {
 		const draft = await request(`/assemblies/${id}`);
 		const html = await draft.text();
 		expect(html).toContain(`action="/assemblies/${id}/production"`);
-		expect(html).toContain("Cost of a run (24 pcs)");
+		expect(html).toContain("Batch cost (24 pcs)");
 		expect(html).toContain("€5.20");
 		// Invalid, then saved.
 		expect((await postForm(`/assemblies/${id}/production`, { batch_qty: "0" })).status).toBe(422);
@@ -161,7 +161,7 @@ describe("batch recipes in the app", () => {
 		const big = await plan("2", "batches");
 		expect(await one("SELECT qty_milli FROM builds WHERE id = ?", big)).toEqual({ qty_milli: 48_000 });
 		const page = await (await request(`/builds/${big}`)).text();
-		expect(page).toContain("2 run(s)");
+		expect(page).toContain("2 batch(es)");
 		expect(page).toContain("0.52");
 		// One spacer takes 11 g (10.833 rounded up).
 		const one1 = await plan("1");

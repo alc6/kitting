@@ -36,7 +36,7 @@ describe("record a finished build", () => {
 		await loadDemo();
 		const clip = await partId("LAMP-CLIP");
 		const page = await (await request(`/builds/new?part=${clip}`)).text();
-		expect(page).toContain("Already made: record it now");
+		expect(page).toContain("Record a completed build or plan a new one.");
 		// A plain New build plans: recording, which cannot be undone, needs the explicit link.
 		expect(page, "to make by default").toMatch(/name="when" value="planned" checked/);
 		expect(await (await request(`/builds/new?part=${clip}&when=done`)).text()).toMatch(
@@ -115,7 +115,7 @@ describe("record a finished build", () => {
 		// A date with "already made" is a plan typed in the wrong box: refused, nothing recorded.
 		const dated = await record("LAMP-CLIP", { planned_for: "2026-12-01" });
 		expect(dated.status).toBe(422);
-		expect(await dated.text()).toContain("You entered a date: choose To make");
+		expect(await dated.text()).toContain("A planned date was entered: select Planned");
 		expect((await lastChangeSet()).id).toBe(before);
 		expect(await rows("SELECT id FROM builds")).toEqual([]);
 	});

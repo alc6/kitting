@@ -858,13 +858,13 @@ function ProductionBar(props: {
 				<p class="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
 					<span class="inline-flex items-center gap-1.5">
 						<Icon icon={icons.factory} class="size-4 text-muted-foreground" />
-						{t.assemblies.makes} <Qty milli={assembly.batchQtyMilli} unit={part.unit} /> {t.assemblies.perRun}
+						{t.assemblies.batchQty}: <Qty milli={assembly.batchQtyMilli} unit={part.unit} />
 					</span>
 					{machine && assembly.machineMinutes > 0 ? (
 						<span class="inline-flex items-center gap-1.5">
 							<Icon icon={icons.timer} class="size-4 text-muted-foreground" />
-							<a href={`/machines/types/${machine.id}`}>{machine.name}</a> ·{" "}
-							<Duration minutesMilli={assembly.machineMinutes * MILLI} /> {t.assemblies.perRun}
+							{t.machines.timePerBatch}: <a href={`/machines/types/${machine.id}`}>{machine.name}</a> ·{" "}
+							<Duration minutesMilli={assembly.machineMinutes * MILLI} />
 						</span>
 					) : null}
 				</p>
@@ -881,7 +881,7 @@ function ProductionBar(props: {
 				class="flex flex-col gap-3 rounded-lg border bg-muted/40 p-4"
 			>
 				<div class="grid gap-3 md:grid-cols-[minmax(0,11rem)_minmax(0,1fr)_minmax(0,10rem)_auto] md:items-start">
-					<DecimalField name="batch_qty" label={fmt(t.assemblies.makesPerRun, { unit: part.unit })} {...p} />
+					<DecimalField name="batch_qty" label={fmt(t.assemblies.batchSize, { unit: part.unit })} {...p} />
 					<SelectField
 						name="machine_type_id"
 						label={t.machines.machineType}

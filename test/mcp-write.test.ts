@@ -514,7 +514,7 @@ describe("catalog tools", () => {
 		const unknown = await callTool(token, "set_assembly_production", { assembly: rev2, machine_type: "Lathe" });
 		expect(unknown.text).toContain('No machine type named "Lathe". Use list_machines');
 		const noTime = await callTool(token, "set_assembly_production", { assembly: rev2, machine_minutes: 0 });
-		expect(noTime.text).toContain("machine_minutes: Enter the machine time per run.");
+		expect(noTime.text).toContain("machine_minutes: Enter the machine time per batch.");
 		const none = await write(token, "set_assembly_production", { assembly: rev2, machine_type: null });
 		expect(none.data.assembly).toMatchObject({ machine_type: null, machine_minutes: 0 });
 		expect(await one("SELECT machine_type_id, machine_minutes FROM assemblies WHERE id = ?", rev2)).toEqual({

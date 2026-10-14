@@ -273,7 +273,7 @@ function ToMakeCard(props: { lines: ToMakeLine[]; toBuy: number }) {
 										</Button>
 										{canRecord ? (
 											<Button href={toMakeHref(l, "done", locale)} variant="ghost" size="sm" icon={icons.check}>
-												{t.builds.made}
+												{t.builds.recordShort}
 											</Button>
 										) : null}
 									</div>

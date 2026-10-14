@@ -123,7 +123,7 @@ describe("what to make for the open builds", () => {
 		]);
 		const page = await (await request("/builds")).text();
 		expect(page).toContain('id="to-make"');
-		expect(page).toContain("2 run(s)");
+		expect(page).toContain("2 batch(es)");
 		expect(page).toContain("6 h 20");
 		const plan = `/builds/new?part=${clip.part.id}&amp;assembly_id=${clip.assembly.id}&amp;qty=48&amp;when=planned`;
 		expect(page).toContain(plan);
@@ -133,7 +133,7 @@ describe("what to make for the open builds", () => {
 		expect(form).toContain('name="qty" inputmode="decimal" required="" value="48"');
 		expect(form).toMatch(/name="when" value="planned" checked/);
 		// Purchasing points to it.
-		expect(await (await request("/purchasing")).text()).toContain("And 1 made part(s) to make for these builds");
+		expect(await (await request("/purchasing")).text()).toContain("1 manufactured part(s) also required");
 	});
 
 	it("tells an assistant what to make, over MCP", async () => {
@@ -220,7 +220,7 @@ describe("what to make for the open builds", () => {
 		// The pack's own 10 min, plus two plates of 3 h 10.
 		expect(s.machines.map((m) => m.minutesMilli)).toEqual([390_000]);
 		// Recording the 48 suggested clips then never takes the filament below zero.
-		expect(await (await request(`/parts/${pack}`)).text()).toContain("How it&#39;s made");
+		expect(await (await request(`/parts/${pack}`)).text()).toContain("Manufacturing");
 	});
 });
 
@@ -230,8 +230,8 @@ describe("how a made part is made, on its page", () => {
 		const clip = await partId("LAMP-CLIP");
 		const html = await (await request(`/parts/${clip}`)).text();
 		expect(html).toContain('id="how-its-made"');
-		expect(html).toContain("How it&#39;s made");
-		expect(html).toContain("per run");
+		expect(html).toContain("Manufacturing");
+		expect(html).toContain("Batch size");
 		expect(html).toContain("PLA-BLACK");
 		expect(html).toContain("FDM printer");
 		expect(html).toContain("3 h 10");
@@ -248,7 +248,7 @@ describe("how a made part is made, on its page", () => {
 		await loadDemo();
 		const id = await insertPart("SPACER", "make");
 		const page = await (await request(`/parts/${id}`)).text();
-		expect(page).toContain("Set up how it&#39;s made");
+		expect(page).toContain("Create assembly");
 		expect(page).toContain(`action="/parts/${id}/recipe"`);
 		const first = await postForm(`/parts/${id}/recipe`, {});
 		expect(first.status).toBe(303);
@@ -264,7 +264,7 @@ describe("how a made part is made, on its page", () => {
 		]);
 		// The draft shows on the part page, without build actions until it is active.
 		const draft = await (await request(`/parts/${id}`)).text();
-		expect(draft).toContain("Draft: activate it from its page to build with it.");
+		expect(draft).toContain("Draft revision: activate it to use it in builds.");
 		expect(draft).not.toContain(`/builds/new?part=${id}&amp;when=done`);
 		// Bought parts have no recipe.
 		const bolt = await insertPart("BOLT", "buy");
@@ -276,12 +276,12 @@ describe("how a made part is made, on its page", () => {
 		await loadDemo();
 		const id = await insertPart("SPACER", "make");
 		await setRole("operator");
-		expect(await (await request(`/parts/${id}`, {}, NOT_ADMIN)).text()).not.toContain("Set up how it&#39;s made");
+		expect(await (await request(`/parts/${id}`, {}, NOT_ADMIN)).text()).not.toContain("Create assembly");
 		expect((await postForm(`/parts/${id}/recipe`, {}, NOT_ADMIN)).status).toBe(403);
 		const clipId = await partId("LAMP-CLIP");
 		const link = `href="/assemblies/${await assemblyId("LAMP-CLIP")}"`;
 		const clip = await (await request(`/parts/${clipId}`, {}, NOT_ADMIN)).text();
-		expect(clip).toContain("Record a build");
+		expect(clip).toContain("Record completed build");
 		// The recipe's name links to it; its Edit button is for those who may edit it.
 		expect(clip.split(link).length - 1).toBe(1);
 		expect((await (await request(`/parts/${clipId}`)).text()).split(link).length - 1).toBe(2);
@@ -292,7 +292,7 @@ describe("how a made part is made, on its page", () => {
 		// An archived made part: no set-up, and the route refuses.
 		const old = await insertPart("OLD-SPACER", "make");
 		await postForm(`/parts/${old}/archive`, {});
-		expect(await (await request(`/parts/${old}`)).text()).not.toContain("Set up how it&#39;s made");
+		expect(await (await request(`/parts/${old}`)).text()).not.toContain("Create assembly");
 		expect((await postForm(`/parts/${old}/recipe`, {})).headers.get("Location")).toBe(`/parts/${old}`);
 		expect(await rows("SELECT id FROM assemblies WHERE parent_part_id = ?", old)).toEqual([]);
 		// A part whose only recipe is archived shows it, with what to do, instead of offering a new one.
@@ -304,8 +304,8 @@ describe("how a made part is made, on its page", () => {
 		await postForm(`/assemblies/${assembly}/archive`, {});
 		expect(await one("SELECT status FROM assemblies WHERE id = ?", assembly)).toEqual({ status: "archived" });
 		const page = await (await request(`/parts/${id}`)).text();
-		expect(page).toContain("Archived: open it to activate it again");
-		expect(page).not.toContain("Set up how it&#39;s made");
+		expect(page).toContain("Archived revision: reactivate it");
+		expect(page).not.toContain("Create assembly");
 		expect((await postForm(`/parts/${id}/recipe`, {})).headers.get("Location")).toBe(`/assemblies/${assembly}`);
 	});
 });
@@ -313,7 +313,7 @@ describe("how a made part is made, on its page", () => {
 describe("machines set up in one step", () => {
 	it("creates a machine type with the machines the workshop owns, in one change set", async () => {
 		const form = await (await request("/machines/types/new")).text();
-		expect(form).toContain("How many do you own?");
+		expect(form).toContain("Number of machines");
 		expect(form).toContain('name="owned"');
 		// One printer: the machine takes the type's name.
 		const one_ = await postForm("/machines/types", {

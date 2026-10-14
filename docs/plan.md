@@ -177,13 +177,14 @@ Batch recipes, machines and machine time, and one-step runs, starting with 3D pr
 
 Making something in-house as one flow, from the part outwards (D153–D157); no schema change.
 
-- [x] Units per run and machine time edited with the lines, on active assemblies too (D153)
-- [x] How it's made on a made part's page: recipe, machine time, cost per unit, record or plan a build; set up in one
-      click (D154)
-- [x] One new build form: already made (recorded now) or to make (planned) (D155)
-- [x] To make on the Builds page: made parts the open builds need, across levels, in whole runs, with machine time;
-      planned builds count as stock to come in the shortages; machine hours in whole runs (D156)
+- [x] Batch size and machine time edited with the lines, on active assemblies too (D153)
+- [x] Manufacturing card on a made part's page: assembly, machine time, cost per unit, record or plan a build; create
+      the assembly in one click (D154)
+- [x] One new build form with a status: completed (recorded now) or planned (D155)
+- [x] Production requirements on the Builds page: made parts the open builds need, across levels, in whole batches,
+      with machine time; planned builds count as stock to come in the shortages; machine hours in whole batches (D156)
 - [x] A machine type and the machines owned in one form (D157)
+- [x] Manufacturing vocabulary on the pages (D158)
 
 ## After v1 (ideas, not planned)
 
@@ -192,7 +193,7 @@ Making something in-house as one flow, from the part outwards (D153–D157); no 
 - Reservations of stock for planned builds; build scheduling.
 - PDF purchase orders.
 - Product images in the assembly diagram and on build pick lists; a purge of images orphaned by a restore.
-- A "plan all" button on To make (D156 lists what to make; one build per row today, as build numbers are assigned
+- A "plan all" button on the production requirements (D156 lists what to make; one build per row today, as build numbers are assigned
   one at a time).
 - Where-used diagram (the assembly diagram reversed) on the part page; SVG/PDF export of diagrams.
 - Choose one valuation method once the accountant decides (D91), and drop the deprecated `parts` supplier columns

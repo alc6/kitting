@@ -906,7 +906,7 @@ change (no migration).
   ("Makes [24] pcs per run · machine type · time per run"), under the lines' rule: draft or active, never archived
   (`productionError`, and the statement repeats `status <> 'archived'`). `assemblies.csv` follows (its
   `assembly_production_active` refusal is gone). MCP keeps going through drafts for everything (D128):
-  `set_assembly_production` is unchanged. In English the pages say *run* for a batch (French already said *lot*).
+  `set_assembly_production` is unchanged. (The labels quoted in D153–D157 were replaced by D158.)
 - **D154. A made part's page shows how it is made.** A make or kit part opens with How it's made: the recipe builds
   use (`partRecipe()`: its default active assembly, else its newest draft), what one run uses, the machine time, the
   cost per unit (with `costs.view` only), the other active variants, and the actions that follow: record a build, plan
@@ -946,3 +946,11 @@ change (no migration).
   numbered (`Laser 1`, `Laser 2`…); a name another machine has, or one longer than a machine name may be, refuses the
   form. Undo removes the type and its machines
   together. Editing a type does not ask again: machines are added from the Machines page.
+- **D158. Manufacturing vocabulary on the pages.** The first labels of D153–D157 were plain phrases ("How it's made",
+  "To make", "Already made: record it now", "Makes 24 per run", "How many do you own?"); the user found them childish.
+  The pages now use the trade's words, in both languages: the part card is **Manufacturing** / *Fabrication*, with
+  **Create assembly** / *Créer l'assemblage* when there is none; a recipe has a **Batch size** / *Taille de lot* and a
+  **Machine time per batch** (English goes back to *batch*; *run* is gone); the build form asks for a **Status**,
+  **Completed** or **Planned** / *Terminée* ou *Planifiée*; the Builds page lists **Production requirements** /
+  *Besoins de fabrication* (Required, Available, Required by; Plan build, Record), next to **Purchase requirements**;
+  a machine type asks for the **Number of machines**. Keys and behaviour are unchanged.

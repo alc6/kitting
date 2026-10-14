@@ -243,7 +243,7 @@ describe("machines pages", () => {
 		const post = (form: Record<string, string>) =>
 			postForm(`/assemblies/${draft}/production`, { batch_qty: "24", ...form });
 		expect(await (await post({ machine_type_id: fdm, machine_time: "" })).text()).toContain(
-			"Enter the machine time per run.",
+			"Enter the machine time per batch.",
 		);
 		expect(await (await post({ machine_type_id: "", machine_time: "3:00" })).text()).toContain(
 			"Choose the machine type this time is spent on.",
