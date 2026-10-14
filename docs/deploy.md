@@ -142,7 +142,7 @@ In your own repository, write the module with a tag from the
 
 ```hcl
 module "kitting" {
-  source = "github.com/alc6/kitting//infra/terraform?ref=v0.2.0"
+  source = "github.com/alc6/kitting//infra/terraform?ref=v0.3.0"
 
   account_id            = var.account_id
   hostname              = "kitting.yourco.example"
@@ -168,7 +168,7 @@ backend and a `terraform.tfvars.example`. `prevent_destroy` protects the databas
 terraform init && terraform apply
 terraform output -json deploy_env > settings.json
 
-version=0.2.0 # the tag you pinned, without the v
+version=0.3.0 # the tag you pinned, without the v
 gh release download "v$version" --repo alc6/kitting --pattern "kitting-$version.tar.gz*"
 sha256sum -c "kitting-$version.tar.gz.sha256"   # shasum -a 256 -c on macOS
 tar -xzf "kitting-$version.tar.gz"
@@ -216,7 +216,7 @@ concurrency:
 
 env:
   # The Kitting release to deploy. Keep it equal to the ref=v... of the module in main.tf; a step checks it.
-  KITTING_VERSION: "0.2.0"
+  KITTING_VERSION: "0.3.0"
   KITTING_REPO: alc6/kitting
 
 jobs:
