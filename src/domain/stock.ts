@@ -26,7 +26,15 @@ export type NewMove = {
 /** Values for inserting a move; every caller goes through here so audit fields are never missed. */
 export function moveValues(
 	m: NewMove,
-	ctx: { reason: MoveReason; refType: string | null; refId?: number | null; note: string; user: string; now: string },
+	ctx: {
+		reason: MoveReason;
+		refType: string | null;
+		/** The referenced record; SQL for one created earlier in the same batch (a recorded build, D152). */
+		refId?: number | SQL | null;
+		note: string;
+		user: string;
+		now: string;
+	},
 ) {
 	return {
 		partId: m.partId,

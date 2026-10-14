@@ -352,12 +352,12 @@ export function buildPickList(
 /**
  * The completion batch: consume moves, the output move (with the frozen as-built unit cost),
  * the as-built lines, then the status change. The unique `build_output` index makes a second
- * completion of the same build abort the whole batch.
+ * completion of the same build abort the whole batch. `build.id` is SQL for a build planned in the same batch.
  */
 export function completionStatements(
 	db: Db,
 	graph: AssemblyGraph,
-	build: { id: number; partId: number; qtyMilli: number; serial: string | null; number: string },
+	build: { id: number | SQL; partId: number; qtyMilli: number; serial: string | null; number: string },
 	pick: PickList,
 	user: string,
 	now: string,
@@ -457,6 +457,49 @@ export function completionStatements(
 		.set({ status: "done", doneAt: now, updatedAt: now, updatedBy: user })
 		.where(and(eq(builds.id, build.id), inArray(builds.status, OPEN_STATUSES)));
 	return [...consume, output, ...lines, done];
+}
+
+/**
+ * Why a finished build cannot be recorded in one step (D152): what blocks its completion, and the serial-tracked
+ * components, whose serials only the build page asks for. Empty when it can be recorded.
+ */
+export function recordProblems(pick: PickList): { key: string; vars?: Record<string, string> }[] {
+	const problems = [...pick.problems];
+	const tracked = pick.explosion.requirements.filter((r) => r.part.trackSerial && serialCount(r) > 0);
+	if (tracked.length)
+		problems.push({ key: "record_needs_serials", vars: { refs: tracked.map((r) => r.part.ref).join(", ") } });
+	return problems;
+}
+
+/**
+ * A finished build recorded in one change set (D152): planned for today and completed now, with the pick list's
+ * default choices (sub-assemblies from stock when there are enough). The completion finds the build by its number.
+ */
+export function recordStatements(
+	db: Db,
+	graph: AssemblyGraph,
+	b: { number: string; partId: number; assemblyId: number; qtyMilli: number; serial: string | null; notes: string },
+	pick: PickList,
+	user: string,
+	now: string,
+): Statement[] {
+	return [
+		createBuildStatement(db, { ...b, plannedFor: now.slice(0, 10) }, user, now),
+		...completionStatements(
+			db,
+			graph,
+			{
+				id: sql`(SELECT id FROM builds WHERE number = ${b.number})`,
+				partId: b.partId,
+				qtyMilli: b.qtyMilli,
+				serial: b.serial,
+				number: b.number,
+			},
+			pick,
+			user,
+			now,
+		),
+	];
 }
 
 /** Make nodes of an explosion (where the user can choose "use stock" or "build now"). */

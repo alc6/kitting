@@ -22,7 +22,7 @@ listed user, but costs need planner (or the cost option set on the Users page).
 - **Every write result** carries `change_set_id`, `revertible`, an `undo` sentence and, only when it can be undone,
   `history_path` and `history_url` (the page where the user clicks Undo). A call that changes nothing records
   nothing (`change_set_id: null`, `undo` says so). You cannot undo anything yourself.
-- **Ledger writes** (`adjust_stock`, `count_stock`, `complete_build`, `receive_po`) return `revertible: false` and no
+- **Ledger writes** (`adjust_stock`, `count_stock`, `complete_build`, `record_build`, `receive_po`) return `revertible: false` and no
   link: they are corrected with reverse moves (`adjust_stock`), never undone.
 - **Refusals.** A rejected write says `Refused, nothing was changed.` followed by one `field: message` per problem
   (every problem at once; nothing is written). Lookups fail with `No part with reference "X". Use search_parts to
@@ -282,6 +282,13 @@ Records a planned or in-progress build as done: components are consumed, the pro
 - **Inputs:** `number`, `serials[]` of `ref` and `serials` (one per unit of each serial-tracked component; the count is `serials_to_scan` in `get_build`), `sub_assemblies[]` of `ref` (every place the part appears) or `path` (one place, from `get_build`) and `mode` (stock or build). Without a choice, a sub-assembly comes from stock when there is enough, else it is built now.
 - **Returns:** the write envelope, `build` (done), `as_built[]`.
 - **Example:** `complete_build({ "number": "B-0001", "serials": [{ "ref": "LED-5W-WW", "serials": ["WW-24-0001"] }, { "ref": "DRV-12V", "serials": ["DRV-7A-101"] }], "sub_assemblies": [{ "ref": "ARM-ASSY", "mode": "stock" }] })`
+
+### `record_build`
+Records a build that is already done (a print run recorded after the fact) in one step: planned and completed now, in one change set. Same checks as `plan_build`; components are taken from stock, and sub-assemblies too when there are enough (the others are built now); machine time is recorded. Refused when a serial-tracked component needs serials: then `plan_build`, and `complete_build` with the serials. Cannot be undone.
+- **Scope:** `builds:write` · **Permission:** `builds.complete` (operator; recording also plans, `builds.plan`)
+- **Inputs:** `ref`, `qty` (units, default 1) or `batches`, `code` (variant), `serial` (serial-tracked product), `notes`.
+- **Returns:** the write envelope (`revertible: false`), `build` (`number`, `status` done, `part`, `qty`, `serial`, `assembly` with its `batch`, `done_at`), `as_built[]` (`ref`, `qty`, `serial`, `unit_cost`, `made_by_build`), `machine_time[]` (`type`, `minutes`).
+- **Example:** `record_build({ "ref": "LAMP-CLIP", "batches": 2 })`
 
 ### `cancel_build`
 Cancels a planned or in-progress build: nothing was consumed, and its serial becomes free. A done build cannot be cancelled.

@@ -48,7 +48,7 @@ the corresponding page.
 | `stock:read` | `stock_on_hand`, `list_moves` |
 | `stock:write` | `adjust_stock`, `count_stock` |
 | `builds:read` | `list_builds`, `get_build` |
-| `builds:write` | `plan_build`, `complete_build`, `cancel_build` |
+| `builds:write` | `plan_build`, `complete_build`, `record_build`, `cancel_build` |
 | `purchasing:read` | `get_shortages`, `list_purchase_orders`, `get_purchase_order` |
 | `purchasing:write` | `create_draft_pos`, `update_draft_po`, `mark_po_sent`, `receive_po`, `cancel_po`, `close_po` |
 

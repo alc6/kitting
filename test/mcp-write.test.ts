@@ -207,6 +207,13 @@ const CASES: WriteCase[] = [
 	{ tool: "complete_build", scope: "builds:write", min: "operator", args: (s) => ({ number: s.build }), ledger: true },
 	{ tool: "cancel_build", scope: "builds:write", min: "operator", args: (s) => ({ number: s.build }) },
 	{
+		tool: "record_build",
+		scope: "builds:write",
+		min: "operator",
+		args: () => ({ ref: "LAMP-CLIP", batches: "1" }),
+		ledger: true,
+	},
+	{
 		tool: "create_draft_pos",
 		scope: "purchasing:write",
 		min: "planner",
@@ -875,6 +882,32 @@ describe("build tools", () => {
 		expect(twice.text).toContain("This build is already done or cancelled.");
 		const cancel = await callTool(token, "cancel_build", { number });
 		expect(cancel.text).toContain("This build is already done or cancelled.");
+	});
+
+	it("records a finished build in one step, refusing what needs the build page", async () => {
+		await loadDemo();
+		const token = await connect(["builds:write"]);
+		const run = await write(token, "record_build", { ref: "lamp-clip", batches: 2, notes: "Friday plates" });
+		expect(run.data.build).toMatchObject({
+			number: "B-0001",
+			status: "done",
+			part: "LAMP-CLIP",
+			qty: "48",
+			assembly: { code: "std", batch: "24" },
+		});
+		expect(run.data.as_built).toEqual([expect.objectContaining({ ref: "PLA-BLACK", qty: "0.52" })]);
+		expect(run.data.machine_time).toEqual([{ type: "FDM printer", minutes: "380" }]);
+		expect(run.data.revertible).toBe(false);
+		expect(run.text).toContain("reverse movements");
+		expect(await one("SELECT summary FROM change_sets ORDER BY id DESC LIMIT 1")).toEqual({
+			summary: "Record build B-0001 of LAMP-CLIP",
+		});
+		const tracked = await callTool(token, "record_build", { ref: "LAMP-DESK", serial: "L-0900" });
+		expect(tracked.text).toContain("Refused, nothing was changed.");
+		expect(tracked.text).toContain("need one serial number per unit");
+		const both = await callTool(token, "record_build", { ref: "LAMP-CLIP", qty: 1, batches: 1 });
+		expect(both.text).toContain("Give qty or batches, not both.");
+		expect(await rows("SELECT number FROM builds")).toEqual([{ number: "B-0001" }]);
 	});
 
 	it("cancels open builds, freeing their serial", async () => {

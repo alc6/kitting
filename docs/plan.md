@@ -155,6 +155,23 @@ Install and upgrade without copying the code (D141).
 - [x] Docs: "Install with Terraform and a release"
 - [x] Deploy to Cloudflare button: investigated and declined (D141)
 
+## M14: In-house production ✅
+
+Batch recipes, machines and machine time, and one-step runs, starting with 3D printing (D145–D152).
+
+- [x] Batch recipes: an assembly makes N units (migration 0006, default 1), lines are for the whole batch; explosion,
+      pick lists, completion and shortages take line × units / batch, rounded up per line; costs per unit
+- [x] Builds of any quantity, entered in units or batches; batch on drafts only, copied into revisions and variants
+- [x] Machine types with an hourly rate (its own append-only history) and the machines owned, with a status; Machines
+      page, `machines.edit` (planner), rates hidden without `costs.view` (migration 0007, new tables only)
+- [x] Machine time per batch on a recipe, in the cost roll-up, as-built record, valuation (dated), margins and margin
+      history
+- [x] Machine hours of the open builds per machine type, with the machines in service (shortages and Machines pages)
+- [x] Record a finished build in one step (one change set)
+- [x] CSV: `machine_types.csv`, `machines.csv`, `batch_qty`, `machine` and `machine_minutes` in `assemblies.csv`
+- [x] MCP: `list_machines`, `set_assembly_production`, `record_build`, batches and machine time in the read tools;
+      skill, examples and an eval; a 3D-printed cable clip in `examples/full`
+
 ## After v1 (ideas, not planned)
 
 - MCP: Client ID Metadata Documents (needs the `global_fetch_strictly_public` compatibility flag, D123).
@@ -168,3 +185,9 @@ Install and upgrade without copying the code (D141).
   in a planned table rebuild.
 - Customer-specific prices, quotes (out of scope for v1).
 - History: prune or archive old change sets; undo a whole import from the import page.
+- In-house production, beyond M14: mixed plates and co-products (several parts from one run); scrap and yield
+  tracking; substitute materials (any colour of filament); print file (3MF) attachments on a recipe; counting filament
+  by weighing spools; printer scheduling.
+- Machines, beyond M14: several machine steps per recipe (a routing), today one sub-assembly per step; recording
+  which machine ran a build (usage per machine); creating and editing machines over MCP; past machine rates entered
+  as history (D142 for rates).

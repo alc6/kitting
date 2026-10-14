@@ -44,7 +44,7 @@ const TOOLS_BY_SCOPE: Record<string, string[]> = {
 	"stock:read": ["list_moves", "stock_on_hand"],
 	"stock:write": ["adjust_stock", "count_stock"],
 	"builds:read": ["get_build", "list_builds"],
-	"builds:write": ["cancel_build", "complete_build", "plan_build"],
+	"builds:write": ["cancel_build", "complete_build", "plan_build", "record_build"],
 	"purchasing:read": ["get_purchase_order", "get_shortages", "list_purchase_orders"],
 	"purchasing:write": ["cancel_po", "close_po", "create_draft_pos", "mark_po_sent", "receive_po", "update_draft_po"],
 };

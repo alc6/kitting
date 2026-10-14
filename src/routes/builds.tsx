@@ -24,6 +24,8 @@ import {
 	nextBuildNumber,
 	OPEN_STATUSES,
 	type PickList,
+	recordProblems,
+	recordStatements,
 	serialCount,
 	serialField,
 	startBuildStatement,
@@ -47,7 +49,7 @@ import {
 	mulDivRound,
 } from "../lib/units";
 import { type FieldErrors, validate } from "../lib/validation";
-import { requirePermission } from "../middleware/roles";
+import { forbidden, requirePermission } from "../middleware/roles";
 import type { AppEnv } from "../types";
 import { useApp } from "../views/context";
 import { Icon, icons } from "../views/icons";
@@ -174,7 +176,14 @@ buildRoutes.get("/", async (c) => {
 			<PageHeader
 				title={t.builds.title}
 				subtitle={t.builds.intro}
-				actions={canBuild ? <LinkButton href="/builds/new" label={t.builds.new} icon={icons.plus} /> : undefined}
+				actions={
+					<>
+						{canBuild && can(c.var, "builds.complete") ? (
+							<LinkButton href="/builds/record" label={t.builds.record} icon={icons.check} variant="outline" />
+						) : null}
+						{canBuild ? <LinkButton href="/builds/new" label={t.builds.new} icon={icons.plus} /> : null}
+					</>
+				}
 			/>
 			<Flash ok={c.req.query("ok")} message={c.req.query("ok") === "cancelled" ? t.builds.cancelled : undefined} />
 			<SearchBar action="/builds" q={q}>
@@ -260,17 +269,20 @@ export function BuildQtyField(props: {
 	);
 }
 
+/** The new build form; `record` makes it the form of a finished build (D152): no planned date, done now. */
 function NewBuildForm(props: {
 	values: FormValues;
 	errors: FormErrors;
 	products: { id: number; ref: string; name: string }[];
 	product: Part | undefined;
 	assemblyOptions: AssemblyOption[];
+	record?: boolean;
 }) {
 	const { t } = useApp();
 	const p = { values: props.values, errors: props.errors };
+	const base = props.record ? "/builds/record" : "/builds/new";
 	const reload = {
-		"hx-get": "/builds/new",
+		"hx-get": base,
 		"hx-include": "closest form",
 		"hx-target": "#build-form",
 		"hx-select": "#build-form",
@@ -281,7 +293,12 @@ function NewBuildForm(props: {
 	return (
 		<Card class="max-w-3xl">
 			<CardContent>
-				<form method="post" action="/builds" class="flex flex-col gap-6" id="build-form">
+				<form
+					method="post"
+					action={props.record ? "/builds/record" : "/builds"}
+					class="flex flex-col gap-6"
+					id="build-form"
+				>
 					{Object.keys(props.errors).length > 0 ? (
 						<Alert variant="destructive" class="mb-0">
 							{t.common.fixErrors}
@@ -314,7 +331,7 @@ function NewBuildForm(props: {
 										</option>
 									))}
 								</select>
-								<Button variant="outline" formmethod="get" formaction="/builds/new">
+								<Button variant="outline" formmethod="get" formaction={base}>
 									{t.builds.choosePart}
 								</Button>
 							</div>
@@ -350,7 +367,9 @@ function NewBuildForm(props: {
 											required={props.product.trackSerial}
 											{...p}
 										/>
-										<TextField name="planned_for" label={t.builds.plannedFor} type="date" {...p} />
+										{props.record ? null : (
+											<TextField name="planned_for" label={t.builds.plannedFor} type="date" {...p} />
+										)}
 									</div>
 									<TextArea name="notes" label={t.common.notes} {...p} />
 								</>
@@ -359,7 +378,11 @@ function NewBuildForm(props: {
 					</FieldGroup>
 					{ready ? (
 						<div class="flex flex-wrap items-center gap-2">
-							<Button icon={icons.plus}>{t.common.create}</Button>
+							{props.record ? (
+								<Button icon={icons.check}>{t.builds.recordSubmit}</Button>
+							) : (
+								<Button icon={icons.plus}>{t.common.create}</Button>
+							)}
 							<Button href="/builds" variant="outline">
 								{t.common.cancel}
 							</Button>
@@ -385,18 +408,7 @@ buildRoutes.get("/new", requirePermission("builds.plan"), async (c) => {
 	const q = c.req.query();
 	const partId = /^\d+$/.test(q.part_id ?? q.part ?? "") ? Number(q.part_id ?? q.part) : null;
 	const data = await newBuildData(c, partId);
-	const std = data.assemblyOptions.find((b) => b.code === "std") ?? data.assemblyOptions[0];
-	const values: FormValues = {
-		qty: "1",
-		...q,
-		part_id: partId ? String(partId) : "",
-		assembly_id:
-			q.assembly_id && data.assemblyOptions.some((b) => String(b.id) === q.assembly_id)
-				? q.assembly_id
-				: std
-					? String(std.id)
-					: "",
-	};
+	const values = newBuildValues(q, partId, data.assemblyOptions);
 	return page(
 		c,
 		t.builds.new,
@@ -451,6 +463,118 @@ buildRoutes.post("/", requirePermission("builds.plan"), async (c) => {
 				),
 			]);
 			return redirectOk(c, `/builds/${results[0][0]?.id}`, "created");
+		} catch (err) {
+			if (attempt > 0 || !isConstraintError(err, "UNIQUE")) throw err;
+		}
+	}
+});
+
+// ---------------------------------------------------------------------------
+// Record a finished build in one step (D152)
+
+/** The form's first values: quantity 1 and the std variant (else the first active one), unless the query says. */
+function newBuildValues(q: Record<string, string>, partId: number | null, options: AssemblyOption[]): FormValues {
+	const std = options.find((b) => b.code === "std") ?? options[0];
+	return {
+		qty: "1",
+		...q,
+		part_id: partId ? String(partId) : "",
+		assembly_id:
+			q.assembly_id && options.some((b) => String(b.id) === q.assembly_id) ? q.assembly_id : std ? String(std.id) : "",
+	};
+}
+
+function RecordPage(props: {
+	values: FormValues;
+	errors: FormErrors;
+	problems?: string[];
+	data: Awaited<ReturnType<typeof newBuildData>>;
+}) {
+	const { t } = useApp();
+	return (
+		<>
+			<PageHeader title={t.builds.record} subtitle={t.builds.recordIntro} />
+			{props.problems?.length ? (
+				<Alert variant="destructive" title={t.builds.recordRefused}>
+					<ul class="m-0 flex list-disc flex-col gap-1 pl-4">
+						{props.problems.map((p) => (
+							<li>{p}</li>
+						))}
+					</ul>
+				</Alert>
+			) : null}
+			<NewBuildForm values={props.values} errors={props.errors} {...props.data} record />
+		</>
+	);
+}
+
+buildRoutes.get("/record", requirePermission("builds.complete"), async (c) => {
+	const q = c.req.query();
+	const partId = /^\d+$/.test(q.part_id ?? q.part ?? "") ? Number(q.part_id ?? q.part) : null;
+	const data = await newBuildData(c, partId);
+	return page(
+		c,
+		c.var.t.builds.record,
+		<RecordPage values={newBuildValues(q, partId, data.assemblyOptions)} errors={{}} data={data} />,
+	);
+});
+
+// Plans and completes in one change set: it needs both rights (both operator today).
+buildRoutes.post("/record", requirePermission("builds.complete"), async (c) => {
+	if (!can(c.var, "builds.plan")) return forbidden(c);
+	const t = c.var.t;
+	const db = c.var.db;
+	const body = await c.req.parseBody();
+	const v = validate(buildInput, { ...body, planned_for: "" });
+	const errors: FieldErrors = v.ok ? {} : { ...v.errors };
+	const data = await newBuildData(c, v.ok ? v.data.part_id : null);
+	const d = v.ok ? { ...v.data, qty: unitsToBuild(v.data, data.assemblyOptions) } : undefined;
+	if (d) Object.assign(errors, await buildPlanErrors(db, d, data.product, data.assemblyOptions));
+	const refuse = (problems: string[] = []) =>
+		page(
+			c,
+			t.builds.record,
+			<RecordPage values={body as FormValues} errors={translateErrors(c, errors)} problems={problems} data={data} />,
+			422,
+		);
+	if (!d || Object.keys(errors).length > 0 || !data.product) return refuse();
+	const product = data.product;
+	const assemblyId = d.assembly_id as number;
+	const [graph, onHand] = await Promise.all([loadGraph(db), onHandAt(db)]);
+	const pick = buildPickList(
+		graph,
+		onHand,
+		{ assemblyId, qtyMilli: d.qty, serial: d.serial || null },
+		product,
+		{},
+		true,
+	);
+	const problems = recordProblems(pick);
+	if (problems.length) return refuse(problems.map((p) => errorText(t, p.key, p.vars)));
+	// Numbers are sequential; retry once if another user took the same number meanwhile.
+	for (let attempt = 0; ; attempt++) {
+		try {
+			const number = await nextBuildNumber(db);
+			const { results } = await saveChanges(
+				c,
+				fmt(t.history.summaries.buildRecord, { number, ref: product.ref }),
+				recordStatements(
+					db,
+					graph,
+					{
+						number,
+						partId: product.id,
+						assemblyId,
+						qtyMilli: d.qty,
+						serial: d.serial || null,
+						notes: d.notes,
+					},
+					pick,
+					c.var.user,
+					nowIso(),
+				),
+			);
+			return redirectOk(c, `/builds/${(results[0] as { id: number }[])[0]?.id}`, "recorded");
 		} catch (err) {
 			if (attempt > 0 || !isConstraintError(err, "UNIQUE")) throw err;
 		}
@@ -915,13 +1039,15 @@ async function renderBuild(
 	const flash =
 		ok === "completed"
 			? t.builds.completed
-			: ok === "started"
-				? t.builds.started
-				: ok === "cancelled"
-					? t.builds.cancelled
-					: ok === "created"
-						? t.builds.created
-						: undefined;
+			: ok === "recorded"
+				? t.builds.recorded
+				: ok === "started"
+					? t.builds.started
+					: ok === "cancelled"
+						? t.builds.cancelled
+						: ok === "created"
+							? t.builds.created
+							: undefined;
 	const open = OPEN_STATUSES.includes(build.status);
 	const batch = data.assembly.batchQtyMilli;
 	const qtyStat = (

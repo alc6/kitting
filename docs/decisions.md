@@ -872,3 +872,21 @@ Short log of choices made where the brief left room. Newest at the bottom of eac
   `machine_minutes` (whole minutes, an integer so that Excel never turns `3:10` into a time), one value per assembly like
   `batch_qty`, with the same rule for active assemblies. The exploded list's CSV lists machine time as rows of kind
   `machine` in hours.
+- **D152. A finished build is recorded in one step: planned and completed in one change set.** A print run is always
+  recorded after the fact, and planning then completing it was two steps for nothing. "Record a finished build"
+  (`/builds/record`, a button on Builds) takes the new build form without a planned date: part, variant, a quantity
+  in units or batches, a serial for a serial-tracked product, notes. The handler checks it as a new build
+  (`buildPlanErrors`), builds the pick list from current stock with the default choices (sub-assemblies from stock
+  when there are enough, the rest built now) and runs `recordStatements()`: `createBuildStatement` (planned for today)
+  then `completionStatements`, which now accepts the build id as SQL (`SELECT id FROM builds WHERE number = ?`) for a
+  build created earlier in the same batch. One change set, "Record build B-0042 of LAMP-CLIP", non-revertible like any
+  completion (its ledger rows). It is refused, writing nothing, when the pick list has a problem (a sub-assembly to
+  build without an active assembly) or a serial-tracked component needs serials, which only the build page asks for
+  (`recordProblems`; plan, then complete, as before). Like a completion (D61), it may take stock below zero: the run
+  happened, and the stock list flags the part. The route declares `builds.complete` and also checks
+  `builds.plan` (both operator today), rather than a third action that would only be their union. Over MCP,
+  `record_build` (`builds:write`, `builds.complete`, a ledger write) takes `plan_build`'s inputs without a date and
+  returns the as-built record and the machine time; it shares `plan_build`'s checks (`checkBuildToPlan`). The MCP
+  surface of this milestone (D145–D152) is therefore: `list_machines` (read), `set_assembly_production`,
+  `record_build`, `batches` on `plan_build`, `batch`, `parent_batch` and `machine_time` in the read tools; creating or
+  editing machines over MCP is left for later (docs/plan.md).

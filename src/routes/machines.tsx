@@ -436,6 +436,7 @@ async function renderType(
 										<TableHead>{t.machines.validFrom}</TableHead>
 										<TableHead class="text-right">{t.machines.hourlyRate}</TableHead>
 										<TableHead>{t.machines.source}</TableHead>
+										<TableHead>{t.parts.by}</TableHead>
 										<TableHead>{t.common.notes}</TableHead>
 									</TableRow>
 								</TableHeader>
@@ -447,9 +448,8 @@ async function renderType(
 												<Money cents={r.rateCents} />
 											</TableCell>
 											<TableCell>{t.parts.priceSources[r.source]}</TableCell>
-											<TableCell class="text-muted-foreground">
-												{[r.createdBy, r.note].filter(Boolean).join(" · ")}
-											</TableCell>
+											<TableCell class="text-muted-foreground">{r.createdBy}</TableCell>
+											<TableCell class="text-muted-foreground">{r.note}</TableCell>
 										</TableRow>
 									))}
 								</TableBody>

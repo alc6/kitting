@@ -60,7 +60,8 @@ worked conversations in [references/examples.md](references/examples.md).
    receiving and completing are separate steps, each confirmed.
 4. **Report what happened.** After a write, say what changed, quote the change number, and give the undo link
    (`history_url`) when `revertible` is true. For ledger writes (`adjust_stock`, `count_stock`, `complete_build`,
-   `receive_po`) there is no link: say they cannot be undone and are corrected with a reverse adjustment.
+   `record_build`, `receive_po`) there is no link: say they cannot be undone and are corrected with a reverse
+   adjustment.
    You cannot undo anything yourself.
 5. **Archive, never delete.** There is no delete over MCP. Use `archive_part` / `archive_assembly` (reversible).
 6. **A refusal is information.** `Refused, nothing was changed...` lists every problem; fix them and ask again,
@@ -99,6 +100,13 @@ worked conversations in [references/examples.md](references/examples.md).
 4. Confirm the summary: product, quantity, serials, sub-assembly choices. Then `complete_build`. This cannot be
    undone. Report the as-built record.
 5. A mistaken plan before completion: `cancel_build` (frees the serial).
+
+### Record a run that is already done
+When the user reports production after the fact ("we printed 2 plates of clips this morning"), use `record_build`:
+it plans and completes in one step, now. Check the part and its batch first (`get_assembly`), confirm product,
+quantity (`batches` or `qty`) and that it cannot be undone, then call it and report the as-built record and the
+machine time. It is refused when serial-tracked components need serials: then `plan_build` and `complete_build`
+with the serials.
 
 ### Inventory count
 1. `stock_on_hand` (filter or `query`) for the parts to count; the user gives the counted quantities.

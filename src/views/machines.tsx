@@ -100,7 +100,7 @@ export function MachineLoadCard(props: { rows: MachineLoad[] }) {
 	const { t } = useApp();
 	return (
 		<TableCard id="machine-load" title={t.machines.needed}>
-			<p class="px-6 text-sm text-muted-foreground">{t.machines.neededIntro}</p>
+			<p class="px-4 pt-3 text-sm text-muted-foreground">{t.machines.neededIntro}</p>
 			<Table>
 				<TableHeader>
 					<TableRow>
