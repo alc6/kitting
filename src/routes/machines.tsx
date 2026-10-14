@@ -9,6 +9,7 @@ import {
 	getMachineType,
 	listMachines,
 	listMachineTypes,
+	MACHINE_NAME_MAX,
 	MAX_OWNED,
 	machineErrors,
 	machineInput,
@@ -320,7 +321,9 @@ machineRoutes.post("/types", requirePermission("machines.edit"), async (c) => {
 	if (v.ok && (await machineTypeNameTaken(db, v.data.name))) errors = { ...errors, name: "duplicate_name" };
 	const owned = o.ok ? o.data.owned : 0;
 	if (owned > MAX_OWNED) errors = { ...errors, owned: "too_many_machines" };
-	const names = v.ok ? ownedMachineNames(v.data.name, Math.min(owned, MAX_OWNED)) : [];
+	const names = v.ok && owned <= MAX_OWNED ? ownedMachineNames(v.data.name, owned) : [];
+	// "<type> 12" must still fit a machine's name.
+	if (names.some((n) => n.length > MACHINE_NAME_MAX)) errors = { ...errors, name: "too_long" };
 	for (const name of names)
 		if (await machineNameTaken(db, name)) {
 			errors = { ...errors, owned: "machine_names_taken" };

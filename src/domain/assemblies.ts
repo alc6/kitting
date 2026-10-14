@@ -596,7 +596,7 @@ export function isValidCode(code: string): boolean {
 
 /**
  * How a made part is made, as its page shows it (D154): the assembly builds use (its default active one, else its newest
- * draft) with its lines resolved, its machine step, and its cost per unit; the other active variants are listed by name.
+ * draft, else its newest archived one) with its lines resolved, its machine step, and its cost per unit; the other active variants are listed by name.
  */
 export type PartRecipe = {
 	assembly: GraphAssembly;
@@ -606,13 +606,10 @@ export type PartRecipe = {
 	otherVariants: { id: number; code: string; revision: string }[];
 };
 
-/** The assembly shown as a part's recipe: its default active one, else its newest draft (D154). */
+/** The assembly shown as a part's recipe: its default active one, else its newest draft, else its newest (D154). */
 export function partRecipe(graph: AssemblyGraph, calc: CostCalculator, partId: number): PartRecipe | null {
-	const own = [...graph.assemblies.values()].filter((b) => b.parentPartId === partId);
-	const shown =
-		defaultAssembly(graph, partId) ??
-		own.filter((b) => b.status === "draft").sort((a, b) => b.id - a.id)[0] ??
-		undefined;
+	const own = [...graph.assemblies.values()].filter((b) => b.parentPartId === partId).sort((a, b) => b.id - a.id);
+	const shown = defaultAssembly(graph, partId) ?? own.find((b) => b.status === "draft") ?? own[0];
 	if (!shown) return null;
 	const lines = shown.lines.flatMap((l) => {
 		const part = graph.parts.get(l.componentPartId);

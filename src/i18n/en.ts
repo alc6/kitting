@@ -158,6 +158,8 @@ export const en = {
 		build_not_open: "This build is already done or cancelled.",
 		missing_assembly_build: "{ref} must be built but has no active assembly.",
 		record_needs_serials: "{refs} need one serial number per unit: plan this build, then complete it from its page.",
+		record_with_date:
+			"You entered a date: choose To make to plan the build for it, or clear the date to record it as made today.",
 		serial_required: "Serial required.",
 		serial_duplicate: "Same serial entered twice.",
 		po_not_draft: "Only draft POs can be changed.",
@@ -312,6 +314,7 @@ export const en = {
 		noRecipe: "Not set up yet: list what one run uses (materials, components) and its machine time.",
 		setUpRecipe: "Set up how it's made",
 		recipeDraft: "Draft: activate it from its page to build with it.",
+		recipeArchived: "Archived: open it to activate it again or to start a new revision.",
 		usesPerRun: "Uses per run",
 		perUnit: "per unit",
 		otherVariants: "Other variants:",

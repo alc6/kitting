@@ -4,7 +4,7 @@ import { Hono } from "hono";
 import type { Child } from "hono/jsx";
 import { BUILD_STATUSES, type BuildStatus, type Part, parts, stockMoves } from "../db/schema";
 import { loadGraph } from "../domain/assemblies";
-import { CostCalculator, centsOf, type ExplodedNode } from "../domain/assembly-graph";
+import { AssemblyCycleError, CostCalculator, centsOf, type ExplodedNode } from "../domain/assembly-graph";
 import {
 	buildableProduct,
 	buildEditInput,
@@ -291,7 +291,17 @@ buildRoutes.get("/", async (c) => {
 	const t = c.var.t;
 	const q = c.req.query("q") ?? "";
 	const status = c.req.query("status") ?? "open";
-	const [rows, shortages] = await Promise.all([listBuilds(c.var.db, { q, status }), computeShortages(c.var.db)]);
+	// Live search swaps the results only (hx-select): no need to plan for each keystroke. A cycle in the recipes
+	// (refused on save, but possible in old data) hides the plan rather than the page.
+	const plan =
+		c.req.header("HX-Request") === "true"
+			? null
+			: await computeShortages(c.var.db).catch((err) => {
+					if (err instanceof AssemblyCycleError) return null;
+					throw err;
+				});
+	const rows = await listBuilds(c.var.db, { q, status });
+	const shortages = plan ?? { toMake: [], machines: [], groups: [] };
 	const toBuy = shortages.groups.reduce((n, g) => n + g.lines.length, 0);
 	const canBuild = can(c.var, "builds.plan");
 	return page(
@@ -396,11 +406,12 @@ export function BuildQtyField(props: {
 /** When a new build happens (D155): already made, recorded now (D152), or to make, planned. */
 type When = "done" | "planned";
 
-/** The when of a submitted or requested form: done only for those who may complete builds. */
+/**
+ * The when of a requested form: planned unless the link asks to record (Record a build, Made), and only for those who
+ * may complete builds. A stock write that cannot be undone is never the default of a plain New build.
+ */
 function whenOf(value: unknown, canRecord: boolean): When {
-	if (value === "planned") return "planned";
-	if (value === "done") return canRecord ? "done" : "planned";
-	return canRecord ? "done" : "planned";
+	return value === "done" && canRecord ? "done" : "planned";
 }
 
 /**
@@ -505,7 +516,14 @@ function NewBuildForm(props: {
 												</span>
 											</label>
 											<label class="flex cursor-pointer items-start gap-3 rounded-lg border p-4 has-[:checked]:border-primary has-[:checked]:bg-primary/5">
-												<input type="radio" name="when" value="planned" checked={when === "planned"} class="mt-1" />
+												<input
+													type="radio"
+													id="when-planned"
+													name="when"
+													value="planned"
+													checked={when === "planned"}
+													class="mt-1"
+												/>
 												<span class="flex min-w-0 flex-1 flex-col gap-2">
 													<span class="font-medium">{t.builds.whenPlanned}</span>
 													<span class="text-sm text-muted-foreground">{t.builds.whenPlannedHint}</span>
@@ -514,6 +532,7 @@ function NewBuildForm(props: {
 														data-slot="input"
 														type="date"
 														name="planned_for"
+														data-checks="when-planned"
 														value={props.values.planned_for ?? ""}
 														aria-label={t.builds.plannedFor}
 														aria-invalid={props.errors.planned_for ? "true" : undefined}
@@ -622,6 +641,20 @@ buildRoutes.post("/", requirePermission("builds.plan"), async (c) => {
 	const body = await c.req.parseBody();
 	if (body.when === "done") {
 		if (!can(c.var, "builds.complete")) return forbidden(c);
+		// A date means a plan: never record (a write that cannot be undone) and drop it silently.
+		if (typeof body.planned_for === "string" && body.planned_for.trim()) {
+			const data = await newBuildData(c, /^\d+$/.test(String(body.part_id)) ? Number(body.part_id) : null);
+			return page(
+				c,
+				c.var.t.builds.new,
+				<NewBuildPage
+					values={body as FormValues}
+					errors={translateErrors(c, { planned_for: "record_with_date" })}
+					data={data}
+				/>,
+				422,
+			);
+		}
 		return recordBuild(c, body);
 	}
 	const t = c.var.t;

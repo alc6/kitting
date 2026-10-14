@@ -912,28 +912,37 @@ change (no migration).
   cost per unit (with `costs.view` only), the other active variants, and the actions that follow: record a build, plan
   one, open the diagram, edit. A part with none gets one button, "Set up how it's made" (`POST /parts/:id/recipe`,
   `assemblies.edit`), which creates the `std` `Rev1` draft and opens it, without the new assembly form; a second
-  submit opens the existing one instead of creating another. The variants and revisions table is shown only when there
+  submit opens the existing one instead of creating another (two at once: the unique index keeps one). A part whose
+  only recipe is archived shows it with what to do (reactivate or revise) rather than offering a new one; an archived
+  part offers neither set-up nor builds. The variants and revisions table is shown only when there
   is more than one assembly; the suppliers card of a make part only when it has an offer (subcontracting).
 - **D155. One form for a new build: already made, or to make.** New build and Record a finished build (D152) were two
   buttons and two pages for one question. `/builds/new` asks *when*: already made (recorded now, in one change set, as
-  D152; the default for those who may complete builds) or to make (planned, with its optional date). `POST /builds`
-  plans unless `when=done`, which also needs `builds.complete` (checked in the handler, as `/builds/record` did);
-  `/builds/record` redirects to the form (GET) and still records (POST). The part page's buttons and the To make list
-  link to it prefilled (`part`, `assembly_id`, `qty`, `when`).
+  D152) or to make (planned, with its optional date). Recording cannot be undone, so it is selected only by the links
+  that say so (Record a build, Made in To make, `when=done`); a plain New build plans. `POST /builds` plans unless
+  `when=done`, which also needs `builds.complete` (checked in the handler, as `/builds/record` did) and refuses a typed
+  date (`record_with_date`: a date means a plan, never silently dropped); focusing the date selects "to make"
+  (`data-checks`). `/builds/record` redirects to the form (GET) and still records (POST). The part page's buttons and
+  the To make list link to it prefilled (`part`, `assembly_id`, `qty`, `when`; one run for a part made in runs).
 - **D156. What to make, before what to buy; planned builds are stock to come.** `computeShortages` returns `toMake`:
-  every make node of the open builds' explosions that must be built (`toBuildMilli > 0`), per part, with its depth,
-  rounded up to whole runs of its default assembly (24 clips for 8 needed: printing a third of a plate is possible,
+  every make node of the open builds' explosions that must be built (`toBuildMilli > 0`), per part, with its level
+  (0 when made from bought parts and stock, else 1 + the level of the made parts it is built from: depth alone put a
+  part before its own sub-parts when it sat at several depths), rounded up to whole runs of its default assembly (24 clips for 8 needed: printing a third of a plate is possible,
   but nobody does), the machine time of those runs, and the builds that need it. The Builds page lists it first,
   deepest first (print the clips, then assemble the arms), each row linking to the build form prefilled to plan or to
   record it; the machine hours card (D150) moves there from Purchasing, which links to it. Two engine changes go
   with it: the output of the open builds counts as available before exploding (planning 5 arms on their own used to
-  leave the lamp builds building 5 more, so their tubes were counted twice), and the machine load counts the time of
-  what is to make in whole runs rather than the exact quantity inside the parent. The build page's pick list is
+  leave the lamp builds building 5 more, so their tubes were counted twice), after filling any deficit of that part;
+  what the rest of a rounded-up run uses is added to what to buy, so making the suggested quantity never takes stock
+  below zero; and the machine load counts the time of what is to make in whole runs rather than the exact quantity
+  inside the parent. The Builds page skips the plan for live-search requests (`HX-Request`), and a recipe cycle hides
+  it rather than the page. The build page's pick list is
   unchanged: it sees real stock only, never planned output. Over MCP, `get_shortages` returns the list first as
   `to_make` (quantities, runs, assembly, machine time, builds), and the skill's planning workflow offers to plan or
   record those before ordering.
 - **D157. A machine type and the machines owned, in one form.** Most workshops own one printer of a kind; creating
   the type, then the machine, was two forms for one thing. The new type form asks how many the workshop owns (1 by
   default, 0 to 20) and creates them in service in the same change set: one takes the type's name, several are
-  numbered (`Laser 1`, `Laser 2`…); a name another machine has refuses the form. Undo removes the type and its machines
+  numbered (`Laser 1`, `Laser 2`…); a name another machine has, or one longer than a machine name may be, refuses the
+  form. Undo removes the type and its machines
   together. Editing a type does not ask again: machines are added from the Machines page.

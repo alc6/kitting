@@ -157,6 +157,8 @@ export const fr: Dict = {
 		build_serial_taken: "Ce n° de série est déjà utilisé pour ce produit.",
 		build_not_open: "Cette fabrication est déjà terminée ou annulée.",
 		missing_assembly_build: "{ref} doit être fabriqué mais n’a pas d’assemblage actif.",
+		record_with_date:
+			"Vous avez saisi une date : choisissez À fabriquer pour la planifier, ou effacez la date pour la déclarer fabriquée aujourd’hui.",
 		record_needs_serials:
 			"{refs} demandent un n° de série par unité : prévoyez cette fabrication, puis terminez-la depuis sa page.",
 		serial_required: "N° de série obligatoire.",
@@ -318,6 +320,7 @@ export const fr: Dict = {
 		noRecipe: "Pas encore décrite : listez ce qu’un lot consomme (matières, composants) et son temps machine.",
 		setUpRecipe: "Décrire sa fabrication",
 		recipeDraft: "Brouillon : activez-le depuis sa page pour fabriquer avec.",
+		recipeArchived: "Archivé : ouvrez-le pour le réactiver ou commencer une nouvelle révision.",
 		usesPerRun: "Consomme par lot",
 		perUnit: "par unité",
 		otherVariants: "Autres variantes :",

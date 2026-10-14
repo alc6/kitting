@@ -15,6 +15,14 @@
 		if (input instanceof HTMLInputElement && input.dataset.selectOnFocus !== undefined) input.select();
 	});
 
+	// <input data-checks="radio-id"> checks that radio when used (the build form's date selects "to make").
+	document.addEventListener("focusin", (event) => {
+		const input = event.target;
+		if (!(input instanceof HTMLElement) || !input.dataset.checks) return;
+		const radio = document.getElementById(input.dataset.checks);
+		if (radio instanceof HTMLInputElement) radio.checked = true;
+	});
+
 	// Preference links (theme, sidebar) are plain GETs that set a cookie and redirect back.
 	// With JavaScript, apply the change in place and store the cookie in the background.
 	const savePreference = (href) => {

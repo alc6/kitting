@@ -34,9 +34,14 @@ const lastChangeSet = () =>
 describe("record a finished build", () => {
 	it("plans and completes a print run in one change set, with its machine time", async () => {
 		await loadDemo();
-		const page = await (await request(`/builds/new?part=${await partId("LAMP-CLIP")}`)).text();
+		const clip = await partId("LAMP-CLIP");
+		const page = await (await request(`/builds/new?part=${clip}`)).text();
 		expect(page).toContain("Already made: record it now");
-		expect(page, "already made by default").toMatch(/name="when" value="done" checked/);
+		// A plain New build plans: recording, which cannot be undone, needs the explicit link.
+		expect(page, "to make by default").toMatch(/name="when" value="planned" checked/);
+		expect(await (await request(`/builds/new?part=${clip}&when=done`)).text()).toMatch(
+			/name="when" value="done" checked/,
+		);
 		expect(await (await request("/builds")).text()).toContain('href="/builds/new"');
 		// The former record page is the same form, already made.
 		expect((await request("/builds/record?part=7")).headers.get("Location")).toBe("/builds/new?part=7&when=done");
@@ -107,6 +112,10 @@ describe("record a finished build", () => {
 		// A serial-tracked product needs its serial, and one unit.
 		expect(await (await record("LAMP-DESK")).text()).toContain("This product is serial-tracked");
 		expect((await record("LAMP-CLIP", { qty: "0" })).status).toBe(422);
+		// A date with "already made" is a plan typed in the wrong box: refused, nothing recorded.
+		const dated = await record("LAMP-CLIP", { planned_for: "2026-12-01" });
+		expect(dated.status).toBe(422);
+		expect(await dated.text()).toContain("You entered a date: choose To make");
 		expect((await lastChangeSet()).id).toBe(before);
 		expect(await rows("SELECT id FROM builds")).toEqual([]);
 	});

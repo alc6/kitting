@@ -28,8 +28,11 @@ export const machineTypeInput = z.object({
 });
 export type MachineTypeInput = z.output<typeof machineTypeInput>;
 
+/** Longest machine name (machines made with a new type are named after it, D157). */
+export const MACHINE_NAME_MAX = 200;
+
 export const machineInput = z.object({
-	name: field.required(200),
+	name: field.required(MACHINE_NAME_MAX),
 	machine_type_id: field.id(),
 	status: field.oneOf(MACHINE_STATUSES, "invalid_status"),
 	notes: field.text(),

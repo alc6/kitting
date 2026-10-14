@@ -219,7 +219,8 @@ describe("what to make for the open builds", () => {
 		expect([pla?.needMilli, pla?.onHandMilli, pla?.builds]).toEqual([520, 400, ["B-0001"]]);
 		// The pack's own 10 min, plus two plates of 3 h 10.
 		expect(s.machines.map((m) => m.minutesMilli)).toEqual([390_000]);
-		expect(pack).toBeGreaterThan(0);
+		// Recording the 48 suggested clips then never takes the filament below zero.
+		expect(await (await request(`/parts/${pack}`)).text()).toContain("How it&#39;s made");
 	});
 });
 
@@ -234,8 +235,11 @@ describe("how a made part is made, on its page", () => {
 		expect(html).toContain("PLA-BLACK");
 		expect(html).toContain("FDM printer");
 		expect(html).toContain("3 h 10");
-		expect(html).toContain(`href="/builds/new?part=${clip}&amp;when=done"`);
-		expect(html).toContain(`href="/builds/new?part=${clip}&amp;when=planned"`);
+		// Printed 24 per plate: recorded or planned one run at a time by default.
+		expect(html).toContain(`href="/builds/new?part=${clip}&amp;when=done&amp;qty=1&amp;qty_in=batches"`);
+		expect(html).toContain(`href="/builds/new?part=${clip}&amp;when=planned&amp;qty=1&amp;qty_in=batches"`);
+		const form = await (await request(`/builds/new?part=${clip}&when=done&qty=1&qty_in=batches`)).text();
+		expect(form).toMatch(/<option value="batches" selected/);
 		// A made part with no supplier offer has no empty suppliers card.
 		expect(html).not.toContain("Add the suppliers you can buy it from");
 	});
@@ -268,12 +272,41 @@ describe("how a made part is made, on its page", () => {
 		expect(await rows("SELECT id FROM assemblies WHERE parent_part_id = ?", bolt)).toEqual([]);
 	});
 
-	it("needs the right to edit assemblies", async () => {
+	it("needs the right to edit assemblies: an operator records and plans builds, but does not set recipes up", async () => {
 		await loadDemo();
 		const id = await insertPart("SPACER", "make");
-		await setRole("viewer");
+		await setRole("operator");
 		expect(await (await request(`/parts/${id}`, {}, NOT_ADMIN)).text()).not.toContain("Set up how it&#39;s made");
 		expect((await postForm(`/parts/${id}/recipe`, {}, NOT_ADMIN)).status).toBe(403);
+		const clipId = await partId("LAMP-CLIP");
+		const link = `href="/assemblies/${await assemblyId("LAMP-CLIP")}"`;
+		const clip = await (await request(`/parts/${clipId}`, {}, NOT_ADMIN)).text();
+		expect(clip).toContain("Record a build");
+		// The recipe's name links to it; its Edit button is for those who may edit it.
+		expect(clip.split(link).length - 1).toBe(1);
+		expect((await (await request(`/parts/${clipId}`)).text()).split(link).length - 1).toBe(2);
+	});
+
+	it("leaves archived parts and archived recipes alone", async () => {
+		await loadDemo();
+		// An archived made part: no set-up, and the route refuses.
+		const old = await insertPart("OLD-SPACER", "make");
+		await postForm(`/parts/${old}/archive`, {});
+		expect(await (await request(`/parts/${old}`)).text()).not.toContain("Set up how it&#39;s made");
+		expect((await postForm(`/parts/${old}/recipe`, {})).headers.get("Location")).toBe(`/parts/${old}`);
+		expect(await rows("SELECT id FROM assemblies WHERE parent_part_id = ?", old)).toEqual([]);
+		// A part whose only recipe is archived shows it, with what to do, instead of offering a new one.
+		const id = await insertPart("SPACER", "make");
+		const created = await postForm(`/parts/${id}/recipe`, {});
+		const assembly = Number(/\/assemblies\/(\d+)$/.exec(created.headers.get("Location") ?? "")?.[1]);
+		await postForm(`/assemblies/${assembly}/lines`, { component: "PLA-BLACK", qty: "0.01", notes: "" });
+		await postForm(`/assemblies/${assembly}/activate`, {});
+		await postForm(`/assemblies/${assembly}/archive`, {});
+		expect(await one("SELECT status FROM assemblies WHERE id = ?", assembly)).toEqual({ status: "archived" });
+		const page = await (await request(`/parts/${id}`)).text();
+		expect(page).toContain("Archived: open it to activate it again");
+		expect(page).not.toContain("Set up how it&#39;s made");
+		expect((await postForm(`/parts/${id}/recipe`, {})).headers.get("Location")).toBe(`/assemblies/${assembly}`);
 	});
 });
 
@@ -313,6 +346,10 @@ describe("machines set up in one step", () => {
 		expect(
 			await (await postForm("/machines/types", { name: "Mill", hourly_rate: "", notes: "", owned: "21" })).text(),
 		).toContain("At most 20 at once");
+		// A type name that leaves no room for the machines' numbers.
+		const long = await postForm("/machines/types", { name: "M".repeat(199), hourly_rate: "", notes: "", owned: "2" });
+		expect(long.status).toBe(422);
+		expect(await rows("SELECT id FROM machine_types WHERE name = ?", "M".repeat(199))).toEqual([]);
 		await postForm("/machines/types", { name: "Router", hourly_rate: "", notes: "", owned: "0" });
 		await postForm("/machines", {
 			name: "Saw",

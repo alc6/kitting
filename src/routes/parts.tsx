@@ -1247,8 +1247,10 @@ function HowItsMade(props: { part: Part; summary: Awaited<ReturnType<typeof part
 	const { part, summary } = props;
 	const { recipe } = summary;
 	const active = recipe?.assembly.status === "active";
-	const canPlan = part.kind === "make" && active && can(view, "builds.plan");
+	const canPlan = part.kind === "make" && active && !part.archived && can(view, "builds.plan");
 	const canRecord = canPlan && can(view, "builds.complete");
+	// A part made in runs (a print plate) is recorded or planned one run at a time by default.
+	const inRuns = recipe && recipe.assembly.batchMilli !== MILLI ? "&qty=1&qty_in=batches" : "";
 	return (
 		<Card id="how-its-made" class="gap-4">
 			<CardHeader>
@@ -1277,12 +1279,17 @@ function HowItsMade(props: { part: Part; summary: Awaited<ReturnType<typeof part
 				</CardDescription>
 				<CardAction class="flex flex-wrap justify-end gap-2">
 					{canRecord ? (
-						<Button href={`/builds/new?part=${part.id}&when=done`} size="sm" icon={icons.check}>
+						<Button href={`/builds/new?part=${part.id}&when=done${inRuns}`} size="sm" icon={icons.check}>
 							{t.parts.recordBuild}
 						</Button>
 					) : null}
 					{canPlan ? (
-						<Button href={`/builds/new?part=${part.id}&when=planned`} variant="outline" size="sm" icon={icons.calendar}>
+						<Button
+							href={`/builds/new?part=${part.id}&when=planned${inRuns}`}
+							variant="outline"
+							size="sm"
+							icon={icons.calendar}
+						>
 							{t.parts.planBuild}
 						</Button>
 					) : null}
@@ -1307,7 +1314,9 @@ function HowItsMade(props: { part: Part; summary: Awaited<ReturnType<typeof part
 				<>
 					{active ? null : (
 						<CardContent>
-							<p class="text-sm text-muted-foreground">{t.parts.recipeDraft}</p>
+							<p class="text-sm text-muted-foreground">
+								{recipe.assembly.status === "archived" ? t.parts.recipeArchived : t.parts.recipeDraft}
+							</p>
 						</CardContent>
 					)}
 					{recipe.lines.length > 0 || recipe.machine ? (
@@ -1374,7 +1383,7 @@ function HowItsMade(props: { part: Part; summary: Awaited<ReturnType<typeof part
 						</CardContent>
 					) : null}
 				</>
-			) : can(view, "assemblies.edit") ? (
+			) : can(view, "assemblies.edit") && !part.archived ? (
 				<CardContent>
 					<form method="post" action={`/parts/${part.id}/recipe`}>
 						<Button icon={icons.plus}>{t.parts.setUpRecipe}</Button>
@@ -1716,17 +1725,20 @@ partRoutes.post("/:id/recipe", requirePermission("assemblies.edit"), async (c) =
 	const id = idParam(c);
 	const part = id ? await getPart(c.var.db, id) : undefined;
 	if (!part) return notFound(c);
-	if (part.kind !== "make" && part.kind !== "kit") return c.redirect(`/parts/${part.id}`, 303);
+	if ((part.kind !== "make" && part.kind !== "kit") || part.archived) return c.redirect(`/parts/${part.id}`, 303);
 	const summary = await partAssemblySummary(c.var.db, part.id);
 	if (summary.recipe) return c.redirect(`/assemblies/${summary.recipe.assembly.id}`, 303);
 	const head = { parentPartId: part.id, code: DEFAULT_CODE, revision: DEFAULT_REVISION, notes: "" };
-	const existing = await findAssembly(c.var.db, part.id, DEFAULT_CODE, DEFAULT_REVISION);
-	if (existing) return c.redirect(`/assemblies/${existing.id}`, 303);
-	await saveChanges(
-		c,
-		fmt(c.var.t.history.summaries.assemblyCreate, { assembly: assemblyLabel(part.ref, head) }),
-		createAssemblyStatements(c.var.db, head, null, c.var.user, nowIso()),
-	);
+	try {
+		await saveChanges(
+			c,
+			fmt(c.var.t.history.summaries.assemblyCreate, { assembly: assemblyLabel(part.ref, head) }),
+			createAssemblyStatements(c.var.db, head, null, c.var.user, nowIso()),
+		);
+	} catch (err) {
+		// Two clicks at once: the other one created it.
+		if (!isConstraintError(err, "UNIQUE")) throw err;
+	}
 	const created = await findAssembly(c.var.db, part.id, DEFAULT_CODE, DEFAULT_REVISION);
 	return c.redirect(`/assemblies/${created?.id}`, 303);
 });
