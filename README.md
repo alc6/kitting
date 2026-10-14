@@ -16,7 +16,9 @@ maintain, and a small workshop fits in the free plans.
 - Assemblies (bills of materials) with variants and revisions, cost roll-up, a structure diagram and
   where-used. An assembly can make a batch (the 24 parts of a print plate) and take machine time.
 - In-house production on machines: machine types with an hourly rate, the machines you own, machine time in costs,
-  the machine hours your plans need, and a finished run recorded in one step.
+  the machine hours your plans need, and a finished run recorded in one step. A made part's page shows how it is
+  made, and the Builds page lists what to make for the planned builds (sub-assemblies and printed parts, in whole
+  runs) before Purchasing says what to buy.
 - Stock kept as a ledger of movements, with adjustments, inventory counts and stock valuation.
 - Builds with a pick list and serial traceability: what went into serial #0042, and which build used a given
   component.

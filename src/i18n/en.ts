@@ -261,7 +261,7 @@ export const en = {
 	},
 	kindHelp: {
 		buy: "Purchased and stocked.",
-		make: "Assembled in-house, stockable (sub-assembly or product).",
+		make: "Made in-house from a recipe (assembled, printed, machined…), stocked: a product or a sub-assembly.",
 		kit: "Phantom: never stocked, always exploded into its parent.",
 		fee: "Counts in cost only (eco-fees…), never in stock or shortages.",
 	},

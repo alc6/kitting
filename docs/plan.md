@@ -172,6 +172,18 @@ Batch recipes, machines and machine time, and one-step runs, starting with 3D pr
 - [x] MCP: `list_machines`, `set_assembly_production`, `record_build`, batches and machine time in the read tools;
       skill, examples and an eval; a 3D-printed cable clip in `examples/full`
 
+## M15: Making flow ✅
+
+Making something in-house as one flow, from the part outwards (D153–D157); no schema change.
+
+- [x] Units per run and machine time edited with the lines, on active assemblies too (D153)
+- [x] How it's made on a made part's page: recipe, machine time, cost per unit, record or plan a build; set up in one
+      click (D154)
+- [x] One new build form: already made (recorded now) or to make (planned) (D155)
+- [x] To make on the Builds page: made parts the open builds need, across levels, in whole runs, with machine time;
+      planned builds count as stock to come in the shortages; machine hours in whole runs (D156)
+- [x] A machine type and the machines owned in one form (D157)
+
 ## After v1 (ideas, not planned)
 
 - MCP: Client ID Metadata Documents (needs the `global_fetch_strictly_public` compatibility flag, D123).

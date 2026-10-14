@@ -267,7 +267,7 @@ export const fr: Dict = {
 	},
 	kindHelp: {
 		buy: "Acheté et stocké.",
-		make: "Assemblé en interne, stockable (sous-ensemble ou produit).",
+		make: "Fabriqué en interne selon une nomenclature (assemblé, imprimé, usiné…), stocké : un produit ou un sous-ensemble.",
 		kit: "Fantôme : jamais stocké, toujours éclaté dans son parent.",
 		fee: "Compté uniquement dans le coût (éco-participation…), jamais en stock ni en manquant.",
 	},

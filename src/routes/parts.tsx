@@ -1260,14 +1260,9 @@ function HowItsMade(props: { part: Part; summary: Awaited<ReturnType<typeof part
 								{recipe.assembly.code} · {recipe.assembly.revision}
 							</a>
 							{active ? null : <StatusBadge status={recipe.assembly.status} />}
-							<span>
-								{t.assemblies.makes} <Qty milli={recipe.assembly.batchMilli} unit={part.unit} /> {t.assemblies.perRun}
-							</span>
-							{recipe.machine ? (
-								<span class="inline-flex items-center gap-1">
-									<Icon icon={icons.timer} class="size-3.5" />
-									{recipe.machine.name} · <Duration minutesMilli={recipe.assembly.machineMinutes * MILLI} />{" "}
-									{t.assemblies.perRun}
+							{recipe.assembly.batchMilli !== MILLI ? (
+								<span>
+									{t.assemblies.makes} <Qty milli={recipe.assembly.batchMilli} unit={part.unit} /> {t.assemblies.perRun}
 								</span>
 							) : null}
 							{seeCosts ? (

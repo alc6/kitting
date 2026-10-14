@@ -811,7 +811,7 @@ Short log of choices made where the brief left room. Newest at the bottom of eac
     default to one batch (the slicer's figures, `?qty=` still overrides); "per parent" quantities and where-used show
     "/ 24" when the parent makes batches. Over MCP, `get_assembly`, `explode_assembly` and `get_part` return `batch`, and
     tree lines `parent_batch` when it is not 1; `get_assembly` keeps its default quantity of 1.
-- **D146. Production settings belong to the revision.** Changing the batch changes what every line means, so it is
+- **D146. Production settings belong to the revision.** *(Edit rule superseded by D153: they are edited with the lines.)* Changing the batch changes what every line means, so it is
   edited in place only on a draft: the Production card of the assembly page (`POST /assemblies/:id/production`,
   `assemblies.edit`; the statement repeats `status = 'draft'`), read-only on an active or archived assembly with a hint
   to make a new revision. This is stricter than the lines of an active assembly, which stay editable (D23). New
@@ -860,7 +860,7 @@ Short log of choices made where the brief left room. Newest at the bottom of eac
   it when an undo deletes it. Readers: the "as of" valuation swaps in `machineRatesAt(date)` (the same `resolveCostsAt`
   as standard costs, with its fallback flag), and the margin history adds a point on the day a rate in its roll-up
   changed (`PlannedPoint.rateChanges`). Entering past rates as history (D142 for rates) is left for later.
-- **D150. Plans show machine hours per type, with the machines in service.** `computeShortages` sums the machine time
+- **D150. Plans show machine hours per type, with the machines in service.** *(The card is on the Builds page and counts whole runs since D156.)* `computeShortages` sums the machine time
   of the planned and in-progress builds per type with the same shared availability as parts (sub-assemblies in stock
   need no time), and counts the type's active machines: the shortages page's "Machine time needed" card shows the hours,
   the machines in service and the hours per machine; the machines page shows the same load per type; `get_shortages` and
@@ -890,3 +890,48 @@ Short log of choices made where the brief left room. Newest at the bottom of eac
   surface of this milestone (D145–D152) is therefore: `list_machines` (read), `set_assembly_production`,
   `record_build`, `batches` on `plan_build`, `batch`, `parent_batch` and `machine_time` in the read tools; creating or
   editing machines over MCP is left for later (docs/plan.md).
+
+## Making flow
+
+Making something in-house was spread over four pages and two forms: the part, its assembly (variant code, revision
+and status asked first), a Production card with its own edit rule, the Machines page (a type, then each machine),
+then New build or Record a finished build. The plan only said what to buy: sub-assemblies short were built silently
+inside their parent's build. D153–D157 rework the flow as one whole, from the part outwards; the data model does not
+change (no migration).
+
+- **D153. Units per run and machine time are edited with the lines** (supersedes the draft-only rule of D146). They
+  change what every line means, which is why D146 kept them on drafts; but the lines of an active assembly are
+  editable in place (D23) and change what future builds take just as much, so two rules for one recipe only sent people
+  through a new revision to fix a print time. The Production card becomes a bar at the top of the lines card
+  ("Makes [24] pcs per run · machine type · time per run"), under the lines' rule: draft or active, never archived
+  (`productionError`, and the statement repeats `status <> 'archived'`). `assemblies.csv` follows (its
+  `assembly_production_active` refusal is gone). MCP keeps going through drafts for everything (D128):
+  `set_assembly_production` is unchanged. In English the pages say *run* for a batch (French already said *lot*).
+- **D154. A made part's page shows how it is made.** A make or kit part opens with How it's made: the recipe builds
+  use (`partRecipe()`: its default active assembly, else its newest draft), what one run uses, the machine time, the
+  cost per unit (with `costs.view` only), the other active variants, and the actions that follow: record a build, plan
+  one, open the diagram, edit. A part with none gets one button, "Set up how it's made" (`POST /parts/:id/recipe`,
+  `assemblies.edit`), which creates the `std` `Rev1` draft and opens it, without the new assembly form; a second
+  submit opens the existing one instead of creating another. The variants and revisions table is shown only when there
+  is more than one assembly; the suppliers card of a make part only when it has an offer (subcontracting).
+- **D155. One form for a new build: already made, or to make.** New build and Record a finished build (D152) were two
+  buttons and two pages for one question. `/builds/new` asks *when*: already made (recorded now, in one change set, as
+  D152; the default for those who may complete builds) or to make (planned, with its optional date). `POST /builds`
+  plans unless `when=done`, which also needs `builds.complete` (checked in the handler, as `/builds/record` did);
+  `/builds/record` redirects to the form (GET) and still records (POST). The part page's buttons and the To make list
+  link to it prefilled (`part`, `assembly_id`, `qty`, `when`).
+- **D156. What to make, before what to buy; planned builds are stock to come.** `computeShortages` returns `toMake`:
+  every make node of the open builds' explosions that must be built (`toBuildMilli > 0`), per part, with its depth,
+  rounded up to whole runs of its default assembly (24 clips for 8 needed: printing a third of a plate is possible,
+  but nobody does), the machine time of those runs, and the builds that need it. The Builds page lists it first,
+  deepest first (print the clips, then assemble the arms), each row linking to the build form prefilled to plan or to
+  record it; the machine hours card (D150) moves there from Purchasing, which links to it. Two engine changes go
+  with it: the output of the open builds counts as available before exploding (planning 5 arms on their own used to
+  leave the lamp builds building 5 more, so their tubes were counted twice), and the machine load counts the time of
+  what is to make in whole runs rather than the exact quantity inside the parent. The build page's pick list is
+  unchanged: it sees real stock only, never planned output. `get_shortages` over MCP is unchanged.
+- **D157. A machine type and the machines owned, in one form.** Most workshops own one printer of a kind; creating
+  the type, then the machine, was two forms for one thing. The new type form asks how many the workshop owns (1 by
+  default, 0 to 20) and creates them in service in the same change set: one takes the type's name, several are
+  numbered (`Laser 1`, `Laser 2`…); a name another machine has refuses the form. Undo removes the type and its machines
+  together. Editing a type does not ask again: machines are added from the Machines page.

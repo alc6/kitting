@@ -105,6 +105,10 @@ describe("what to make for the open builds", () => {
 		// 30 clips at 24 per plate: 2 plates, 48 clips, 2 × 3 h 10 of printing.
 		expect([clip.part.ref, clip.shortMilli, clip.runs, clip.toMakeMilli]).toEqual(["LAMP-CLIP", 30_000, 2, 48_000]);
 		expect([clip.machine?.machineType.name, clip.machine?.minutesMilli]).toEqual(["FDM printer", 380_000]);
+		// The machine load counts the plates as they will be printed, not 30 clips' worth (237.5 min).
+		expect(s.machines.map((m) => [m.machineType.name, m.minutesMilli, m.builds])).toEqual([
+			["FDM printer", 380_000, ["B-0001"]],
+		]);
 		const page = await (await request("/builds")).text();
 		expect(page).toContain('id="to-make"');
 		expect(page).toContain("2 run(s)");

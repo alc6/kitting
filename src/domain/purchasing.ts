@@ -72,7 +72,10 @@ export type SupplierGroup = {
 	totalCents: number;
 };
 
-/** Machine time the open builds need on one machine type, and how many of its machines are in service (D150). */
+/**
+ * Machine time the open builds need on one machine type (D150): their own, and that of what is to make for them in
+ * whole runs (D156); with how many of its machines are in service.
+ */
 export type MachineLoad = {
 	machineType: GraphMachineType;
 	minutesMilli: number;
@@ -177,8 +180,22 @@ export async function computeShortages(db: Db): Promise<Shortages> {
 	};
 	const load = new Map<number, MachineLoad>();
 	const activeOf = new Map(active.map((a) => [a.typeId, a.n]));
+	const addLoad = (machineType: GraphMachineType, minutesMilli: number, builds: Iterable<string>) => {
+		const l = load.get(machineType.id) ?? {
+			machineType,
+			minutesMilli: 0,
+			activeMachines: activeOf.get(machineType.id) ?? 0,
+			builds: [],
+		};
+		l.minutesMilli += minutesMilli;
+		for (const n of builds) if (!l.builds.includes(n)) l.builds.push(n);
+		load.set(machineType.id, l);
+	};
 	for (const b of open) {
 		const ex = explode(graph, b.assemblyId, b.qtyMilli, { available });
+		// Machine time of the build itself and its kits; that of the sub-assemblies to make is added below, in whole
+		// runs as they will be made (D156).
+		const subTime = new Map<number, number>();
 		for (const node of walkTree(ex.tree)) {
 			if (node.part.kind !== "make" || node.toBuildMilli <= 0 || node.mode === "missing_assembly") continue;
 			const e = toMake.get(node.part.id) ?? { qty: 0, depth: node.depth, builds: new Set<string>() };
@@ -186,21 +203,17 @@ export async function computeShortages(db: Db): Promise<Shortages> {
 			e.depth = Math.max(e.depth, node.depth);
 			e.builds.add(b.number);
 			toMake.set(node.part.id, e);
+			const sub = node.assemblyId === null ? undefined : graph.assemblies.get(node.assemblyId);
+			if (sub?.machineTypeId != null && sub.machineMinutes > 0)
+				subTime.set(sub.machineTypeId, (subTime.get(sub.machineTypeId) ?? 0) + machineNeed(sub, node.toBuildMilli));
 		}
 		for (const r of ex.requirements) {
 			if (r.missingAssembly) add(missing, r.part.id, r.qtyMilli, b.number);
 			else if (r.part.kind === "buy") add(need, r.part.id, r.qtyMilli, b.number);
 		}
 		for (const m of ex.machines) {
-			const l = load.get(m.machineType.id) ?? {
-				machineType: m.machineType,
-				minutesMilli: 0,
-				activeMachines: activeOf.get(m.machineType.id) ?? 0,
-				builds: [],
-			};
-			l.minutesMilli += m.minutesMilli;
-			if (!l.builds.includes(b.number)) l.builds.push(b.number);
-			load.set(m.machineType.id, l);
+			const own = m.minutesMilli - (subTime.get(m.machineType.id) ?? 0);
+			if (own > 0) addLoad(m.machineType, own, [b.number]);
 		}
 	}
 	// Parts already below zero are short of their deficit even without open builds.
@@ -279,6 +292,7 @@ export async function computeShortages(db: Db): Promise<Shortages> {
 		});
 	}
 	toMakeLines.sort((a, b) => b.depth - a.depth || a.part.ref.localeCompare(b.part.ref));
+	for (const l of toMakeLines) if (l.machine) addLoad(l.machine.machineType, l.machine.minutesMilli, l.builds);
 	return {
 		groups: sorted,
 		toMake: toMakeLines,
