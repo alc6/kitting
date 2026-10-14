@@ -103,6 +103,7 @@ const getPartTool = tool({
 				code: b.code,
 				revision: b.revision,
 				status: b.status,
+				batchMilli: b.batchQtyMilli,
 				unitCostCents: centsOf(b.cost.millicents),
 				costIncomplete: b.cost.incomplete,
 				salePriceCents: b.salePriceCents,
@@ -124,6 +125,7 @@ const getPartTool = tool({
 				depth: w.depth,
 				via: w.viaRef,
 				qtyPerParentMilli: w.qtyMilli,
+				batchMilli: w.batchMilli,
 			})),
 		};
 	},
@@ -137,6 +139,7 @@ function treeNode(n: ExplodedNode, calc: CostCalculator): Record<string, unknown
 		kind: n.part.kind,
 		unit: n.part.unit,
 		perParentMilli: n.perParentMilli,
+		parentBatchMilli: n.parentBatchMilli !== MILLI ? n.parentBatchMilli : undefined,
 		qtyMilli: n.qtyMilli,
 		mode: n.mode,
 		unitCostCents: centsOf(cost.millicents),
@@ -151,7 +154,7 @@ const getAssemblyTool = tool({
 	name: "get_assembly",
 	title: "Assembly tree",
 	description:
-		"The full structure of an assembly as a tree: per line the quantity per parent (per_parent) and the cumulative quantity for the requested quantity (qty), with unit and extended costs and the cost roll-up. Sub-assemblies (make) and kits are expanded through their active assemblies.",
+		"The full structure of an assembly as a tree: per line the quantity per parent (per_parent: per batch of the parent when it makes batches, parent_batch units at a time) and the cumulative quantity for the requested quantity (qty), with unit and extended costs and the cost roll-up per unit. Sub-assemblies (make) and kits are expanded through their active assemblies.",
 	rule: { scope: "catalog:read" },
 	input: z.object({ ...assemblySelector, qty: quantity.optional().describe('How many to build (default "1").') }),
 	run: async (a, { db }) => {
@@ -169,6 +172,7 @@ const getAssemblyTool = tool({
 				code: assembly.code,
 				revision: assembly.revision,
 				status: assembly.status,
+				batchMilli: assembly.batchQtyMilli,
 			},
 			qtyMilli: qty,
 			cost: {
@@ -223,6 +227,7 @@ const explodeAssembly = tool({
 				code: assembly.code,
 				revision: assembly.revision,
 				status: assembly.status,
+				batchMilli: assembly.batchQtyMilli,
 			},
 			qtyMilli: a.qty,
 			useStock: a.use_stock,

@@ -25,8 +25,11 @@ import {
 	loadGraph,
 	newAssemblyErrors,
 	nextRevision,
+	productionError,
+	productionInput,
 	reorderAssemblyLinesStatements,
 	setAssemblyStatusStatement,
+	setProductionStatement,
 	updateAssemblyLineQtyStatements,
 } from "../domain/assemblies";
 import {
@@ -48,8 +51,10 @@ import {
 	formatCentsInput,
 	formatMoney,
 	formatPercent,
+	formatQty,
 	formatQtyInput,
 	MILLI,
+	type NumberLocale,
 	parseMilli,
 	roundDiv,
 } from "../lib/units";
@@ -111,9 +116,11 @@ export const assemblyRoutes = new Hono<AppEnv>();
 type AssemblyRow = Awaited<ReturnType<typeof listAssemblies>>[number];
 type LineRow = Awaited<ReturnType<typeof getAssemblyLines>>[number];
 
-function qtyParam(c: Context<AppEnv>): number {
-	const n = parseMilli(c.req.query("qty") ?? "1");
-	return n !== null && n > 0 ? n : MILLI;
+/** The `qty` query parameter, else `fallback` (an assembly's batch: its views show what one batch takes). */
+function qtyParam(c: Context<AppEnv>, fallback = MILLI): number {
+	const q = c.req.query("qty");
+	const n = q === undefined ? null : parseMilli(q);
+	return n !== null && n > 0 ? n : fallback;
 }
 
 type AssemblyTab = "editor" | "tree" | "diagram" | "explode" | "history";
@@ -209,6 +216,14 @@ function AssemblyHeader(props: { assembly: Assembly; part: Part; tab: AssemblyTa
 							{t.assemblies.revision}: <strong class="font-medium text-foreground">{assembly.revision}</strong>
 						</span>
 						<StatusBadge status={assembly.status} />
+						{assembly.batchQtyMilli !== MILLI ? (
+							<span>
+								{t.assemblies.batch}:{" "}
+								<strong class="font-medium text-foreground">
+									<Qty milli={assembly.batchQtyMilli} unit={part.unit} />
+								</strong>
+							</span>
+						) : null}
 						{seeCosts && props.pricing ? <PricingSummary pricing={props.pricing} assemblyId={assembly.id} /> : null}
 					</span>
 				}
@@ -518,6 +533,8 @@ function LinesEditor(props: {
 	part: Part;
 	lines: LineRow[];
 	costs: Map<number, Cost>;
+	/** Cost of one batch (the lines as written) and of one unit. */
+	batch: Cost;
 	total: Cost;
 	refs: Map<number, string>;
 	options: { ref: string; name: string }[];
@@ -662,6 +679,20 @@ function LinesEditor(props: {
 						</TableBody>
 						{seeCosts ? (
 							<TableFooter>
+								{assembly.batchQtyMilli !== MILLI ? (
+									<TableRow class="hover:bg-transparent">
+										<TableCell colspan={editable ? 5 : 4}>
+											{fmt(t.assemblies.batchCost, {
+												qty: formatQty(assembly.batchQtyMilli, locale),
+												unit: props.part.unit,
+											})}
+										</TableCell>
+										<TableCell class="text-right">
+											<CostView cost={props.batch} refs={props.refs} />
+										</TableCell>
+										{editable ? <TableCell /> : null}
+									</TableRow>
+								) : null}
 								<TableRow class="hover:bg-transparent">
 									<TableCell colspan={editable ? 5 : 4}>{t.assemblies.totalCost}</TableCell>
 									<TableCell class="text-right font-semibold">
@@ -771,6 +802,54 @@ function SideCard(props: { title: string; icon: IconNode; children: Child }) {
 	);
 }
 
+/** How the assembly is produced: units per batch (D145). Belongs to the revision: editable on drafts only (D146). */
+function ProductionCard(props: { assembly: Assembly; part: Part; values: FormValues; errors: FormErrors }) {
+	const view = useApp();
+	const { t } = view;
+	const { assembly, part } = props;
+	const items = [{ label: t.assemblies.batchQty, value: <Qty milli={assembly.batchQtyMilli} unit={part.unit} /> }];
+	if (assembly.status !== "draft" || !can(view, "assemblies.edit")) {
+		return (
+			<SideCard title={t.assemblies.productionTitle} icon={icons.factory}>
+				<div class="flex flex-col gap-3">
+					<DetailList items={items} />
+					{assembly.status === "active" && can(view, "assemblies.edit") ? (
+						<p class="text-sm text-muted-foreground">{t.assemblies.productionLocked}</p>
+					) : null}
+				</div>
+			</SideCard>
+		);
+	}
+	return (
+		<Card id="production" class="gap-4">
+			<CardHeader>
+				<CardTitle icon={icons.factory}>{t.assemblies.productionTitle}</CardTitle>
+			</CardHeader>
+			<form method="post" action={`/assemblies/${assembly.id}/production`} class="flex flex-col gap-4">
+				<CardContent>
+					<DecimalField
+						name="batch_qty"
+						label={t.assemblies.batchQty}
+						hint={fmt(t.assemblies.batchHint, { ref: part.ref })}
+						values={props.values}
+						errors={props.errors}
+					/>
+				</CardContent>
+				<CardFooter>
+					<Button variant="outline" icon={icons.save}>
+						{t.common.save}
+					</Button>
+				</CardFooter>
+			</form>
+		</Card>
+	);
+}
+
+/** The production form's values for an assembly. */
+function productionValues(assembly: Assembly, locale: NumberLocale): FormValues {
+	return { batch_qty: formatQtyInput(assembly.batchQtyMilli, locale) };
+}
+
 const salePriceInput = z.object({ sale_price: field.money() });
 
 /** The variant's own selling price (empty = the part's), editable unless the assembly is archived. */
@@ -839,9 +918,13 @@ async function renderEditor(
 		errors: {},
 	},
 	status: 200 | 422 = 200,
-	/** The selling price form, when re-rendered with errors. */
-	price?: { values: FormValues; errors: FieldErrors },
+	/** The selling price or production form, when re-rendered with errors. */
+	side: {
+		price?: { values: FormValues; errors: FieldErrors };
+		production?: { values: FormValues; errors: FieldErrors };
+	} = {},
 ) {
+	const { price, production } = side;
 	const db = c.var.db;
 	const { assembly, part } = data;
 	const [lines, graph, options, siblings] = await Promise.all([
@@ -857,6 +940,7 @@ async function renderEditor(
 	const calc = new CostCalculator(graph);
 	const costs = new Map(lines.map((l) => [l.partId, calc.part(l.partId)]));
 	const total = calc.assembly(assembly.id);
+	const batch = calc.batch(assembly.id);
 	const refs = new Map([...graph.parts.values()].map((p) => [p.id, p.ref]));
 	const t = c.var.t;
 	const priceValues = price?.values ?? {
@@ -874,6 +958,7 @@ async function renderEditor(
 				part={part}
 				lines={lines}
 				costs={costs}
+				batch={batch}
 				total={total}
 				refs={refs}
 				options={options.filter((o) => o.id !== part.id)}
@@ -881,6 +966,12 @@ async function renderEditor(
 				errors={translateErrors(c, form.errors, form.vars)}
 			/>
 			<div class="mt-6 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+				<ProductionCard
+					assembly={assembly}
+					part={part}
+					values={production?.values ?? productionValues(assembly, c.var.locale)}
+					errors={translateErrors(c, production?.errors ?? {})}
+				/>
 				<SalePriceCard
 					assembly={assembly}
 					part={part}
@@ -1065,11 +1156,30 @@ assemblyRoutes.post("/:id/sale-price", requirePermission("prices.edit"), async (
 	if (assembly.status === "archived") return c.redirect(`/assemblies/${assembly.id}?err=assembly_archived`, 303);
 	const body = await c.req.parseBody();
 	const v = validate(salePriceInput, body);
-	if (!v.ok) return renderEditor(c, data, undefined, 422, { values: body as FormValues, errors: v.errors });
+	if (!v.ok) return renderEditor(c, data, undefined, 422, { price: { values: body as FormValues, errors: v.errors } });
 	await saveChanges(
 		c,
 		fmt(c.var.t.history.summaries.assemblySalePrice, { assembly: assemblyLabel(data.part.ref, assembly) }),
 		assemblySalePriceStatements(c.var.db, assembly, v.data.sale_price, c.var.user, nowIso()),
+	);
+	return redirectOk(c, `/assemblies/${assembly.id}`);
+});
+
+// Units per batch: on drafts only, as they change what every line means (D146).
+assemblyRoutes.post("/:id/production", requirePermission("assemblies.edit"), async (c) => {
+	const data = await loadAssembly(c);
+	if (!data) return notFound(c);
+	const { assembly, part } = data;
+	const notDraft = productionError(assembly);
+	if (notDraft) return c.redirect(`/assemblies/${assembly.id}?err=${notDraft}`, 303);
+	const body = await c.req.parseBody();
+	const v = validate(productionInput, body);
+	if (!v.ok)
+		return renderEditor(c, data, undefined, 422, { production: { values: body as FormValues, errors: v.errors } });
+	await saveChanges(
+		c,
+		fmt(c.var.t.history.summaries.assemblyProduction, { assembly: assemblyLabel(part.ref, assembly) }),
+		[setProductionStatement(c.var.db, assembly.id, { batchMilli: v.data.batch_qty }, c.var.user, nowIso())],
 	);
 	return redirectOk(c, `/assemblies/${assembly.id}`);
 });
@@ -1245,6 +1355,12 @@ function TreeNode(props: { node: ExplodedNode; calc: CostCalculator; refs: Map<n
 			</span>
 			<span class="text-right text-muted-foreground tabular-nums">
 				×<Qty milli={n.perParentMilli} unit={n.part.unit} />
+				{n.parentBatchMilli !== MILLI ? (
+					<span class="text-xs">
+						{" "}
+						/ <Qty milli={n.parentBatchMilli} />
+					</span>
+				) : null}
 			</span>
 			<span class="text-right font-semibold tabular-nums">
 				<Qty milli={n.qtyMilli} unit={n.part.unit} />
@@ -1299,7 +1415,7 @@ assemblyRoutes.get("/:id/tree", async (c) => {
 	const data = await loadAssembly(c);
 	if (!data) return notFound(c);
 	const t = c.var.t;
-	const qty = qtyParam(c);
+	const qty = qtyParam(c, data.assembly.batchQtyMilli);
 	const graph = await loadGraph(c.var.db);
 	const calc = new CostCalculator(graph);
 	const refs = new Map([...graph.parts.values()].map((p) => [p.id, p.ref]));
@@ -1373,7 +1489,7 @@ assemblyRoutes.get("/:id/diagram", async (c) => {
 	const data = await loadAssembly(c);
 	if (!data) return notFound(c);
 	const t = c.var.t;
-	const qty = qtyParam(c);
+	const qty = qtyParam(c, data.assembly.batchQtyMilli);
 	const depthParam = Number(c.req.query("depth"));
 	const depth = Number.isInteger(depthParam) && depthParam > 0 ? depthParam : undefined;
 	const assembliesOnly = c.req.query("only") === "assemblies";
@@ -1390,7 +1506,7 @@ assemblyRoutes.get("/:id/diagram", async (c) => {
 	const base = `/assemblies/${data.assembly.id}/diagram`;
 	const href = (o: { depth?: number | undefined; assembliesOnly?: boolean }) => {
 		const params = new URLSearchParams();
-		if (qty !== MILLI) params.set("qty", formatQtyInput(qty, c.var.locale));
+		if (qty !== data.assembly.batchQtyMilli) params.set("qty", formatQtyInput(qty, c.var.locale));
 		const d = "depth" in o ? o.depth : depth;
 		if (d) params.set("depth", String(d));
 		if (o.assembliesOnly ?? assembliesOnly) params.set("only", "assemblies");
@@ -1481,7 +1597,7 @@ assemblyRoutes.get("/:id/explode", async (c) => {
 	const data = await loadAssembly(c);
 	if (!data) return notFound(c);
 	const t = c.var.t;
-	const qty = qtyParam(c);
+	const qty = qtyParam(c, data.assembly.batchQtyMilli);
 	const useStock = c.req.query("stock") === "on";
 	const [graph, stock] = await Promise.all([loadGraph(c.var.db), onHandMap(c.var.db)]);
 	const calc = new CostCalculator(graph);

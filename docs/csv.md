@@ -64,7 +64,7 @@ or archive: importing it again is refused, since its rows already exist.
 
 ## assemblies.csv
 
-`parent_ref,code,revision,status,component_ref,qty`, plus the optional `sale_price` and `notes`
+`parent_ref,code,revision,status,component_ref,qty`, plus the optional `sale_price`, `batch_qty` and `notes`
 
 One row per component. Rows are grouped by `parent_ref`, `code` and `revision`, and each assembly in the file ends
 up with exactly the components listed for it.
@@ -72,6 +72,9 @@ up with exactly the components listed for it.
 - `code` is the variant and defaults to `std`. `revision` defaults to `Rev1` and `status` to `draft`.
 - Importing an assembly as `active` archives the active revision of the same variant.
 - `sale_price`, one value per assembly, is that variant's selling price. It overrides the part's.
+- `batch_qty`, one value per assembly, is how many units of `parent_ref` one batch makes (for example the 24 parts of a
+  print plate). The `qty` of its rows are then the quantities for the whole batch. Empty means 1. It cannot change on an
+  assembly that is already active: import a new revision instead.
 
 ## stock.csv
 

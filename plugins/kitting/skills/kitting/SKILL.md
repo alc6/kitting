@@ -26,6 +26,10 @@ worked conversations in [references/examples.md](references/examples.md).
   (editable, not used), `active` (the one builds and explosions use; one per part and code) or `archived`
   (read-only history, can be re-activated). Select an assembly with `assembly` (an id, or the part ref for its active assembly)
   and optionally `code` and `revision`.
+- **Batches**: an assembly can make several units at once (`batch`, e.g. 24 parts per print plate); its lines are then
+  the quantities for the whole batch, and a build of any quantity takes line × quantity / batch (rounded up). Plan in
+  batches with `plan_build`'s `batches`. The batch belongs to a revision: change it with `set_assembly_production`,
+  which on an active assembly creates a draft revision, like `set_assembly_lines`.
 - **Stock** is a ledger: on hand is the sum of signed moves (receipts, build consumption and output,
   adjustments, counts). Nothing edits a move; mistakes are corrected with new moves. Stock can go negative; that
   is a signal (`stock_on_hand` with `below_zero`).

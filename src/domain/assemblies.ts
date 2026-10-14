@@ -31,6 +31,29 @@ export const assemblyLineInput = z.object({
 	notes: field.text(500),
 });
 
+/**
+ * How an assembly is produced (D145, D146): the units one batch makes. It belongs to the revision: it is set on a draft,
+ * copied into new revisions and variants, and changed on an active assembly only through a new revision.
+ */
+export const productionInput = z.object({
+	batch_qty: field.qty({ positive: true, empty: MILLI }),
+});
+
+export type Production = { batchMilli: number };
+
+/** Why the production settings of this assembly cannot be changed in place, or null. */
+export function productionError(assembly: Pick<Assembly, "status">): string | null {
+	return assembly.status === "draft" ? null : "assembly_production_not_draft";
+}
+
+/** Sets the production settings of a draft assembly (the status is checked again in the statement). */
+export function setProductionStatement(db: Db, assemblyId: number, p: Production, user: string, now: string) {
+	return db
+		.update(assemblies)
+		.set({ batchQtyMilli: p.batchMilli, updatedAt: now, updatedBy: user })
+		.where(and(eq(assemblies.id, assemblyId), eq(assemblies.status, "draft")));
+}
+
 export const DEFAULT_CODE = "std";
 export const DEFAULT_REVISION = "Rev1";
 
@@ -56,6 +79,7 @@ export async function loadGraph(db: Db): Promise<AssemblyGraph> {
 				code: assemblies.code,
 				revision: assemblies.revision,
 				status: assemblies.status,
+				batchMilli: assemblies.batchQtyMilli,
 			})
 			.from(assemblies),
 		db
@@ -229,7 +253,9 @@ export async function archivedAssemblyCycles(
 export type WhereUsedRow = {
 	assemblyId: number;
 	depth: number;
+	/** Quantity of `viaRef` per batch of the assembly, which makes `batchMilli` units of its parent. */
 	qtyMilli: number;
+	batchMilli: number;
 	code: string;
 	revision: string;
 	status: AssemblyStatus;
@@ -248,6 +274,7 @@ export async function whereUsed(db: Db, partId: number): Promise<WhereUsedRow[]>
 		assembly_id: number;
 		depth: number;
 		qty_milli: number;
+		batch_milli: number;
 		code: string;
 		revision: string;
 		status: AssemblyStatus;
@@ -268,7 +295,7 @@ export async function whereUsed(db: Db, partId: number): Promise<WhereUsedRow[]>
 			JOIN assemblies b ON b.id = l.assembly_id AND b.status != 'archived'
 			WHERE u.depth < 32
 		)
-		SELECT u.assembly_id, u.depth, u.qty_milli, b.code, b.revision, b.status,
+		SELECT u.assembly_id, u.depth, u.qty_milli, b.batch_qty_milli AS batch_milli, b.code, b.revision, b.status,
 			p.id AS parent_id, p.ref AS parent_ref, p.name AS parent_name, v.ref AS via_ref
 		FROM used u
 		JOIN assemblies b ON b.id = u.assembly_id
@@ -285,6 +312,7 @@ export async function whereUsed(db: Db, partId: number): Promise<WhereUsedRow[]>
 			assemblyId: r.assembly_id,
 			depth: r.depth,
 			qtyMilli: r.qty_milli,
+			batchMilli: r.batch_milli,
 			code: r.code,
 			revision: r.revision,
 			status: r.status,
@@ -334,14 +362,26 @@ export function activateStatements(db: Db, assembly: Assembly, user: string, now
 	];
 }
 
-/** Statements creating an assembly and copying the lines of `sourceAssemblyId` into it (one batch). */
+/**
+ * Statements creating an assembly and copying the lines of `sourceAssemblyId` into it (one batch). The lines are
+ * quantities per batch, so the production settings are copied with them; `production` overrides them.
+ */
 export function createAssemblyStatements(
 	db: Db,
-	b: { parentPartId: number; code: string; revision: string; notes: string; status?: AssemblyStatus },
+	b: {
+		parentPartId: number;
+		code: string;
+		revision: string;
+		notes: string;
+		status?: AssemblyStatus;
+		production?: Partial<Production>;
+	},
 	sourceAssemblyId: number | null,
 	user: string,
 	now: string,
 ): Statement[] {
+	const copied = (column: SQL) =>
+		sourceAssemblyId ? sql`(SELECT ${column} FROM assemblies WHERE id = ${sourceAssemblyId})` : undefined;
 	const stmts: Statement[] = [
 		db.insert(assemblies).values({
 			parentPartId: b.parentPartId,
@@ -349,6 +389,7 @@ export function createAssemblyStatements(
 			revision: b.revision,
 			status: b.status ?? "draft",
 			notes: b.notes,
+			batchQtyMilli: b.production?.batchMilli ?? copied(sql.raw("batch_qty_milli")),
 			createdBy: user,
 			updatedBy: user,
 			createdAt: now,

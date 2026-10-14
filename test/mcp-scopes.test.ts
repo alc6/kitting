@@ -28,6 +28,7 @@ const TOOLS_BY_SCOPE: Record<string, string[]> = {
 		"create_supplier",
 		"new_assembly_revision",
 		"set_assembly_lines",
+		"set_assembly_production",
 		"update_part",
 		"update_supplier",
 	],

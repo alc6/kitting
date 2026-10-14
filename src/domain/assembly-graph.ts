@@ -2,7 +2,7 @@
 // The whole catalogue is small (tens to hundreds of parts), so loading it once per
 // request and walking it in TypeScript is simpler and easier to test than SQL.
 import type { AssemblyStatus, PartKind } from "../db/schema";
-import { MILLI, mulMilli, roundDiv } from "../lib/units";
+import { MILLI, mulDivCeil, mulDivRound, roundDiv } from "../lib/units";
 
 export type GraphPart = {
 	id: number;
@@ -23,6 +23,8 @@ export type GraphAssembly = {
 	code: string;
 	revision: string;
 	status: AssemblyStatus;
+	/** Units of the parent one batch makes (milli); the lines are the quantities for the whole batch (D145). */
+	batchMilli: number;
 	lines: GraphLine[];
 };
 
@@ -33,11 +35,11 @@ export type AssemblyGraph = {
 
 export function buildGraph(
 	parts: GraphPart[],
-	assemblies: Omit<GraphAssembly, "lines">[],
+	assemblies: (Omit<GraphAssembly, "lines" | "batchMilli"> & { batchMilli?: number })[],
 	lines: (GraphLine & { assemblyId: number })[],
 ) {
 	const graph: AssemblyGraph = { parts: new Map(parts.map((p) => [p.id, p])), assemblies: new Map() };
-	for (const b of assemblies) graph.assemblies.set(b.id, { ...b, lines: [] });
+	for (const b of assemblies) graph.assemblies.set(b.id, { ...b, batchMilli: b.batchMilli ?? MILLI, lines: [] });
 	for (const l of lines) graph.assemblies.get(l.assemblyId)?.lines.push(l);
 	for (const b of graph.assemblies.values()) b.lines.sort((x, y) => x.position - y.position || x.id - y.id);
 	return graph;
@@ -78,8 +80,10 @@ export type ExplodedNode = {
 	lineId: number;
 	part: GraphPart;
 	depth: number;
-	/** Quantity per one unit of the parent line (the assembly line quantity). */
+	/** Quantity per batch of the parent (the assembly line quantity): per one unit when `parentBatchMilli` is 1000. */
 	perParentMilli: number;
+	/** Units one batch of the parent's assembly makes (milli). */
+	parentBatchMilli: number;
 	/** Total quantity needed for the requested root quantity. */
 	qtyMilli: number;
 	mode: NodeMode;
@@ -120,6 +124,20 @@ export type ExplodeOptions = {
 };
 
 export const MAX_DEPTH = 32;
+
+/**
+ * Quantity of a line needed for `units` of its parent: line × units / batch (D145), rounded up to the thousandth so
+ * nothing is under-picked (D26), and to whole units for a serial-tracked component (one serial per unit).
+ */
+export function lineNeed(
+	line: { qtyMilli: number },
+	units: number,
+	batchMilli: number,
+	part: { trackSerial: boolean },
+) {
+	const need = mulDivCeil(line.qtyMilli, units, batchMilli);
+	return part.trackSerial ? Math.ceil(need / MILLI) * MILLI : need;
+}
 
 export class AssemblyCycleError extends Error {
 	constructor(public readonly refs: string[]) {
@@ -164,13 +182,14 @@ export function explode(
 			const part = graph.parts.get(line.componentPartId);
 			if (!part) throw new Error(`Unknown part ${line.componentPartId}`);
 			const path = prefix ? `${prefix}/${line.id}` : String(line.id);
-			const need = mulMilli(line.qtyMilli, units);
+			const need = lineNeed(line, units, b.batchMilli, part);
 			const node: ExplodedNode = {
 				path,
 				lineId: line.id,
 				part,
 				depth,
 				perParentMilli: line.qtyMilli,
+				parentBatchMilli: b.batchMilli,
 				qtyMilli: need,
 				mode: "buy",
 				fromStockMilli: 0,
@@ -289,8 +308,16 @@ export class CostCalculator {
 		return cost;
 	}
 
-	/** Cost of one unit of an assembly's parent, built from this assembly. */
+	/** Cost of one unit of an assembly's parent, built from this assembly: its batch cost divided by the batch. */
 	assembly(assemblyId: number): Cost {
+		const assembly = this.graph.assemblies.get(assemblyId);
+		if (!assembly) return { millicents: 0, incomplete: true, missing: [] };
+		const batch = this.batch(assemblyId);
+		return { ...batch, millicents: mulDivRound(batch.millicents, MILLI, assembly.batchMilli) };
+	}
+
+	/** Cost of one batch of an assembly (its lines as written), in millicents. */
+	batch(assemblyId: number): Cost {
 		const assembly = this.graph.assemblies.get(assemblyId);
 		if (!assembly) return { millicents: 0, incomplete: true, missing: [] };
 		let millicents = 0;

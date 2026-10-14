@@ -13,7 +13,7 @@ import {
 } from "../db/schema";
 import type { Statement } from "../lib/db";
 import { likePattern } from "../lib/sql";
-import { MILLI, roundDiv } from "../lib/units";
+import { MILLI, mulDivCeil, roundDiv } from "../lib/units";
 import { type FieldErrors, field } from "../lib/validation";
 import type { Db } from "../types";
 import {
@@ -34,12 +34,27 @@ export const buildInput = z.object({
 	part_id: field.id(),
 	assembly_id: field.id(),
 	qty: field.qty({ positive: true, empty: MILLI }),
+	/** What `qty` counts: units of the product (the default) or batches of the chosen assembly (D145). */
+	qty_in: z
+		.string()
+		.trim()
+		.transform((v): "units" | "batches" => (v === "batches" ? "batches" : "units")),
 	serial: field.text(100),
 	planned_for: field.date(),
 	notes: field.text(),
 });
 
 export type BuildInput = z.output<typeof buildInput>;
+
+/** The quantity to build in units of the product: `qty` itself, or that many batches of the chosen assembly. */
+export function unitsToBuild(
+	d: Pick<BuildInput, "qty" | "qty_in" | "assembly_id">,
+	assemblyOptions: { id: number; batchMilli: number }[],
+): number {
+	if (d.qty_in !== "batches") return d.qty;
+	const batch = assemblyOptions.find((b) => b.id === d.assembly_id)?.batchMilli ?? MILLI;
+	return mulDivCeil(d.qty, batch, MILLI);
+}
 
 export const buildEditInput = z.object({
 	serial: field.text(100),
@@ -73,7 +88,12 @@ export async function buildableProduct(db: Db, partId: number | null) {
 	const product = partId ? (await db.select().from(parts).where(eq(parts.id, partId)).limit(1))[0] : undefined;
 	const assemblyOptions = product
 		? await db
-				.select({ id: assemblies.id, code: assemblies.code, revision: assemblies.revision })
+				.select({
+					id: assemblies.id,
+					code: assemblies.code,
+					revision: assemblies.revision,
+					batchMilli: assemblies.batchQtyMilli,
+				})
 				.from(assemblies)
 				.where(and(eq(assemblies.parentPartId, product.id), eq(assemblies.status, "active")))
 				.orderBy(asc(assemblies.code))

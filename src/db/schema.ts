@@ -124,6 +124,9 @@ export const assemblies = sqliteTable(
 		salePriceCents: integer("sale_price_cents"),
 		notes: text("notes").notNull().default(""),
 		...audit(),
+		// Units of the parent one batch makes (milli, D145): the lines are the quantities for the whole batch. Checked
+		// in src/domain (> 0) rather than by a CHECK, which SQLite cannot add without rebuilding the table.
+		batchQtyMilli: integer("batch_qty_milli").notNull().default(1000),
 	},
 	(t) => [
 		uniqueIndex("assemblies_parent_code_revision_unique").on(t.parentPartId, t.code, t.revision),

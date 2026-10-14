@@ -149,6 +149,12 @@ const CASES: WriteCase[] = [
 		min: "planner",
 		args: () => ({ assembly: "ARM-ASSY", lines: [{ ref: "ARM-TUBE-300", qty: "2" }] }),
 	},
+	{
+		tool: "set_assembly_production",
+		scope: "catalog:write",
+		min: "planner",
+		args: () => ({ assembly: "ARM-ASSY", batch_qty: "4" }),
+	},
 	{ tool: "new_assembly_revision", scope: "catalog:write", min: "planner", args: () => ({ assembly: "LAMP-DESK" }) },
 	{
 		tool: "activate_assembly",
@@ -451,6 +457,39 @@ describe("catalog tools", () => {
 		expect(noop.data).toMatchObject({ change_set_id: null, note: "LAMP-DESK std Rev2 is already active." });
 	});
 
+	it("sets the batch of a draft in place and of an active assembly on a new draft revision", async () => {
+		await loadDemo();
+		const token = await connect(["catalog:read", "catalog:write"]);
+		const active = await write(token, "set_assembly_production", { assembly: "ARM-ASSY", batch_qty: "4" });
+		expect(active.data).toMatchObject({
+			new_revision: true,
+			assembly: { part: "ARM-ASSY", revision: "Rev2", status: "draft", batch: "4" },
+			active_assembly: { revision: "Rev1", status: "active", batch: "1" },
+		});
+		expect(active.text).toContain("left unchanged");
+		// The new revision has the active one's lines.
+		const lines = (id: number) =>
+			rows("SELECT component_part_id, qty_milli FROM assembly_lines WHERE assembly_id = ?", id);
+		const rev1 = await assemblyId("ARM-ASSY", "std", "Rev1");
+		const rev2 = await assemblyId("ARM-ASSY", "std", "Rev2");
+		expect(await lines(rev2)).toEqual(await lines(rev1));
+		const draft = await write(token, "set_assembly_production", { assembly: rev2, batch_qty: 8 });
+		expect(draft.data).toMatchObject({ new_revision: false, assembly: { revision: "Rev2", batch: "8" } });
+		expect(await one("SELECT batch_qty_milli FROM assemblies WHERE id = ?", rev2)).toEqual({ batch_qty_milli: 8000 });
+		expect((await write(token, "set_assembly_production", { assembly: rev2, batch_qty: "8" })).text).toContain(
+			"Nothing changed",
+		);
+		const zero = await callTool(token, "set_assembly_production", { assembly: rev2, batch_qty: "0" });
+		expect(zero.text).toContain("batch_qty: Must be more than zero.");
+		// Reading it back: the tree's lines are per batch of the parent.
+		await write(token, "activate_assembly", { assembly: rev2 });
+		const tree = await write(token, "get_assembly", { assembly: "ARM-ASSY", qty: "8" });
+		expect(tree.data.assembly).toMatchObject({ revision: "Rev2", batch: "8" });
+		expect((tree.data.lines as { per_parent: string; parent_batch?: string; qty: string }[])[0]).toMatchObject({
+			parent_batch: "8",
+		});
+	});
+
 	it("checks every line like the editor and changes nothing when one is refused", async () => {
 		await loadDemo();
 		const token = await connect(["catalog:write"]);
@@ -743,6 +782,15 @@ describe("build tools", () => {
 		expect(variant.text).toContain("code: Choose an active assembly of this part.");
 		const date = await callTool(token, "plan_build", { ref: "ARM-ASSY", planned_for: "02/11/2026" });
 		expect(date.isError).toBe(true);
+		// In batches of the chosen assembly.
+		await postForm(`/assemblies/${await assemblyId("ARM-ASSY")}/revision`, {});
+		const rev2 = await assemblyId("ARM-ASSY", "std", "Rev2");
+		await postForm(`/assemblies/${rev2}/production`, { batch_qty: "6" });
+		await postForm(`/assemblies/${rev2}/activate`, {});
+		const batches = await write(token, "plan_build", { ref: "ARM-ASSY", batches: "2" });
+		expect(batches.data.build).toMatchObject({ qty: "12", assembly: { revision: "Rev2", batch: "6" } });
+		const both = await callTool(token, "plan_build", { ref: "ARM-ASSY", qty: "1", batches: "1" });
+		expect(both.text).toContain("Give qty or batches, not both.");
 	});
 
 	it("completes a build through the pick list's checks: serials, sub-assembly choices, once only", async () => {

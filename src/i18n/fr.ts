@@ -134,6 +134,11 @@ export const fr: Dict = {
 		assembly_status_mixed: "Toutes les lignes d’un assemblage doivent avoir le même statut.",
 		assembly_price_mixed: "Toutes les lignes d’un assemblage doivent avoir le même sale_price (ou le laisser vide).",
 		assembly_two_active: "Deux assemblages actifs pour le même article et le même code variante (ligne {line}).",
+		assembly_production_not_draft:
+			"Les réglages de fabrication ne se changent que sur un brouillon : créez une nouvelle révision.",
+		assembly_batch_mixed: "Toutes les lignes d’un assemblage doivent avoir le même batch_qty (ou le laisser vide).",
+		assembly_production_active:
+			"{assembly} est actif : changez ses réglages de fabrication dans une nouvelle révision.",
 		invalid_status: "Le statut doit être draft, active ou archived.",
 		archived_part: "Cet article est archivé.",
 		serial_whole_qty: "Un composant suivi par n° de série s’utilise en unités entières.",
@@ -514,6 +519,14 @@ export const fr: Dict = {
 		salePriceHint: "Laisser vide pour reprendre le prix du produit ({price}).",
 		salePriceHintNone: "Laisser vide pour reprendre le prix du produit (pas encore saisi).",
 		salePriceInherited: "prix du produit",
+		batch: "Lot",
+		batchQty: "Unités par lot",
+		batchHint:
+			"Nombre d’unités de {ref} faites en un lot, par exemple les pièces d’un plateau d’impression. Les lignes sont les quantités pour tout le lot.",
+		batchCost: "Coût d’un lot ({qty} {unit})",
+		productionTitle: "Fabrication",
+		productionLocked:
+			"Les réglages de fabrication appartiennent à une révision : créez une nouvelle révision pour les changer.",
 		plannedMargin: "Marge prévue",
 		modes: {
 			buy: "",
@@ -535,6 +548,11 @@ export const fr: Dict = {
 		variant: "Variante (assemblage actif)",
 		noActiveAssembly: "Cet article n’a pas d’assemblage actif : créez-en ou activez-en un d’abord.",
 		qty: "Quantité",
+		qtyIn: "Compté en",
+		qtyUnits: "Unités ({unit})",
+		qtyBatches: "Lots",
+		batchInfo: "{code} : 1 lot = {qty}",
+		batches: "{n} lot(s)",
 		serial: "N° de série",
 		serialHint: "Obligatoire pour les produits suivis par n° de série (une unité par fabrication).",
 		plannedFor: "Prévue le",
@@ -1043,6 +1061,7 @@ export const fr: Dict = {
 			assembly_id: "assemblage",
 			component_part_id: "composant",
 			qty_milli: "quantité",
+			batch_qty_milli: "unités par lot",
 			position: "position",
 			part_id: "article",
 			price_cents: "prix",
@@ -1088,8 +1107,11 @@ export const fr: Dict = {
 			assemblyLineDelete: "Retrait de {ref} de l’assemblage {assembly}",
 			assemblyLineMove: "Réordonnancement des lignes de l’assemblage {assembly}",
 			assemblySalePrice: "Prix de vente de l’assemblage {assembly}",
+			assemblyProduction: "Réglages de fabrication de l’assemblage {assembly}",
 			assemblyLines: "Nouvelles lignes de l’assemblage {assembly}",
 			assemblyRevisionLines: "Création de l’assemblage {assembly} à partir de {from}, avec de nouvelles lignes",
+			assemblyRevisionProduction:
+				"Création de l’assemblage {assembly} à partir de {from}, avec de nouveaux réglages de fabrication",
 			assemblyActivate: "Activation de l’assemblage {assembly}",
 			assemblyDraft: "Retour en brouillon de l’assemblage {assembly}",
 			assemblyArchive: "Archivage de l’assemblage {assembly}",

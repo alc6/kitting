@@ -17,6 +17,7 @@ import {
 	nextBuildNumber,
 	OPEN_STATUSES,
 	serialField,
+	unitsToBuild,
 } from "../domain/builds";
 import { onHandAt } from "../domain/stock";
 import { fmt } from "../i18n";
@@ -53,7 +54,10 @@ const planBuild = tool({
 	annotations: writes({ destructive: false, idempotent: false }),
 	input: z.object({
 		ref: partRef.describe("Reference of the make part to build."),
-		qty: decimal('How many to build (default "1").').optional(),
+		qty: decimal('How many units to build (default "1").').optional(),
+		batches: decimal(
+			'How many batches to build instead of qty, for an assembly that makes batches (e.g. "2" plates of 24 = 48 units).',
+		).optional(),
 		code: z
 			.string()
 			.trim()
@@ -66,6 +70,7 @@ const planBuild = tool({
 		notes: z.string().max(2000).default(""),
 	}),
 	run: async (a, ctx) => {
+		if (a.qty !== undefined && a.batches !== undefined) throw new ToolError("Give qty or batches, not both.");
 		const part = await partByRef(ctx.db, a.ref);
 		const { product, assemblyOptions } = await buildableProduct(ctx.db, part.id);
 		const assembly = a.code
@@ -74,13 +79,16 @@ const planBuild = tool({
 		const v = validate(buildInput, {
 			part_id: String(part.id),
 			assembly_id: assembly ? String(assembly.id) : "",
-			qty: formValue(a.qty),
+			qty: formValue(a.batches ?? a.qty),
+			qty_in: a.batches !== undefined ? "batches" : "units",
 			serial: a.serial,
 			planned_for: a.planned_for ?? "",
 			notes: a.notes,
 		});
-		if (!v.ok) refuse(v.errors, {}, { part_id: "ref", assembly_id: "code" });
-		const errors = await buildPlanErrors(ctx.db, v.data, product, assemblyOptions);
+		if (!v.ok)
+			refuse(v.errors, {}, { part_id: "ref", assembly_id: "code", qty: a.batches !== undefined ? "batches" : "qty" });
+		const d = { ...v.data, qty: unitsToBuild(v.data, assemblyOptions) };
+		const errors = await buildPlanErrors(ctx.db, d, product, assemblyOptions);
 		if (Object.keys(errors).length || !product || !assembly)
 			refuse(errors, {}, { part_id: "ref", assembly_id: "code" });
 		// Numbers are sequential; retry once if someone took the same number meanwhile (as the page does).
@@ -97,10 +105,10 @@ const planBuild = tool({
 								number,
 								partId: product.id,
 								assemblyId: assembly.id,
-								qtyMilli: v.data.qty,
-								serial: v.data.serial || null,
-								plannedFor: v.data.planned_for,
-								notes: v.data.notes,
+								qtyMilli: d.qty,
+								serial: d.serial || null,
+								plannedFor: d.planned_for,
+								notes: d.notes,
 							},
 							ctx.user,
 							now(),
@@ -114,10 +122,15 @@ const planBuild = tool({
 						status: "planned",
 						part: product.ref,
 						unit: product.unit,
-						qtyMilli: v.data.qty,
-						serial: v.data.serial || null,
-						assembly: { assemblyId: assembly.id, code: assembly.code, revision: assembly.revision },
-						plannedFor: v.data.planned_for,
+						qtyMilli: d.qty,
+						serial: d.serial || null,
+						assembly: {
+							assemblyId: assembly.id,
+							code: assembly.code,
+							revision: assembly.revision,
+							batchMilli: assembly.batchMilli,
+						},
+						plannedFor: d.planned_for,
 					},
 				};
 			} catch (err) {

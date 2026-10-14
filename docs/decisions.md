@@ -786,3 +786,38 @@ Short log of choices made where the brief left room. Newest at the bottom of eac
   need a route that works without an Access session. `GET`/`HEAD /health` returns `ok` before any authentication and
   reveals nothing else; any other path or method stays behind Access. The Terraform module's bypass application
   (formerly MCP-only) now always covers `health`, plus the OAuth paths when MCP is on.
+
+## In-house production
+
+- **D145. Batch recipes: an assembly makes N units, any build quantity is proportional, needs round up per line.** A
+  slicer gives the figures of a whole plate ("24 spacers, 260 g"), and 260/24 g cannot be stored in thousandths of a kg.
+  `assemblies.batch_qty_milli` (migration 0006, `ALTER TABLE ADD COLUMN`, default 1000, so every existing assembly is
+  unchanged) is the number of units of the parent one batch makes, and the lines are the quantities for the whole batch.
+  It applies to any make or kit part.
+  - *Any quantity.* A build of Q units takes line × Q / N of each component (like Odoo's BoM quantity): a partial plate
+    is a normal build. Whole batches only was rejected: it forbids recording 10 spacers, and makes pre-building
+    sub-assemblies rigid. The build forms (and `plan_build`) take the quantity in units or in batches of the chosen
+    variant ("2 batches" = 48 units, `unitsToBuild()`); a build stores units.
+  - *Rounding.* `lineNeed()` in `assembly-graph.ts`: `ceil(line × units / batch)` to the thousandth, computed exactly
+    with a BigInt `mulDivCeil()`, once per line and per level, as D26 does: never under-pick. 1 spacer takes 11 g,
+    24 take 260 g, 25 take 271 g. With a batch of 1 this is the previous `mulMilli`, so no figure moves. A
+    serial-tracked component is rounded up to whole units (one serial per unit; a fractional rest "should not
+    happen" in completion).
+  - *Costs.* `CostCalculator.batch()` is the cost of the lines as written; `assembly()` divides it by the batch, rounded
+    half away from zero to the millicent (D25): 5.20 per plate is 0.21667 per spacer. Every reader of the roll-up
+    (part and assembly pages, valuation, margins, margin history) is per unit as before. A build's output cost is still
+    what its explosion actually consumed divided by its quantity (D63), so rounding up shows in the as-built cost.
+  - *Views.* The editor's footer shows the batch cost then the cost per unit; the tree, diagram and exploded list
+    default to one batch (the slicer's figures, `?qty=` still overrides); "per parent" quantities and where-used show
+    "/ 24" when the parent makes batches. Over MCP, `get_assembly`, `explode_assembly` and `get_part` return `batch`, and
+    tree lines `parent_batch` when it is not 1; `get_assembly` keeps its default quantity of 1.
+- **D146. Production settings belong to the revision.** Changing the batch changes what every line means, so it is
+  edited in place only on a draft: the Production card of the assembly page (`POST /assemblies/:id/production`,
+  `assemblies.edit`; the statement repeats `status = 'draft'`), read-only on an active or archived assembly with a hint
+  to make a new revision. This is stricter than the lines of an active assembly, which stay editable (D23). New
+  revisions and new variants copy the batch with the lines (`createAssemblyStatements`, by a subquery on the source).
+  `assemblies.csv` has an optional `batch_qty`, one value per assembly like `sale_price` (`assembly_batch_mixed`), kept
+  when the column is absent, 1 when empty everywhere; it refuses to change the batch of an assembly that is active in
+  the database (`assembly_production_active`), while a new revision in the same file may have its own. Over MCP,
+  `set_assembly_production` follows D128: a draft is changed in place, an active assembly gets the next draft revision
+  with its lines and the new settings, an archived one is refused.

@@ -26,6 +26,7 @@ import {
 	serialCount,
 	serialField,
 	startBuildStatement,
+	unitsToBuild,
 	updateBuildStatement,
 } from "../domain/builds";
 import { buildActualCost, marginOf, salePriceOf } from "../domain/margins";
@@ -34,7 +35,7 @@ import { onHandAt, serialsInStock } from "../domain/stock";
 import { errorText, fmt } from "../i18n";
 import { cn } from "../lib/cn";
 import { isConstraintError } from "../lib/sql";
-import { formatMoney, formatPercent, formatQtyInput, lineCostCents } from "../lib/units";
+import { formatMoney, formatPercent, formatQty, formatQtyInput, lineCostCents, MILLI, mulDivRound } from "../lib/units";
 import { type FieldErrors, validate } from "../lib/validation";
 import { requirePermission } from "../middleware/roles";
 import type { AppEnv } from "../types";
@@ -57,6 +58,7 @@ import {
 	FieldError,
 	FieldGroup,
 	FieldLabel,
+	FieldWrap,
 	Flash,
 	type FormErrors,
 	type FormValues,
@@ -197,7 +199,55 @@ buildRoutes.get("/", async (c) => {
 // ---------------------------------------------------------------------------
 // New build
 
-type AssemblyOption = { id: number; code: string; revision: string };
+type AssemblyOption = { id: number; code: string; revision: string; batchMilli: number };
+
+/** Quantity of a build: in units, or in batches when a variant makes batches (D145). */
+export function BuildQtyField(props: {
+	unit: string;
+	assemblyOptions: AssemblyOption[];
+	values: FormValues;
+	errors: FormErrors;
+}) {
+	const { t, locale } = useApp();
+	const batched = props.assemblyOptions.filter((b) => b.batchMilli !== MILLI);
+	const p = { values: props.values, errors: props.errors };
+	if (batched.length === 0) return <TextField name="qty" label={t.builds.qty} inputmode="decimal" required {...p} />;
+	const error = props.errors.qty;
+	const inBatches = props.values.qty_in === "batches";
+	return (
+		<FieldWrap
+			name="qty"
+			label={t.builds.qty}
+			required
+			hint={batched
+				.map((b) => fmt(t.builds.batchInfo, { code: b.code, qty: `${formatQty(b.batchMilli, locale)} ${props.unit}` }))
+				.join(" · ")}
+			{...p}
+		>
+			<div class="flex items-center gap-2">
+				<input
+					id="f-qty"
+					data-slot="input"
+					name="qty"
+					inputmode="decimal"
+					required
+					value={props.values.qty ?? ""}
+					class="min-w-0 flex-1"
+					aria-invalid={error ? "true" : undefined}
+					aria-describedby={error ? "e-qty" : undefined}
+				/>
+				<select name="qty_in" aria-label={t.builds.qtyIn} class="w-auto">
+					<option value="units" selected={!inBatches}>
+						{fmt(t.builds.qtyUnits, { unit: props.unit })}
+					</option>
+					<option value="batches" selected={inBatches}>
+						{t.builds.qtyBatches}
+					</option>
+				</select>
+			</div>
+		</FieldWrap>
+	);
+}
 
 function NewBuildForm(props: {
 	values: FormValues;
@@ -281,7 +331,7 @@ function NewBuildForm(props: {
 											}))}
 											{...p}
 										/>
-										<TextField name="qty" label={t.builds.qty} inputmode="decimal" required {...p} />
+										<BuildQtyField unit={props.product.unit} assemblyOptions={props.assemblyOptions} {...p} />
 										<TextField
 											name="serial"
 											label={t.builds.serial}
@@ -354,8 +404,9 @@ buildRoutes.post("/", requirePermission("builds.plan"), async (c) => {
 	const errors: FieldErrors = v.ok ? {} : { ...v.errors };
 	const partId = v.ok ? v.data.part_id : null;
 	const data = await newBuildData(c, partId);
-	if (v.ok) Object.assign(errors, await buildPlanErrors(db, v.data, data.product, data.assemblyOptions));
-	if (!v.ok || Object.keys(errors).length > 0 || !data.product) {
+	const d = v.ok ? { ...v.data, qty: unitsToBuild(v.data, data.assemblyOptions) } : undefined;
+	if (d) Object.assign(errors, await buildPlanErrors(db, d, data.product, data.assemblyOptions));
+	if (!d || Object.keys(errors).length > 0 || !data.product) {
 		return page(
 			c,
 			t.builds.new,
@@ -366,7 +417,6 @@ buildRoutes.post("/", requirePermission("builds.plan"), async (c) => {
 			422,
 		);
 	}
-	const d = v.data;
 	const user = c.var.user;
 	// Numbers are sequential; retry once if another user took the same number meanwhile.
 	for (let attempt = 0; ; attempt++) {
@@ -862,8 +912,18 @@ async function renderBuild(
 						? t.builds.created
 						: undefined;
 	const open = OPEN_STATUSES.includes(build.status);
+	const batch = data.assembly.batchQtyMilli;
 	const qtyStat = (
-		<StatCard label={t.builds.qty} value={<Qty milli={build.qtyMilli} unit={part.unit} />} icon={icons.package} />
+		<StatCard
+			label={t.builds.qty}
+			value={<Qty milli={build.qtyMilli} unit={part.unit} />}
+			hint={
+				batch !== MILLI
+					? fmt(t.builds.batches, { n: formatQty(mulDivRound(build.qtyMilli, MILLI, batch), c.var.locale) })
+					: undefined
+			}
+			icon={icons.package}
+		/>
 	);
 	const serialStat = <StatCard label={t.builds.serial} value={build.serial ?? t.common.none} icon={icons.barcode} />;
 	const plannedStat = (

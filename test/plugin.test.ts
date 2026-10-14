@@ -53,6 +53,7 @@ const RESULT_FIELDS = [
 	"on_order",
 	"qty_per_parent",
 	"per_parent",
+	"parent_batch",
 	"rolled_up_cost",
 	"where_used",
 	"standard_cost",

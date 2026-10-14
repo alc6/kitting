@@ -4,7 +4,7 @@ import { ASSEMBLY_STATUSES, type AssemblyStatus, assemblies, assemblyLines, pric
 import type { Statement } from "../../lib/db";
 import { formatCentsInput, formatQtyInput, MILLI } from "../../lib/units";
 import { field, REF_PATTERN, validate } from "../../lib/validation";
-import { DEFAULT_CODE, DEFAULT_REVISION, loadGraph } from "../assemblies";
+import { assemblyLabel, DEFAULT_CODE, DEFAULT_REVISION, loadGraph } from "../assemblies";
 import { type AssemblyGraph, findCycle, type GraphAssembly, type GraphLine } from "../assembly-graph";
 import { checkHeader, emptyPlan, fieldIssues, type Importer, type PlanRow, type RowIssue } from "./types";
 
@@ -26,6 +26,8 @@ const assemblyRow = z.object({
 		.refine((v): v is AssemblyStatus => (ASSEMBLY_STATUSES as readonly string[]).includes(v), "invalid_status")
 		.transform((v) => v as AssemblyStatus),
 	sale_price: field.money(),
+	/** Units per batch (D145); empty = not given (0). */
+	batch_qty: field.qty({ positive: true, empty: 0 }),
 	component_ref: field.required(64),
 	qty: field.qty({ positive: true }),
 	notes: field.text(500),
@@ -40,6 +42,8 @@ type Group = {
 	status: AssemblyStatus;
 	/** Variant selling price from the file (only used when the sale_price column is present). */
 	salePrice: number | null;
+	/** Units per batch from the file, null when empty (only used when the batch_qty column is present). */
+	batch: number | null;
 	lines: { line: number; componentId: number; qtyMilli: number; notes: string }[];
 	existing?: GraphAssembly;
 };
@@ -51,18 +55,20 @@ const groupKey = (parentId: number, code: string, revision: string) => `${parent
  * each group replaces the lines of that assembly (created if new). Activating an assembly archives
  * the previously active assembly of the same parent and code. Cycles are rejected.
  * The optional sale_price column sets the variant's selling price (one value per assembly; empty everywhere
- * clears it); without the column, prices are kept.
+ * clears it); without the column, prices are kept. The optional batch_qty column works the same way (empty everywhere
+ * means 1), but cannot change the batch of an assembly that is active in the database (D146).
  */
 export const assembliesImporter: Importer = {
 	type: "assemblies",
 	required: ["parent_ref", "component_ref", "qty"],
-	optional: ["code", "revision", "status", "sale_price", "notes"],
-	columns: ["parent_ref", "code", "revision", "status", "sale_price", "component_ref", "qty", "notes"],
+	optional: ["code", "revision", "status", "sale_price", "batch_qty", "notes"],
+	columns: ["parent_ref", "code", "revision", "status", "sale_price", "batch_qty", "component_ref", "qty", "notes"],
 	example: [
-		["SA-MAIN", "std", "Rev1", "active", "", "RES-10K", "4", ""],
-		["SA-MAIN", "std", "Rev1", "active", "", "CBL-2C", "0.35", "cut to length"],
-		["SA-MAIN", "std", "Rev1", "active", "", "KIT-SCREWS", "1", ""],
-		["KIT-SCREWS", "std", "Rev1", "active", "", "SCREW-M3", "6", ""],
+		["SA-MAIN", "std", "Rev1", "active", "", "", "RES-10K", "4", ""],
+		["SA-MAIN", "std", "Rev1", "active", "", "", "CBL-2C", "0.35", "cut to length"],
+		["SA-MAIN", "std", "Rev1", "active", "", "", "KIT-SCREWS", "1", ""],
+		["KIT-SCREWS", "std", "Rev1", "active", "", "", "SCREW-M3", "6", ""],
+		["SPACER-10", "std", "Rev1", "active", "", "24", "PLA-BLACK", "0.26", "one print plate"],
 	],
 
 	async plan({ db }, table) {
@@ -75,6 +81,7 @@ export const assembliesImporter: Importer = {
 		]);
 		const priceOf = new Map(assemblyPrices.map((b) => [b.id, b.salePriceCents]));
 		const pricesInFile = table.header.includes("sale_price");
+		const batchesInFile = table.header.includes("batch_qty");
 		const byRef = new Map([...graph.parts.values()].map((p) => [p.ref, p]));
 		const existingByKey = new Map(
 			[...graph.assemblies.values()].map((b) => [groupKey(b.parentPartId, b.code, b.revision), b]),
@@ -121,6 +128,7 @@ export const assembliesImporter: Importer = {
 					revision: d.revision,
 					status: d.status,
 					salePrice: d.sale_price,
+					batch: d.batch_qty || null,
 					lines: [],
 					existing: existingByKey.get(key),
 				};
@@ -131,8 +139,28 @@ export const assembliesImporter: Importer = {
 			} else if (d.sale_price !== null && g.salePrice !== null && d.sale_price !== g.salePrice) {
 				issues.push({ line: rec.line, column: "sale_price", key: "assembly_price_mixed" });
 				continue;
-			} else if (g.salePrice === null) g.salePrice = d.sale_price;
+			} else if (d.batch_qty && g.batch !== null && d.batch_qty !== g.batch) {
+				issues.push({ line: rec.line, column: "batch_qty", key: "assembly_batch_mixed" });
+				continue;
+			} else {
+				if (g.salePrice === null) g.salePrice = d.sale_price;
+				if (g.batch === null) g.batch = d.batch_qty || null;
+			}
 			g.lines.push({ line: rec.line, componentId: comp.id, qtyMilli: d.qty, notes: d.notes });
+		}
+
+		// The batch of an active assembly changes only through a new revision (D146).
+		const batchOf = (g: Group) => (batchesInFile ? (g.batch ?? MILLI) : (g.existing?.batchMilli ?? MILLI));
+		for (const g of groups.values()) {
+			if (g.existing?.status === "active" && batchOf(g) !== g.existing.batchMilli) {
+				const parentRef = graph.parts.get(g.parentId)?.ref ?? "";
+				issues.push({
+					line: g.firstLine,
+					column: "batch_qty",
+					key: "assembly_production_active",
+					vars: { assembly: assemblyLabel(parentRef, g) },
+				});
+			}
 		}
 
 		// At most one active assembly per (parent, code) in the file.
@@ -178,6 +206,7 @@ export const assembliesImporter: Importer = {
 				code: g.code,
 				revision: g.revision,
 				status: g.status,
+				batchMilli: batchOf(g),
 				lines,
 			});
 		}
@@ -196,6 +225,9 @@ export const assembliesImporter: Importer = {
 			if (g.existing && pricesInFile && oldPrice !== g.salePrice) {
 				const money = (v: number | null) => (v === null ? "∅" : formatCentsInput(v));
 				changes.push(`sale_price: ${money(oldPrice)} → ${money(g.salePrice)}`);
+			}
+			if (g.existing && batchOf(g) !== g.existing.batchMilli) {
+				changes.push(`batch_qty: ${formatQtyInput(g.existing.batchMilli)} → ${formatQtyInput(batchOf(g))}`);
 			}
 			for (const b of toArchive) {
 				if (b.parentPartId === g.parentId && b.code === g.code && g.status === "active") {
@@ -238,12 +270,13 @@ export const assembliesImporter: Importer = {
 				const ordered = [...changed].sort((a, b) => Number(a.status === "active") - Number(b.status === "active"));
 				for (const g of ordered) {
 					const price = pricesInFile ? { salePriceCents: g.salePrice } : {};
+					const batch = batchesInFile ? { batchQtyMilli: batchOf(g) } : {};
 					const oldPrice = g.existing ? (priceOf.get(g.existing.id) ?? null) : null;
 					if (g.existing) {
 						stmts.push(
 							db
 								.update(assemblies)
-								.set({ status: g.status, ...price, ...audit })
+								.set({ status: g.status, ...price, ...batch, ...audit })
 								.where(eq(assemblies.id, g.existing.id)),
 						);
 						stmts.push(db.delete(assemblyLines).where(eq(assemblyLines.assemblyId, g.existing.id)));
@@ -255,6 +288,7 @@ export const assembliesImporter: Importer = {
 								revision: g.revision,
 								status: g.status,
 								...price,
+								...batch,
 								createdBy: user,
 								createdAt: now,
 								...audit,
@@ -304,11 +338,13 @@ export const assembliesImporter: Importer = {
 			revision: string;
 			status: string;
 			sale_price_cents: number | null;
+			batch_qty_milli: number;
 			component_ref: string;
 			qty_milli: number;
 			notes: string;
 		}>(sql`
-			SELECT p.ref AS parent_ref, b.code, b.revision, b.status, b.sale_price_cents, c.ref AS component_ref, l.qty_milli, l.notes
+			SELECT p.ref AS parent_ref, b.code, b.revision, b.status, b.sale_price_cents, b.batch_qty_milli,
+				c.ref AS component_ref, l.qty_milli, l.notes
 			FROM assembly_lines l
 			JOIN assemblies b ON b.id = l.assembly_id
 			JOIN parts p ON p.id = b.parent_part_id
@@ -320,6 +356,7 @@ export const assembliesImporter: Importer = {
 			r.revision,
 			r.status,
 			r.sale_price_cents === null ? "" : formatCentsInput(r.sale_price_cents, locale),
+			formatQtyInput(r.batch_qty_milli, locale),
 			r.component_ref,
 			formatQtyInput(r.qty_milli, locale),
 			r.notes,

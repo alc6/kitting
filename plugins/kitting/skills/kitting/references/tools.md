@@ -16,8 +16,8 @@ listed user, but costs need planner (or the cost option set on the Users page).
   integer suffixes dropped (`on_hand`, `unit_cost`).
 - **References and numbers are case-insensitive**: part refs (`lamp-desk`), supplier names, build numbers
   (`b-0001`), PO numbers.
-- **Selecting an assembly** (`get_assembly`, `explode_assembly`, `set_assembly_lines`, `new_assembly_revision`, `activate_assembly`,
-  `archive_assembly`): `assembly` is an assembly id (number) or the reference of the part it builds (its active assembly), plus an
+- **Selecting an assembly** (`get_assembly`, `explode_assembly`, `set_assembly_lines`, `set_assembly_production`,
+  `new_assembly_revision`, `activate_assembly`, `archive_assembly`): `assembly` is an assembly id (number) or the reference of the part it builds (its active assembly), plus an
   optional `code` (variant, default `std`, else the only active one) and an optional `revision` (any status).
 - **Every write result** carries `change_set_id`, `revertible`, an `undo` sentence and, only when it can be undone,
   `history_path` and `history_url` (the page where the user clicks Undo). A call that changes nothing records
@@ -32,6 +32,9 @@ listed user, but costs need planner (or the cost option set on the Users page).
   `costs_hidden: true`. Never guess an amount.
 - **Lists** have `limit` and say `truncated: true` when there is more; narrow the query instead of paging blindly.
 - A result key named after a quantity (`qty`, `on_hand`, `short`) is in the part's unit.
+- **Batches.** An assembly makes `batch` units at a time (1 unless set, e.g. 24 parts per print plate), and its lines
+  are the quantities for the whole batch. Quantities needed for a build are line × units / batch, rounded up to the
+  thousandth (whole units for serial-tracked parts); costs are per unit.
 
 ## Reading: `catalog:read`
 
@@ -46,21 +49,21 @@ Find parts by reference, name or any supplier's reference. Use it before relying
 One part in full: details, prices, supplier offers (preferred first), on hand, its assemblies with unit cost, and where it is used.
 - **Scope:** `catalog:read` · **Permission:** none
 - **Inputs:** `ref` (part reference).
-- **Returns:** `part` (`ref`, `name`, `kind`, `unit`, `track_serial`, `archived`, `notes`, `on_hand`, `standard_cost`, `sale_price`), `offers[]` (`supplier`, `preferred`, `supplier_ref`, `price`, `moq`, `pack_size`, `lead_days`), `assemblies[]` (`assembly_id`, `code`, `revision`, `status`, `unit_cost`, `cost_incomplete`, `sale_price`), `rolled_up_cost`, `where_used[]` (`parent`, `assembly_id`, `code`, `revision`, `status`, `depth`, `via`, `qty_per_parent`).
+- **Returns:** `part` (`ref`, `name`, `kind`, `unit`, `track_serial`, `archived`, `notes`, `on_hand`, `standard_cost`, `sale_price`), `offers[]` (`supplier`, `preferred`, `supplier_ref`, `price`, `moq`, `pack_size`, `lead_days`), `assemblies[]` (`assembly_id`, `code`, `revision`, `status`, `batch`, `unit_cost`, `cost_incomplete`, `sale_price`), `rolled_up_cost`, `where_used[]` (`parent`, `assembly_id`, `code`, `revision`, `status`, `depth`, `via`, `qty_per_parent` for one batch of `batch` units of the parent).
 - **Example:** `get_part({ "ref": "PAD-FELT" })`
 
 ### `get_assembly`
 The structure of an assembly as a tree with cost roll-up. Kits and sub-assemblies are expanded through their active assemblies.
 - **Scope:** `catalog:read` · **Permission:** none
 - **Inputs:** `assembly`, `code`, `revision` (selector), `qty` (how many to build, default 1).
-- **Returns:** `assembly` (`assembly_id`, `part`, `code`, `revision`, `status`), `qty`, `cost` (`unit_cost`, `total_cost`, `incomplete`, `missing_costs`), `lines[]` as a tree: `ref`, `kind`, `per_parent`, `qty` (cumulative), `mode`, `unit_cost`, `extended_cost`, `cost_incomplete`, `children`.
+- **Returns:** `assembly` (`assembly_id`, `part`, `code`, `revision`, `status`, `batch`), `qty`, `cost` (`unit_cost`, `total_cost`, `incomplete`, `missing_costs`), `lines[]` as a tree: `ref`, `kind`, `per_parent` (per batch of the parent; `parent_batch` gives its size when it is not 1), `qty` (cumulative), `mode`, `unit_cost`, `extended_cost`, `cost_incomplete`, `children`.
 - **Example:** `get_assembly({ "assembly": "LAMP-DESK", "code": "warm", "qty": 3 })`
 
 ### `explode_assembly`
 The flat list of components needed for a quantity, with on hand and shortfall. Fee lines are listed apart (cost only).
 - **Scope:** `catalog:read` · **Permission:** none
 - **Inputs:** `assembly`, `code`, `revision` (selector), `qty` (required), `use_stock` (take sub-assemblies already in stock instead of building them; default false).
-- **Returns:** `assembly`, `qty`, `use_stock`, `components[]` (`ref`, `name`, `kind`, `unit`, `qty`, `on_hand`, `short`, `missing_assembly`, `unit_cost`, `extended_cost`), `fees[]`, `total_cost`, `cost_incomplete`.
+- **Returns:** `assembly` (with its `batch`), `qty`, `use_stock`, `components[]` (`ref`, `name`, `kind`, `unit`, `qty`, `on_hand`, `short`, `missing_assembly`, `unit_cost`, `extended_cost`), `fees[]`, `total_cost`, `cost_incomplete`.
 - **Example:** `explode_assembly({ "assembly": "LAMP-DESK", "code": "warm", "qty": 3, "use_stock": true })`
 
 ### `list_recent_changes`
@@ -163,9 +166,16 @@ Creates a draft assembly for a make or kit part, empty or copied from another as
 ### `set_assembly_lines`
 Replaces every line of an assembly at once, in order, with the editor's checks (known part, not archived, whole units for serial-tracked parts, no cycle). Nothing changes if one line is refused. An active assembly is never edited: the next revision is created as a draft (with the active one's notes, lines replaced by yours) and the active assembly stays as it is. Archived assemblies are read-only.
 - **Scope:** `catalog:write` · **Permission:** `assemblies.edit` (planner)
-- **Inputs:** `assembly`, `code`, `revision` (selector), `lines[]` of `ref`, `qty`, `notes` (1 to 500 lines). Send the complete list, not a delta.
+- **Inputs:** `assembly`, `code`, `revision` (selector), `lines[]` of `ref`, `qty` (per batch of the assembly: per unit when its `batch` is 1), `notes` (1 to 500 lines). Send the complete list, not a delta.
 - **Returns:** the write envelope, `assembly` (the one that was edited), `new_revision` (true when a draft revision was created), `active_assembly` (then), `note`, `lines`.
 - **Example:** `set_assembly_lines({ "assembly": "BASE-ASSY", "lines": [{ "ref": "BASE-PLATE", "qty": 1 }, { "ref": "PAD-FELT", "qty": 6 }] })`
+
+### `set_assembly_production`
+How an assembly is produced: `batch_qty`, the units one batch makes (24 parts per print plate: its lines are then the plate's quantities). These settings belong to a revision: a draft is changed in place; an active assembly is never changed, the next draft revision is created with its lines and the new settings; an archived one is refused.
+- **Scope:** `catalog:write` · **Permission:** `assemblies.edit` (planner)
+- **Inputs:** `assembly`, `code`, `revision` (selector), `batch_qty`; left out, it keeps its value.
+- **Returns:** the write envelope, `assembly` (with `batch`), `new_revision`, `active_assembly` and `note` (when a revision was created).
+- **Example:** `set_assembly_production({ "assembly": "LAMP-CLIP", "revision": "Rev2", "batch_qty": "24" })`
 
 ### `new_assembly_revision`
 Copies an assembly (any status) with its lines into the next draft revision of the same part and code. The original is not changed.
@@ -251,8 +261,8 @@ Posts counted quantities: for each part one count move for the difference with t
 ### `plan_build`
 Plans a build of a make part from one of its active assemblies. A serial-tracked product is built one unit at a time with its own serial.
 - **Scope:** `builds:write` · **Permission:** `builds.plan` (operator)
-- **Inputs:** `ref`, `qty` (default 1), `code` (variant), `serial`, `planned_for` (date), `notes`.
-- **Returns:** the write envelope and `build` (`number`, `status`, `part`, `qty`, `serial`, `assembly`, `planned_for`).
+- **Inputs:** `ref`, `qty` (units, default 1) or `batches` (that many batches of the chosen assembly), `code` (variant), `serial`, `planned_for` (date), `notes`.
+- **Returns:** the write envelope and `build` (`number`, `status`, `part`, `qty`, `serial`, `assembly` with its `batch`, `planned_for`).
 - **Example:** `plan_build({ "ref": "LAMP-DESK", "code": "warm", "serial": "L-0100", "planned_for": "2026-11-02" })`
 
 ### `complete_build`

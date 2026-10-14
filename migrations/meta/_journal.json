@@ -43,6 +43,13 @@
       "when": 1791897618332,
       "tag": "0005_history",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1791960956397,
+      "tag": "0006_batch_recipes",
+      "breakpoints": true
     }
   ]
 }

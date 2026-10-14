@@ -137,6 +137,14 @@ export function mulDivRound(a: number, b: number, c: number): number {
 	return Number(q);
 }
 
+/** ceil(a × b / c) for positive c, exact for large values (BigInt intermediate): quantities never round down. */
+export function mulDivCeil(a: number, b: number, c: number): number {
+	const n = BigInt(a) * BigInt(b);
+	const d = BigInt(c);
+	const q = n / d;
+	return Number(n % d !== 0n && n > 0n === d > 0n ? q + 1n : q);
+}
+
 /** A ratio in basis points (1 % = 100): numerator / denominator × 10 000, rounded; null when undefined. */
 export function basisPoints(numerator: number, denominator: number): number | null {
 	return denominator === 0 ? null : mulDivRound(numerator, 10_000, denominator);
