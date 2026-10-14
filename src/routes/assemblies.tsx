@@ -22,6 +22,7 @@ import {
 	findAssembly,
 	getAssembly,
 	getAssemblyLines,
+	keptSalePrice,
 	listAssemblies,
 	loadGraph,
 	newAssemblyErrors,
@@ -503,18 +504,21 @@ assemblyRoutes.post("/", requirePermission("assemblies.edit"), async (c) => {
 	const d = v.data;
 	const user = c.var.user;
 	const now = nowIso();
-	const parentRef = (
-		await db
-			.select({ ref: parts.ref })
-			.from(parts)
-			.where(eq(parts.id, d.parent_part_id as number))
-	)[0]?.ref;
+	const parentPartId = d.parent_part_id as number;
+	const parentRef = (await db.select({ ref: parts.ref }).from(parts).where(eq(parts.id, parentPartId)))[0]?.ref;
+	const source = d.copy_from ? (await getAssembly(db, d.copy_from))?.assembly : undefined;
 	await saveChanges(
 		c,
 		fmt(t.history.summaries.assemblyCreate, { assembly: assemblyLabel(parentRef ?? "", d) }),
 		createAssemblyStatements(
 			db,
-			{ parentPartId: d.parent_part_id as number, code: d.code, revision: d.revision, notes: d.notes },
+			{
+				parentPartId,
+				code: d.code,
+				revision: d.revision,
+				notes: d.notes,
+				salePriceCents: keptSalePrice(source, { parentPartId, code: d.code }),
+			},
 			d.copy_from,
 			user,
 			now,
@@ -1344,7 +1348,13 @@ assemblyRoutes.post("/:id/revision", requirePermission("assemblies.edit"), async
 		}),
 		createAssemblyStatements(
 			db,
-			{ parentPartId: assembly.parentPartId, code: assembly.code, revision, notes: assembly.notes },
+			{
+				parentPartId: assembly.parentPartId,
+				code: assembly.code,
+				revision,
+				notes: assembly.notes,
+				salePriceCents: assembly.salePriceCents,
+			},
 			assembly.id,
 			c.var.user,
 			nowIso(),

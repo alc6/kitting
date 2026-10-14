@@ -417,8 +417,20 @@ export function activateStatements(db: Db, assembly: Assembly, user: string, now
 }
 
 /**
+ * The variant's own selling price a new assembly starts with (D166): a new revision of the same variant (same part and
+ * code) keeps its source's; a new variant, or a copy of another part's assembly, starts without one (the part's applies).
+ */
+export function keptSalePrice(
+	source: Pick<Assembly, "parentPartId" | "code" | "salePriceCents"> | undefined,
+	target: { parentPartId: number; code: string },
+): number | null {
+	return source?.parentPartId === target.parentPartId && source.code === target.code ? source.salePriceCents : null;
+}
+
+/**
  * Statements creating an assembly and copying the lines of `sourceAssemblyId` into it (one batch). The lines are
- * quantities per batch, so the production settings are copied with them; `production` overrides them.
+ * quantities per batch, so the production settings are copied with them; `production` overrides them. The variant's
+ * selling price is not copied with the lines: the caller passes it (`keptSalePrice`, D166), logged in the price history.
  */
 export function createAssemblyStatements(
 	db: Db,
@@ -429,6 +441,7 @@ export function createAssemblyStatements(
 		notes: string;
 		status?: AssemblyStatus;
 		production?: Production;
+		salePriceCents?: number | null;
 	},
 	sourceAssemblyId: number | null,
 	user: string,
@@ -436,6 +449,8 @@ export function createAssemblyStatements(
 ): Statement[] {
 	const copied = (column: SQL) =>
 		sourceAssemblyId ? sql`(SELECT ${column} FROM assemblies WHERE id = ${sourceAssemblyId})` : undefined;
+	const created = sql`(SELECT id FROM assemblies WHERE parent_part_id = ${b.parentPartId} AND code = ${b.code} AND revision = ${b.revision})`;
+	const salePriceCents = b.salePriceCents ?? null;
 	const stmts: Statement[] = [
 		db.insert(assemblies).values({
 			parentPartId: b.parentPartId,
@@ -446,19 +461,28 @@ export function createAssemblyStatements(
 			batchQtyMilli: b.production?.batchMilli ?? copied(sql.raw("batch_qty_milli")),
 			machineTypeId: b.production ? b.production.machineTypeId : copied(sql.raw("machine_type_id")),
 			machineMinutes: b.production?.machineMinutes ?? copied(sql.raw("machine_minutes")),
+			salePriceCents,
 			createdBy: user,
 			updatedBy: user,
 			createdAt: now,
 			updatedAt: now,
 		}),
 	];
+	if (salePriceCents !== null) {
+		stmts.push(
+			priceRecordStatement(
+				db,
+				{ partId: b.parentPartId, kind: "sale", assemblyId: created, priceCents: salePriceCents, source: "form" },
+				user,
+				now,
+			),
+		);
+	}
 	if (sourceAssemblyId) {
 		// INSERT ... SELECT over every column of assembly_lines, in table order (id is assigned).
 		stmts.push(
 			db.insert(assemblyLines).select(sql`
-				SELECT NULL,
-					(SELECT id FROM assemblies WHERE parent_part_id = ${b.parentPartId} AND code = ${b.code} AND revision = ${b.revision}),
-					component_part_id, qty_milli, position, notes, ${now}, ${now}, ${user}, ${user}
+				SELECT NULL, ${created}, component_part_id, qty_milli, position, notes, ${now}, ${now}, ${user}, ${user}
 				FROM assembly_lines WHERE assembly_id = ${sourceAssemblyId}`),
 		);
 	}
