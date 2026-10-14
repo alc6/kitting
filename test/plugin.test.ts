@@ -99,6 +99,13 @@ const RESULT_FIELDS = [
 	"build_output",
 	"purchase_order",
 	"purchase_orders",
+	// Attached files (D165).
+	"size_bytes",
+	"uploaded_at",
+	"uploaded_by",
+	"download_path",
+	"download_url",
+	"attached_to",
 ];
 
 function inputFields(): Set<string> {
