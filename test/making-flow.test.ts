@@ -2,6 +2,7 @@
 // builds (across levels, in whole runs, with planned builds counted as stock to come), and machines set up in one step.
 import { describe, expect, it } from "vitest";
 import { computeShortages } from "../src/domain/purchasing";
+import { revertChangeSet } from "../src/domain/revert";
 import {
 	assemblyId,
 	insertPart,
@@ -13,6 +14,7 @@ import {
 	request,
 	rows,
 	setRole,
+	TESTER,
 	testDb,
 } from "./helpers";
 
@@ -187,5 +189,61 @@ describe("how a made part is made, on its page", () => {
 		await setRole("viewer");
 		expect(await (await request(`/parts/${id}`, {}, NOT_ADMIN)).text()).not.toContain("Set up how it&#39;s made");
 		expect((await postForm(`/parts/${id}/recipe`, {}, NOT_ADMIN)).status).toBe(403);
+	});
+});
+
+describe("machines set up in one step", () => {
+	it("creates a machine type with the machines the workshop owns, in one change set", async () => {
+		const form = await (await request("/machines/types/new")).text();
+		expect(form).toContain("How many do you own?");
+		expect(form).toContain('name="owned"');
+		// One printer: the machine takes the type's name.
+		const one_ = await postForm("/machines/types", {
+			name: "Desktop printer",
+			hourly_rate: "0.80",
+			notes: "",
+			owned: "1",
+		});
+		expect(one_.status).toBe(303);
+		// Three: numbered.
+		await postForm("/machines/types", { name: "Laser", hourly_rate: "", notes: "", owned: "3" });
+		// None: the type alone, as before.
+		await postForm("/machines/types", { name: "Lathe", hourly_rate: "", notes: "", owned: "0" });
+		expect(
+			await rows(
+				"SELECT m.name, t.name AS type, m.status FROM machines m JOIN machine_types t ON t.id = m.machine_type_id ORDER BY m.id",
+			),
+		).toEqual([
+			{ name: "Desktop printer", type: "Desktop printer", status: "active" },
+			{ name: "Laser 1", type: "Laser", status: "active" },
+			{ name: "Laser 2", type: "Laser", status: "active" },
+			{ name: "Laser 3", type: "Laser", status: "active" },
+		]);
+		expect(await rows("SELECT summary FROM change_sets ORDER BY id")).toEqual([
+			{ summary: "Create machine type Desktop printer with 1 machine(s)" },
+			{ summary: "Create machine type Laser with 3 machine(s)" },
+			{ summary: "Create machine type Lathe" },
+		]);
+		// Refused: too many, or a name another machine has.
+		expect(
+			await (await postForm("/machines/types", { name: "Mill", hourly_rate: "", notes: "", owned: "21" })).text(),
+		).toContain("At most 20 at once");
+		await postForm("/machines/types", { name: "Router", hourly_rate: "", notes: "", owned: "0" });
+		await postForm("/machines", {
+			name: "Saw",
+			machine_type_id: String((await one<{ id: number }>("SELECT id FROM machine_types WHERE name = 'Router'")).id),
+			status: "active",
+			notes: "",
+		});
+		const taken = await postForm("/machines/types", { name: "Saw", hourly_rate: "", notes: "", owned: "1" });
+		expect(taken.status).toBe(422);
+		expect(await taken.text()).toContain("A machine already has one of these names");
+		// Undoing the creation removes the type and its machines together.
+		const set = (await one<{ id: number }>("SELECT id FROM change_sets WHERE summary LIKE '%Laser%'")).id;
+		expect(
+			await revertChangeSet(testDb(), { role: "admin", seeCosts: true }, set, { user: TESTER, summary: () => "Undo" }),
+		).toMatchObject({ ok: true });
+		expect(await rows("SELECT name FROM machines WHERE name LIKE 'Laser%'")).toEqual([]);
+		expect(await rows("SELECT name FROM machine_types WHERE name = 'Laser'")).toEqual([]);
 	});
 });

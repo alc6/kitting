@@ -4,17 +4,22 @@ import { Hono } from "hono";
 import { MACHINE_STATUSES, type MachineType } from "../db/schema";
 import {
 	createMachineStatement,
+	createOwnedMachineStatements,
 	getMachine,
 	getMachineType,
 	listMachines,
 	listMachineTypes,
+	MAX_OWNED,
 	machineErrors,
 	machineInput,
+	machineNameTaken,
 	machineToForm,
 	machineTypeInput,
 	machineTypeNameTaken,
 	machineTypeOptions,
 	machineTypeToForm,
+	ownedInput,
+	ownedMachineNames,
 	rateHistoryOf,
 	recipesOfType,
 	saveMachineTypeStatements,
@@ -243,7 +248,14 @@ machineRoutes.get("/", async (c) => {
 // ---------------------------------------------------------------------------
 // Machine types
 
-function MachineTypeForm(props: { action: string; values: FormValues; errors: FormErrors; submit: string }) {
+/** A machine type's form; on creation it also asks how many machines of it the workshop owns (D157). */
+function MachineTypeForm(props: {
+	action: string;
+	values: FormValues;
+	errors: FormErrors;
+	submit: string;
+	create?: boolean;
+}) {
 	const { t } = useApp();
 	const p = { values: props.values, errors: props.errors };
 	return (
@@ -261,6 +273,15 @@ function MachineTypeForm(props: { action: string; values: FormValues; errors: Fo
 									hint={t.machines.hourlyRateHint}
 									{...p}
 								/>
+								{props.create ? (
+									<TextField
+										name="owned"
+										label={t.machines.owned}
+										hint={t.machines.ownedHint}
+										inputmode="numeric"
+										{...p}
+									/>
+								) : null}
 							</div>
 							<TextArea name="notes" label={t.common.notes} {...p} />
 						</FieldGroup>
@@ -284,17 +305,27 @@ machineRoutes.get("/types/new", requirePermission("machines.edit"), (c) => {
 		t.machines.newType,
 		<>
 			<PageHeader title={t.machines.newType} subtitle={t.machines.typesIntro} />
-			<MachineTypeForm action="/machines/types" values={{}} errors={{}} submit={t.common.create} />
+			<MachineTypeForm action="/machines/types" values={{ owned: "1" }} errors={{}} submit={t.common.create} create />
 		</>,
 	);
 });
 
 machineRoutes.post("/types", requirePermission("machines.edit"), async (c) => {
 	const t = c.var.t;
+	const db = c.var.db;
 	const body = await c.req.parseBody();
 	const v = validate(machineTypeInput, body);
-	let errors: FieldErrors = v.ok ? {} : v.errors;
-	if (v.ok && (await machineTypeNameTaken(c.var.db, v.data.name))) errors = { name: "duplicate_name" };
+	const o = validate(ownedInput, body);
+	let errors: FieldErrors = { ...(v.ok ? {} : v.errors), ...(o.ok ? {} : o.errors) };
+	if (v.ok && (await machineTypeNameTaken(db, v.data.name))) errors = { ...errors, name: "duplicate_name" };
+	const owned = o.ok ? o.data.owned : 0;
+	if (owned > MAX_OWNED) errors = { ...errors, owned: "too_many_machines" };
+	const names = v.ok ? ownedMachineNames(v.data.name, Math.min(owned, MAX_OWNED)) : [];
+	for (const name of names)
+		if (await machineNameTaken(db, name)) {
+			errors = { ...errors, owned: "machine_names_taken" };
+			break;
+		}
 	if (!v.ok || Object.keys(errors).length) {
 		return page(
 			c,
@@ -304,19 +335,26 @@ machineRoutes.post("/types", requirePermission("machines.edit"), async (c) => {
 				<MachineTypeForm
 					action="/machines/types"
 					values={body as FormValues}
-					errors={translateErrors(c, errors)}
+					errors={translateErrors(c, errors, { max: String(MAX_OWNED) })}
 					submit={t.common.create}
+					create
 				/>
 			</>,
 			422,
 		);
 	}
+	const now = nowIso();
 	await saveChanges(
 		c,
-		fmt(t.history.summaries.machineTypeCreate, { name: v.data.name }),
-		saveMachineTypeStatements(c.var.db, v.data, undefined, "form", c.var.user, nowIso()),
+		names.length
+			? fmt(t.history.summaries.machineTypeCreateOwned, { name: v.data.name, n: names.length })
+			: fmt(t.history.summaries.machineTypeCreate, { name: v.data.name }),
+		[
+			...saveMachineTypeStatements(db, v.data, undefined, "form", c.var.user, now),
+			...createOwnedMachineStatements(db, v.data.name, names, c.var.user, now),
+		],
 	);
-	const created = (await listMachineTypes(c.var.db)).find((r) => r.name === v.data.name);
+	const created = (await listMachineTypes(db)).find((r) => r.name === v.data.name);
 	return redirectOk(c, created ? `/machines/types/${created.id}` : "/machines");
 });
 

@@ -259,6 +259,33 @@ export function saveMachineTypeStatements(
 	return stmts;
 }
 
+/** How many machines a new machine type comes with, set up in the same form (D157): none to 20. */
+export const ownedInput = z.object({ owned: field.int() });
+export const MAX_OWNED = 20;
+
+/** Names of the machines a new type comes with (D157): the type's name for one, numbered for several. */
+export function ownedMachineNames(typeName: string, owned: number): string[] {
+	if (owned <= 0) return [];
+	if (owned === 1) return [typeName];
+	return Array.from({ length: owned }, (_, i) => `${typeName} ${i + 1}`);
+}
+
+/** The machines of a type created in the same batch, found by its name (D157), in service. */
+export function createOwnedMachineStatements(db: Db, typeName: string, names: string[], user: string, now: string) {
+	return names.map((name) =>
+		db.insert(machines).values({
+			name,
+			machineTypeId: sql<number>`(SELECT id FROM machine_types WHERE name = ${typeName})`,
+			status: "active",
+			notes: "",
+			createdBy: user,
+			updatedBy: user,
+			createdAt: now,
+			updatedAt: now,
+		}),
+	);
+}
+
 export function createMachineStatement(db: Db, d: MachineInput, user: string, now: string) {
 	return db
 		.insert(machines)
