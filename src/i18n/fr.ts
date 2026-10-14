@@ -633,8 +633,10 @@ export const fr: Dict = {
 		toMakeIntro:
 			"Articles fabriqués dont les fabrications prévues ont besoin, au-delà du stock et de ce qui est déjà planifié, arrondis au lot entier. Les plus profonds d’abord : fabriquez-les avant ce qui les utilise.",
 		toBuyLink: "{n} article(s) à acheter →",
-		shortQty: "Manque",
-		plannedQty: "Planifié",
+		covered: "Couvert par",
+		shortBy: "{qty} manquant(s)",
+		inStock: "{qty} en stock",
+		alreadyPlanned: "{qty} planifié(s)",
 		toMakeQty: "À fabriquer",
 		forBuilds: "Pour",
 		made: "Fait",

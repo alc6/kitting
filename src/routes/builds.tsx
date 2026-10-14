@@ -208,10 +208,8 @@ function ToMakeCard(props: { lines: ToMakeLine[]; toBuy: number }) {
 				<TableHeader>
 					<TableRow>
 						<TableHead>{t.builds.part}</TableHead>
-						<TableHead class="text-right">{t.builds.shortQty}</TableHead>
-						<TableHead class="text-right">{t.parts.onHand}</TableHead>
-						<TableHead class="text-right">{t.builds.plannedQty}</TableHead>
 						<TableHead class="text-right">{t.builds.toMakeQty}</TableHead>
+						<TableHead>{t.builds.covered}</TableHead>
 						<TableHead class="text-right">{t.machines.time}</TableHead>
 						<TableHead>{t.builds.forBuilds}</TableHead>
 						{canPlan ? (
@@ -225,27 +223,32 @@ function ToMakeCard(props: { lines: ToMakeLine[]; toBuy: number }) {
 					{props.lines.map((l) => (
 						<TableRow>
 							<TableCell>
-								<div class="flex flex-wrap items-center gap-x-2">
-									<a href={`/parts/${l.part.id}#how-its-made`}>{l.part.ref}</a>
-									<span class="text-muted-foreground">{l.part.name}</span>
-								</div>
+								<a href={`/parts/${l.part.id}#how-its-made`} class="whitespace-nowrap">
+									{l.part.ref}
+								</a>
+								<div class="text-xs text-muted-foreground">{l.part.name}</div>
 							</TableCell>
-							<TableCell class="text-right">
-								<Qty milli={l.shortMilli} unit={l.part.unit} />
-							</TableCell>
-							<TableCell class="text-right">
-								<Qty milli={l.onHandMilli} unit={l.part.unit} />
-							</TableCell>
-							<TableCell class="text-right">
-								<Qty milli={l.plannedMilli} unit={l.part.unit} />
-							</TableCell>
-							<TableCell class="text-right">
+							<TableCell class="text-right whitespace-nowrap">
 								<div class="font-semibold">
 									<Qty milli={l.toMakeMilli} unit={l.part.unit} />
 								</div>
-								{l.assembly.batchMilli !== MILLI ? (
-									<div class="text-xs text-muted-foreground">{fmt(t.builds.batches, { n: l.runs })}</div>
+								<div class="text-xs text-muted-foreground">
+									{fmt(t.builds.shortBy, { qty: formatQty(l.shortMilli, locale) })}
+									{l.assembly.batchMilli !== MILLI ? ` · ${fmt(t.builds.batches, { n: l.runs })}` : ""}
+								</div>
+							</TableCell>
+							<TableCell class="text-xs text-muted-foreground">
+								{l.onHandMilli > 0 ? (
+									<div class="whitespace-nowrap">
+										{fmt(t.builds.inStock, { qty: formatQty(l.onHandMilli, locale) })}
+									</div>
 								) : null}
+								{l.plannedMilli > 0 ? (
+									<div class="whitespace-nowrap">
+										{fmt(t.builds.alreadyPlanned, { qty: formatQty(l.plannedMilli, locale) })}
+									</div>
+								) : null}
+								{l.onHandMilli <= 0 && l.plannedMilli <= 0 ? "—" : null}
 							</TableCell>
 							<TableCell class="text-right whitespace-nowrap">
 								{l.machine ? (
@@ -255,7 +258,13 @@ function ToMakeCard(props: { lines: ToMakeLine[]; toBuy: number }) {
 									</>
 								) : null}
 							</TableCell>
-							<TableCell class="text-muted-foreground">{l.builds.join(", ")}</TableCell>
+							<TableCell class="text-xs text-muted-foreground">
+								<span class="flex flex-wrap gap-x-1.5">
+									{l.builds.map((n) => (
+										<span class="whitespace-nowrap">{n}</span>
+									))}
+								</span>
+							</TableCell>
 							{canPlan ? (
 								<TableCell class="py-1">
 									<div class="flex justify-end gap-1.5">

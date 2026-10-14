@@ -617,8 +617,10 @@ export const en = {
 		toMakeIntro:
 			"Made parts the planned builds need, beyond stock and what is already planned, rounded up to whole runs. Deepest first: make them before what uses them.",
 		toBuyLink: "{n} part(s) to buy →",
-		shortQty: "Short",
-		plannedQty: "Planned",
+		covered: "Covered by",
+		shortBy: "{qty} short",
+		inStock: "{qty} in stock",
+		alreadyPlanned: "{qty} planned",
 		toMakeQty: "To make",
 		forBuilds: "For",
 		made: "Made",
