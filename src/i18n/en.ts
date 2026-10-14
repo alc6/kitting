@@ -618,7 +618,7 @@ export const en = {
 		whenPlannedHint: "Appears in what to make and to buy; complete it from its page once made.",
 		toMake: "To make",
 		toMakeIntro:
-			"Made parts the planned builds need, beyond stock and what is already planned, rounded up to whole runs. Deepest first: make them before what uses them.",
+			"Made parts the planned builds need, beyond stock and what is already planned, rounded up to whole runs. What a part is made from comes before it.",
 		toBuyLink: "{n} part(s) to buy →",
 		covered: "Covered by",
 		shortBy: "{qty} short",

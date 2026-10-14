@@ -634,7 +634,7 @@ export const fr: Dict = {
 		whenPlannedHint: "Apparaît dans ce qu’il faut fabriquer et acheter ; terminez-le depuis sa page une fois fait.",
 		toMake: "À fabriquer",
 		toMakeIntro:
-			"Articles fabriqués dont les fabrications prévues ont besoin, au-delà du stock et de ce qui est déjà planifié, arrondis au lot entier. Les plus profonds d’abord : fabriquez-les avant ce qui les utilise.",
+			"Articles fabriqués dont les fabrications prévues ont besoin, au-delà du stock et de ce qui est déjà planifié, arrondis au lot entier. Ce dont un article est fait vient avant lui.",
 		toBuyLink: "{n} article(s) à acheter →",
 		covered: "Couvert par",
 		shortBy: "{qty} manquant(s)",
