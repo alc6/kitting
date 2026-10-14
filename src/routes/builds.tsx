@@ -320,32 +320,42 @@ buildRoutes.get("/", async (c) => {
 					{shortages.machines.length > 0 ? <MachineLoadCard rows={shortages.machines} /> : null}
 				</div>
 			) : null}
-			<SearchBar action="/builds" q={q}>
-				<select name="status" aria-label={t.builds.status} class="w-auto flex-[0_1_220px]">
-					<option value="open">{t.builds.statusFilter.open}</option>
-					{BUILD_STATUSES.map((s) => (
-						<option value={s} selected={s === status}>
-							{t.builds.statuses[s]}
-						</option>
-					))}
-					<option value="all" selected={status === "all"}>
-						{t.builds.statusFilter.all}
-					</option>
-				</select>
-			</SearchBar>
-			<div id="results">
-				{rows.length ? (
-					<Card class="gap-0 overflow-hidden py-0">
+			<TableCard
+				id="production-orders"
+				title={
+					<span class="inline-flex items-center gap-2">
+						<Icon icon={icons.hammer} class="size-4" />
+						{t.builds.orders}
+					</span>
+				}
+			>
+				<div class="px-4 pt-4">
+					<SearchBar action="/builds" q={q}>
+						<select name="status" aria-label={t.builds.status} class="w-auto flex-[0_1_220px]">
+							<option value="open">{t.builds.statusFilter.open}</option>
+							{BUILD_STATUSES.map((s) => (
+								<option value={s} selected={s === status}>
+									{t.builds.statuses[s]}
+								</option>
+							))}
+							<option value="all" selected={status === "all"}>
+								{t.builds.statusFilter.all}
+							</option>
+						</select>
+					</SearchBar>
+				</div>
+				<div id="results" class="border-t">
+					{rows.length ? (
 						<BuildsTable rows={rows} />
-					</Card>
-				) : (
-					<EmptyState icon={icons.hammer} title={t.builds.noBuilds} description={t.builds.emptyHint}>
-						{canBuild ? (
-							<LinkButton href="/builds/new" label={t.builds.new} icon={icons.plus} variant="outline" />
-						) : null}
-					</EmptyState>
-				)}
-			</div>
+					) : (
+						<EmptyState icon={icons.hammer} title={t.builds.noBuilds} description={t.builds.emptyHint}>
+							{canBuild ? (
+								<LinkButton href="/builds/new" label={t.builds.new} icon={icons.plus} variant="outline" />
+							) : null}
+						</EmptyState>
+					)}
+				</div>
+			</TableCard>
 		</>,
 	);
 });

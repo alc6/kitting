@@ -630,6 +630,7 @@ export const fr: Dict = {
 		whenPlanned: "Planifiée",
 		whenPlannedHint: "Prise en compte dans les besoins de fabrication et d’achat ; terminez-la depuis sa page.",
 		toMake: "Besoins de fabrication",
+		orders: "Ordres de fabrication",
 		toMakeIntro:
 			"Articles fabriqués requis par les fabrications ouvertes, nets du stock et des fabrications planifiées, arrondis au lot. Classés dans l’ordre de fabrication : les composants avant les ensembles qui les utilisent.",
 		toBuyLink: "Besoins d’achat : {n} article(s) →",

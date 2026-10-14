@@ -615,6 +615,7 @@ export const en = {
 		whenPlanned: "Planned",
 		whenPlannedHint: "Counted in production and purchase requirements; complete it from the build page.",
 		toMake: "Production requirements",
+		orders: "Production orders",
 		toMakeIntro:
 			"Manufactured parts required by open builds, net of stock and planned builds, rounded up to whole batches. Listed in production order: components before the assemblies that use them.",
 		toBuyLink: "Purchase requirements: {n} part(s) →",
