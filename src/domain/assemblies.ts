@@ -33,9 +33,9 @@ export const assemblyLineInput = z.object({
 });
 
 /**
- * How an assembly is produced (D145, D146, D148): the units one batch makes, and the machine time per batch (a machine
- * type and whole minutes). It belongs to the revision: it is set on a draft, copied into new revisions and variants,
- * and changed on an active assembly only through a new revision.
+ * How an assembly is produced (D145, D148, D153): the units one run (batch) makes, and the machine time per run (a
+ * machine type and whole minutes). It is edited with the lines and under the same rule (D23): on a draft or an active
+ * assembly, never an archived one; new revisions and variants copy it.
  */
 export const productionInput = z.object({
 	batch_qty: field.qty({ positive: true, empty: MILLI }),
@@ -75,12 +75,12 @@ export async function checkProduction(
 	};
 }
 
-/** Why the production settings of this assembly cannot be changed in place, or null. */
+/** Why the production settings of this assembly cannot be changed in place, or null: like its lines (D153). */
 export function productionError(assembly: Pick<Assembly, "status">): string | null {
-	return assembly.status === "draft" ? null : "assembly_production_not_draft";
+	return assembly.status === "archived" ? "assembly_archived" : null;
 }
 
-/** Sets the production settings of a draft assembly (the status is checked again in the statement). */
+/** Sets the production settings of a draft or active assembly (the status is checked again in the statement). */
 export function setProductionStatement(db: Db, assemblyId: number, p: Production, user: string, now: string) {
 	return db
 		.update(assemblies)
@@ -91,7 +91,7 @@ export function setProductionStatement(db: Db, assemblyId: number, p: Production
 			updatedAt: now,
 			updatedBy: user,
 		})
-		.where(and(eq(assemblies.id, assemblyId), eq(assemblies.status, "draft")));
+		.where(and(eq(assemblies.id, assemblyId), ne(assemblies.status, "archived")));
 }
 
 export const DEFAULT_CODE = "std";

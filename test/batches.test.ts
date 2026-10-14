@@ -111,13 +111,13 @@ async function plan(qty: string, qtyIn: "units" | "batches" = "units") {
 }
 
 describe("batch recipes in the app", () => {
-	it("sets the batch on a draft only and carries it into new revisions and variants", async () => {
+	it("sets the batch with the lines, never on an archived assembly, and carries it into new revisions and variants", async () => {
 		await seedPrint("draft");
 		const id = await assemblyId("SPACER-10", "std", "Rev1");
 		const draft = await request(`/assemblies/${id}`);
 		const html = await draft.text();
 		expect(html).toContain(`action="/assemblies/${id}/production"`);
-		expect(html).toContain("Cost of a batch (24 pcs)");
+		expect(html).toContain("Cost of a run (24 pcs)");
 		expect(html).toContain("€5.20");
 		// Invalid, then saved.
 		expect((await postForm(`/assemblies/${id}/production`, { batch_qty: "0" })).status).toBe(422);
@@ -127,14 +127,13 @@ describe("batch recipes in the app", () => {
 			await one("SELECT summary FROM change_sets ORDER BY id DESC LIMIT 1"),
 			"a change set names the assembly",
 		).toEqual({ summary: "Edit the production of assembly SPACER-10 std Rev1" });
-		// Active: read-only, refused, and changed through a new revision that keeps it.
+		// Active: editable like its lines (D153).
 		await postForm(`/assemblies/${id}/activate`, {});
 		const active = await (await request(`/assemblies/${id}`)).text();
-		expect(active).not.toContain(`/assemblies/${id}/production"`);
-		expect(active).toContain("create a new revision to change them");
-		const refused = await postForm(`/assemblies/${id}/production`, { batch_qty: "24" });
-		expect(refused.headers.get("Location")).toBe(`/assemblies/${id}?err=assembly_production_not_draft`);
-		expect(await one("SELECT batch_qty_milli FROM assemblies WHERE id = ?", id)).toEqual({ batch_qty_milli: 12_000 });
+		expect(active).toContain(`action="/assemblies/${id}/production"`);
+		expect((await postForm(`/assemblies/${id}/production`, { batch_qty: "6" })).status).toBe(303);
+		expect(await one("SELECT batch_qty_milli FROM assemblies WHERE id = ?", id)).toEqual({ batch_qty_milli: 6_000 });
+		expect((await postForm(`/assemblies/${id}/production`, { batch_qty: "12" })).status).toBe(303);
 		await postForm(`/assemblies/${id}/revision`, {});
 		await postForm("/assemblies", {
 			parent_part_id: String(await partId("SPACER-10")),
@@ -162,7 +161,7 @@ describe("batch recipes in the app", () => {
 		const big = await plan("2", "batches");
 		expect(await one("SELECT qty_milli FROM builds WHERE id = ?", big)).toEqual({ qty_milli: 48_000 });
 		const page = await (await request(`/builds/${big}`)).text();
-		expect(page).toContain("2 batch(es)");
+		expect(page).toContain("2 run(s)");
 		expect(page).toContain("0.52");
 		// One spacer takes 11 g (10.833 rounded up).
 		const one1 = await plan("1");
@@ -222,7 +221,7 @@ describe("assemblies.csv batch_qty", () => {
 		});
 	});
 
-	it("refuses two batches for one assembly and a batch change on an active one", async () => {
+	it("refuses two batches for one assembly, and changes the batch of an active one like its lines", async () => {
 		await seedPrint();
 		const db = testDb();
 		const mixed = await planImport(
@@ -236,9 +235,7 @@ describe("assemblies.csv batch_qty", () => {
 			"assemblies",
 			"parent_ref,code,revision,status,batch_qty,component_ref,qty\nSPACER-10,std,Rev1,active,12,PLA-BLACK,0.13\nSPACER-10,std,Rev2,draft,12,PLA-BLACK,0.13\n",
 		);
-		expect(active?.errors).toEqual([
-			{ line: 2, column: "batch_qty", key: "assembly_production_active", vars: { assembly: "SPACER-10 std Rev1" } },
-		]);
+		expect(active?.errors).toEqual([]);
 		// A new revision may have its own batch.
 		expect(active?.rows.map((r) => [r.cells[2], r.action])).toEqual([
 			["Rev1", "update"],

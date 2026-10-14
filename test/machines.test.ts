@@ -243,7 +243,7 @@ describe("machines pages", () => {
 		const post = (form: Record<string, string>) =>
 			postForm(`/assemblies/${draft}/production`, { batch_qty: "24", ...form });
 		expect(await (await post({ machine_type_id: fdm, machine_time: "" })).text()).toContain(
-			"Enter the machine time per batch.",
+			"Enter the machine time per run.",
 		);
 		expect(await (await post({ machine_type_id: "", machine_time: "3:00" })).text()).toContain(
 			"Choose the machine type this time is spent on.",
@@ -398,7 +398,6 @@ describe("machines CSV", () => {
 			[3, "machine_minutes", "machine_time_required"],
 			[4, "machine", "machine_required"],
 			[6, "machine", "assembly_machine_mixed"],
-			[7, "batch_qty", "assembly_production_active"],
 		]);
 		// A new draft revision with a slower print is fine.
 		await importCsv("assemblies", `${header}LAMP-CLIP,std,Rev2,draft,24,fdm printer,200,PLA-BLACK,0.26\n`);

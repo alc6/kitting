@@ -40,7 +40,6 @@ import {
 	type ExplodedNode,
 	type Explosion,
 	explode,
-	machineNeed,
 	walkTree,
 } from "../domain/assembly-graph";
 import { type Margin, marginOf, salePriceOf } from "../domain/margins";
@@ -52,7 +51,6 @@ import { isConstraintError } from "../lib/sql";
 import {
 	ceilDiv,
 	formatCentsInput,
-	formatMinutes,
 	formatMinutesInput,
 	formatMoney,
 	formatPercent,
@@ -546,6 +544,10 @@ function LinesEditor(props: {
 	machine: { typeId: number; name: string; minutesMilli: number; cost: Cost } | null;
 	refs: Map<number, string>;
 	machines: Map<number, string>;
+	/** Machine types to choose from in the production bar. */
+	machineTypes: { id: number; name: string }[];
+	/** The production bar's values and errors. */
+	production: { values: FormValues; errors: FormErrors };
 	options: { ref: string; name: string }[];
 	values: FormValues;
 	errors: FormErrors;
@@ -568,6 +570,14 @@ function LinesEditor(props: {
 					<CardTitle>{t.assemblies.editor}</CardTitle>
 					<CardDescription>{fmt(t.assemblies.linesCount, { n: props.lines.length })}</CardDescription>
 				</CardHeader>
+				<ProductionBar
+					assembly={assembly}
+					part={props.part}
+					machineTypes={props.machineTypes}
+					editable={editable}
+					values={props.production.values}
+					errors={props.production.errors}
+				/>
 				{props.lines.length === 0 ? (
 					<CardContent>
 						<Empty />
@@ -826,11 +836,15 @@ function SideCard(props: { title: string; icon: IconNode; children: Child }) {
 	);
 }
 
-/** How the assembly is produced: units per batch (D145). Belongs to the revision: editable on drafts only (D146). */
-function ProductionCard(props: {
+/**
+ * How the assembly is produced, at the top of its lines (D153): how many units one run makes (D145) and the machine time
+ * per run (D148). Edited with the lines and under the same rule: never on an archived assembly.
+ */
+function ProductionBar(props: {
 	assembly: Assembly;
 	part: Part;
 	machineTypes: { id: number; name: string }[];
+	editable: boolean;
 	values: FormValues;
 	errors: FormErrors;
 }) {
@@ -838,58 +852,36 @@ function ProductionCard(props: {
 	const { t } = view;
 	const { assembly, part } = props;
 	const machine = props.machineTypes.find((m) => m.id === assembly.machineTypeId);
-	const items = [
-		{ label: t.assemblies.batchQty, value: <Qty milli={assembly.batchQtyMilli} unit={part.unit} /> },
-		{
-			label: t.machines.timePerBatch,
-			value:
-				machine && assembly.machineMinutes > 0 ? (
-					<span class="flex flex-col gap-0.5">
-						<span>
-							<a href={`/machines/types/${machine.id}`}>{machine.name}</a> ·{" "}
-							<Duration minutesMilli={assembly.machineMinutes * MILLI} />
-						</span>
-						{assembly.batchQtyMilli !== MILLI ? (
-							<span class="text-xs text-muted-foreground">
-								{fmt(t.machines.perUnit, {
-									time: formatMinutes(
-										machineNeed({ machineMinutes: assembly.machineMinutes, batchMilli: assembly.batchQtyMilli }, MILLI),
-									),
-								})}
-							</span>
-						) : null}
-					</span>
-				) : (
-					t.machines.none
-				),
-		},
-	];
-	if (assembly.status !== "draft" || !can(view, "assemblies.edit")) {
+	if (!props.editable) {
 		return (
-			<SideCard title={t.assemblies.productionTitle} icon={icons.factory}>
-				<div class="flex flex-col gap-3">
-					<DetailList items={items} />
-					{assembly.status === "active" && can(view, "assemblies.edit") ? (
-						<p class="text-sm text-muted-foreground">{t.assemblies.productionLocked}</p>
+			<CardContent>
+				<p class="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+					<span class="inline-flex items-center gap-1.5">
+						<Icon icon={icons.factory} class="size-4 text-muted-foreground" />
+						{t.assemblies.makes} <Qty milli={assembly.batchQtyMilli} unit={part.unit} /> {t.assemblies.perRun}
+					</span>
+					{machine && assembly.machineMinutes > 0 ? (
+						<span class="inline-flex items-center gap-1.5">
+							<Icon icon={icons.timer} class="size-4 text-muted-foreground" />
+							<a href={`/machines/types/${machine.id}`}>{machine.name}</a> ·{" "}
+							<Duration minutesMilli={assembly.machineMinutes * MILLI} /> {t.assemblies.perRun}
+						</span>
 					) : null}
-				</div>
-			</SideCard>
+				</p>
+			</CardContent>
 		);
 	}
 	const p = { values: props.values, errors: props.errors };
 	return (
-		<Card id="production" class="gap-4">
-			<CardHeader>
-				<CardTitle icon={icons.factory}>{t.assemblies.productionTitle}</CardTitle>
-			</CardHeader>
-			<form method="post" action={`/assemblies/${assembly.id}/production`} class="flex flex-col gap-4">
-				<CardContent class="flex flex-col gap-4">
-					<DecimalField
-						name="batch_qty"
-						label={t.assemblies.batchQty}
-						hint={fmt(t.assemblies.batchHint, { ref: part.ref })}
-						{...p}
-					/>
+		<CardContent>
+			<form
+				method="post"
+				action={`/assemblies/${assembly.id}/production`}
+				id="production"
+				class="flex flex-col gap-3 rounded-lg border bg-muted/40 p-4"
+			>
+				<div class="grid gap-3 md:grid-cols-[minmax(0,11rem)_minmax(0,1fr)_minmax(0,10rem)_auto] md:items-start">
+					<DecimalField name="batch_qty" label={fmt(t.assemblies.makesPerRun, { unit: part.unit })} {...p} />
 					<SelectField
 						name="machine_type_id"
 						label={t.machines.machineType}
@@ -899,15 +891,22 @@ function ProductionCard(props: {
 						]}
 						{...p}
 					/>
-					<TextField name="machine_time" label={t.machines.timePerBatch} hint={t.machines.timeHint} {...p} />
-				</CardContent>
-				<CardFooter>
-					<Button variant="outline" icon={icons.save}>
+					<TextField name="machine_time" label={t.machines.timePerBatch} placeholder="3:10" {...p} />
+					<Button variant="outline" icon={icons.save} class="md:mt-[1.375rem]">
 						{t.common.save}
 					</Button>
-				</CardFooter>
+				</div>
+				<p class="text-xs text-muted-foreground">
+					{fmt(t.assemblies.batchHint, { ref: part.ref })} {t.machines.timeHint}
+					{props.machineTypes.length === 0 && can(view, "machines.edit") ? (
+						<>
+							{" "}
+							<a href="/machines/types/new">{t.machines.newType}</a>
+						</>
+					) : null}
+				</p>
 			</form>
-		</Card>
+		</CardContent>
 	);
 }
 
@@ -1058,18 +1057,16 @@ async function renderEditor(
 				machine={machine}
 				refs={refs}
 				machines={machines}
+				machineTypes={[...graph.machineTypes.values()].sort((a, b) => a.name.localeCompare(b.name))}
+				production={{
+					values: production?.values ?? productionValues(assembly, c.var.locale),
+					errors: translateErrors(c, production?.errors ?? {}),
+				}}
 				options={options.filter((o) => o.id !== part.id)}
 				values={form.values}
 				errors={translateErrors(c, form.errors, form.vars)}
 			/>
 			<div class="mt-6 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-				<ProductionCard
-					assembly={assembly}
-					part={part}
-					machineTypes={[...graph.machineTypes.values()].sort((a, b) => a.name.localeCompare(b.name))}
-					values={production?.values ?? productionValues(assembly, c.var.locale)}
-					errors={translateErrors(c, production?.errors ?? {})}
-				/>
 				<SalePriceCard
 					assembly={assembly}
 					part={part}
@@ -1263,13 +1260,13 @@ assemblyRoutes.post("/:id/sale-price", requirePermission("prices.edit"), async (
 	return redirectOk(c, `/assemblies/${assembly.id}`);
 });
 
-// Units per batch: on drafts only, as they change what every line means (D146).
+// Units per run and machine time: edited like the lines, never on an archived assembly (D153).
 assemblyRoutes.post("/:id/production", requirePermission("assemblies.edit"), async (c) => {
 	const data = await loadAssembly(c);
 	if (!data) return notFound(c);
 	const { assembly, part } = data;
-	const notDraft = productionError(assembly);
-	if (notDraft) return c.redirect(`/assemblies/${assembly.id}?err=${notDraft}`, 303);
+	const refused = productionError(assembly);
+	if (refused) return c.redirect(`/assemblies/${assembly.id}?err=${refused}`, 303);
 	const body = await c.req.parseBody();
 	const v = validate(productionInput, body);
 	const checked = v.ok ? await checkProduction(c.var.db, v.data) : null;

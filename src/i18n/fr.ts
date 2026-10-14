@@ -135,8 +135,6 @@ export const fr: Dict = {
 		assembly_status_mixed: "Toutes les lignes d’un assemblage doivent avoir le même statut.",
 		assembly_price_mixed: "Toutes les lignes d’un assemblage doivent avoir le même sale_price (ou le laisser vide).",
 		assembly_two_active: "Deux assemblages actifs pour le même article et le même code variante (ligne {line}).",
-		assembly_production_not_draft:
-			"Les réglages de fabrication ne se changent que sur un brouillon : créez une nouvelle révision.",
 		assembly_batch_mixed: "Toutes les lignes d’un assemblage doivent avoir le même batch_qty (ou le laisser vide).",
 		assembly_machine_mixed:
 			"Toutes les lignes d’un assemblage doivent avoir les mêmes machine et machine_minutes (ou les laisser vides).",
@@ -144,8 +142,6 @@ export const fr: Dict = {
 		machine_time_required: "Saisissez le temps machine par lot.",
 		machine_required: "Choisissez le type de machine sur lequel ce temps est passé.",
 		unknown_machine_type: "Type de machine inconnu : {name}. Importez d’abord les types de machines.",
-		assembly_production_active:
-			"{assembly} est actif : changez ses réglages de fabrication dans une nouvelle révision.",
 		invalid_status: "Le statut doit être draft, active ou archived.",
 		archived_part: "Cet article est archivé.",
 		serial_whole_qty: "Un composant suivi par n° de série s’utilise en unités entières.",
@@ -531,11 +527,12 @@ export const fr: Dict = {
 		batch: "Lot",
 		batchQty: "Unités par lot",
 		batchHint:
-			"Nombre d’unités de {ref} faites en un lot, par exemple les pièces d’un plateau d’impression. Les lignes sont les quantités pour tout le lot.",
+			"Nombre d’unités de {ref} faites en un lot : les pièces d’un plateau d’impression, une fournée, ou 1. Les lignes ci-dessous sont les quantités pour un lot.",
 		batchCost: "Coût d’un lot ({qty} {unit})",
+		makes: "Fabrique",
+		perRun: "par lot",
+		makesPerRun: "Fabrique ({unit} par lot)",
 		productionTitle: "Fabrication",
-		productionLocked:
-			"Les réglages de fabrication appartiennent à une révision : créez une nouvelle révision pour les changer.",
 		plannedMargin: "Marge prévue",
 		modes: {
 			buy: "",

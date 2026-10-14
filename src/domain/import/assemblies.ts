@@ -11,7 +11,7 @@ import {
 import type { Statement } from "../../lib/db";
 import { formatCentsInput, formatQtyInput, MILLI } from "../../lib/units";
 import { field, REF_PATTERN, validate } from "../../lib/validation";
-import { assemblyLabel, DEFAULT_CODE, DEFAULT_REVISION, loadGraph } from "../assemblies";
+import { DEFAULT_CODE, DEFAULT_REVISION, loadGraph } from "../assemblies";
 import { type AssemblyGraph, findCycle, type GraphAssembly, type GraphLine } from "../assembly-graph";
 import { checkHeader, emptyPlan, fieldIssues, type Importer, type PlanRow, type RowIssue } from "./types";
 
@@ -69,8 +69,8 @@ const groupKey = (parentId: number, code: string, revision: string) => `${parent
  * the previously active assembly of the same parent and code. Cycles are rejected.
  * The optional sale_price column sets the variant's selling price (one value per assembly; empty everywhere
  * clears it); without the column, prices are kept. The optional batch_qty column works the same way (empty everywhere
- * means 1), but cannot change the batch of an assembly that is active in the database (D146). The optional machine and
- * machine_minutes columns (a machine type name and whole minutes per batch, D148) follow the same rules.
+ * means 1) and, like the lines, may change an active assembly (D153). The optional machine and machine_minutes columns
+ * (a machine type name and whole minutes per batch, D148) follow the same rules.
  */
 export const assembliesImporter: Importer = {
 	type: "assemblies",
@@ -209,19 +209,6 @@ export const assembliesImporter: Importer = {
 			else if (machinesInFile && g.machineTypeId === null && g.machineMinutes)
 				issues.push({ line: g.firstLine, column: "machine", key: "machine_required" });
 		}
-		// The production settings of an active assembly change only through a new revision (D146).
-		for (const g of groups.values()) {
-			if (g.existing?.status === "active" && (batchOf(g) !== g.existing.batchMilli || machineChanged(g))) {
-				const parentRef = graph.parts.get(g.parentId)?.ref ?? "";
-				issues.push({
-					line: g.firstLine,
-					column: "batch_qty",
-					key: "assembly_production_active",
-					vars: { assembly: assemblyLabel(parentRef, g) },
-				});
-			}
-		}
-
 		// At most one active assembly per (parent, code) in the file.
 		const activeInFile = new Map<string, Group>();
 		for (const g of groups.values()) {
