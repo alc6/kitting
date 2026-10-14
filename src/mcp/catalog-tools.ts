@@ -17,6 +17,7 @@ import {
 	DEFAULT_REVISION,
 	findAssembly,
 	getAssemblyLines,
+	keptSalePrice,
 	loadGraph,
 	newAssemblyErrors,
 	nextRevision,
@@ -73,7 +74,10 @@ const partView = (p: Part) => ({
 });
 
 const assemblyView = (
-	b: Pick<Assembly, "id" | "code" | "revision" | "status" | "batchQtyMilli" | "machineTypeId" | "machineMinutes">,
+	b: Pick<
+		Assembly,
+		"id" | "code" | "revision" | "status" | "batchQtyMilli" | "machineTypeId" | "machineMinutes" | "salePriceCents"
+	>,
 	partRef: string,
 	machineNames?: Map<number, string>,
 ) => ({
@@ -83,6 +87,8 @@ const assemblyView = (
 	revision: b.revision,
 	status: b.status,
 	batchMilli: b.batchQtyMilli,
+	// The variant's own selling price (null: the part's applies).
+	salePriceCents: b.salePriceCents,
 	...(machineNames
 		? {
 				machineType: b.machineTypeId === null ? null : (machineNames.get(b.machineTypeId) ?? null),
@@ -288,7 +294,7 @@ const createAssembly = tool({
 	name: "create_assembly",
 	title: "Create an assembly",
 	description:
-		"Creates a draft assembly for a make or kit part, empty or copied from another assembly (same checks as the new assembly form: (code, revision) new for the part, no cycle). Set its lines with set_assembly_lines, then activate it with activate_assembly.",
+		"Creates a draft assembly for a make or kit part, empty or copied from another assembly (same checks as the new assembly form: (code, revision) new for the part, no cycle). A copy takes the lines and production settings; a new variant code starts without its own selling price (the part's applies), while the same code under a new revision keeps the source's. Set its lines with set_assembly_lines, then activate it with activate_assembly.",
 	rule: { scope: "catalog:write", action: "assemblies.edit" },
 	annotations: writes({ destructive: false, idempotent: false }),
 	input: z.object({
@@ -325,7 +331,13 @@ const createAssembly = tool({
 			fmt(ctx.t.history.summaries.assemblyCreate, { assembly: assemblyLabel(part.ref, d) }),
 			createAssemblyStatements(
 				ctx.db,
-				{ parentPartId: part.id, code: d.code, revision: d.revision, notes: d.notes },
+				{
+					parentPartId: part.id,
+					code: d.code,
+					revision: d.revision,
+					notes: d.notes,
+					salePriceCents: keptSalePrice(source, { parentPartId: part.id, code: d.code }),
+				},
 				d.copy_from,
 				ctx.user,
 				now(),
@@ -341,7 +353,7 @@ const setAssemblyLines = tool({
 	name: "set_assembly_lines",
 	title: "Set the lines of an assembly",
 	description:
-		"Replaces all the lines of an assembly at once, in the given order, with the editor's checks on every line (known part, not archived, whole units for serial-tracked parts, no cycle); nothing changes if one line is refused. An active assembly is never edited in place: a new draft revision is created with these lines, and the active one stays as it is until you call activate_assembly on the new revision. Archived assemblies are read-only.",
+		"Replaces all the lines of an assembly at once, in the given order, with the editor's checks on every line (known part, not archived, whole units for serial-tracked parts, no cycle); nothing changes if one line is refused. An active assembly is never edited in place: a new draft revision is created with these lines (and the active one's production settings and own selling price), and the active one stays as it is until you call activate_assembly on the new revision. Archived assemblies are read-only.",
 	rule: { scope: "catalog:write", action: "assemblies.edit" },
 	annotations: writes({ destructive: true, idempotent: false }),
 	input: z.object({
@@ -393,7 +405,12 @@ const setAssemblyLines = tool({
 				[
 					...createAssemblyStatements(
 						ctx.db,
-						{ ...target, notes: assembly.notes, production: productionOf(assembly) },
+						{
+							...target,
+							notes: assembly.notes,
+							production: productionOf(assembly),
+							salePriceCents: assembly.salePriceCents,
+						},
 						null,
 						ctx.user,
 						stamp,
@@ -430,7 +447,7 @@ const setAssemblyProduction = tool({
 	name: "set_assembly_production",
 	title: "Set how an assembly is produced",
 	description:
-		"Sets the production settings of an assembly: batch_qty, how many units of the part one batch makes (e.g. 24 parts per print plate; its lines are then the quantities for the whole batch), and the machine time per batch: machine_type (a machine type name, see list_machines; null for none) and machine_minutes (whole minutes per batch, e.g. 190 for 3 h 10). Fields left out keep their value. They belong to a revision: a draft is changed in place, an active assembly is never changed (a new draft revision is created with its lines and these settings, to activate with activate_assembly), an archived one is refused.",
+		"Sets the production settings of an assembly: batch_qty, how many units of the part one batch makes (e.g. 24 parts per print plate; its lines are then the quantities for the whole batch), and the machine time per batch: machine_type (a machine type name, see list_machines; null for none) and machine_minutes (whole minutes per batch, e.g. 190 for 3 h 10). Fields left out keep their value. They belong to a revision: a draft is changed in place, an active assembly is never changed (a new draft revision is created with its lines, its own selling price and these settings, to activate with activate_assembly), an archived one is refused.",
 	rule: { scope: "catalog:write", action: "assemblies.edit" },
 	annotations: writes({ destructive: true, idempotent: false }),
 	input: z.object({
@@ -495,7 +512,7 @@ const setAssemblyProduction = tool({
 				fmt(t.assemblyRevisionProduction, { assembly: assemblyLabel(part.ref, target), from: assembly.revision }),
 				createAssemblyStatements(
 					ctx.db,
-					{ ...target, notes: assembly.notes, production },
+					{ ...target, notes: assembly.notes, production, salePriceCents: assembly.salePriceCents },
 					assembly.id,
 					ctx.user,
 					now(),
@@ -540,7 +557,7 @@ const newAssemblyRevision = tool({
 	name: "new_assembly_revision",
 	title: "New assembly revision",
 	description:
-		"Copies an assembly (any status) into a new draft revision of the same part and variant code (Rev2 → Rev3), as the assembly page's New revision button does. The original is not changed.",
+		"Copies an assembly (any status) with its lines, production settings and own selling price into a new draft revision of the same part and variant code (Rev2 → Rev3), as the assembly page's New revision button does. The original is not changed.",
 	rule: { scope: "catalog:write", action: "assemblies.edit" },
 	annotations: writes({ destructive: false, idempotent: false }),
 	input: z.object(assemblySelector),
@@ -555,7 +572,13 @@ const newAssemblyRevision = tool({
 			}),
 			createAssemblyStatements(
 				ctx.db,
-				{ parentPartId: assembly.parentPartId, code: assembly.code, revision, notes: assembly.notes },
+				{
+					parentPartId: assembly.parentPartId,
+					code: assembly.code,
+					revision,
+					notes: assembly.notes,
+					salePriceCents: assembly.salePriceCents,
+				},
 				assembly.id,
 				ctx.user,
 				now(),

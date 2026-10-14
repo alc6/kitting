@@ -168,28 +168,28 @@ Changes a part's fields; fields left out keep their value. Never prices.
 - **Example:** `update_supplier({ "name": "Acme Fasteners", "phone": "+1 555 0123" })`
 
 ### `create_assembly`
-Creates a draft assembly for a make or kit part, empty or copied from another assembly. Then `set_assembly_lines`, then `activate_assembly`.
+Creates a draft assembly for a make or kit part, empty or copied from another assembly (its lines and production settings). A new variant code starts without its own selling price (the part's applies until `set_sale_price` with `code`); the same code under a new revision keeps the source's. Then `set_assembly_lines`, then `activate_assembly`.
 - **Scope:** `catalog:write` · **Permission:** `assemblies.edit` (planner)
 - **Inputs:** `part`, `code` (default std), `revision` (default Rev1), `notes`, `copy_from` (an assembly selector).
-- **Returns:** the write envelope, `assembly` (`assembly_id`, `part`, `code`, `revision`, `status`), `lines`.
+- **Returns:** the write envelope, `assembly` (`assembly_id`, `part`, `code`, `revision`, `status`, `batch`, `sale_price`: the variant's own selling price, null when the part's applies), `lines`.
 - **Example:** `create_assembly({ "part": "LAMP-DESK", "code": "compact", "copy_from": { "assembly": "LAMP-DESK" } })`
 
 ### `set_assembly_lines`
-Replaces every line of an assembly at once, in order, with the editor's checks (known part, not archived, whole units for serial-tracked parts, no cycle). Nothing changes if one line is refused. An active assembly is never edited: the next revision is created as a draft (with the active one's notes, lines replaced by yours) and the active assembly stays as it is. Archived assemblies are read-only.
+Replaces every line of an assembly at once, in order, with the editor's checks (known part, not archived, whole units for serial-tracked parts, no cycle). Nothing changes if one line is refused. An active assembly is never edited: the next revision is created as a draft (with the active one's notes, production settings and own selling price, lines replaced by yours) and the active assembly stays as it is. Archived assemblies are read-only.
 - **Scope:** `catalog:write` · **Permission:** `assemblies.edit` (planner)
 - **Inputs:** `assembly`, `code`, `revision` (selector), `lines[]` of `ref`, `qty` (per batch of the assembly: per unit when its `batch` is 1), `notes` (1 to 500 lines). Send the complete list, not a delta.
 - **Returns:** the write envelope, `assembly` (the one that was edited), `new_revision` (true when a draft revision was created), `active_assembly` (then), `note`, `lines`.
 - **Example:** `set_assembly_lines({ "assembly": "BASE-ASSY", "lines": [{ "ref": "BASE-PLATE", "qty": 1 }, { "ref": "PAD-FELT", "qty": 6 }] })`
 
 ### `set_assembly_production`
-How an assembly is produced: `batch_qty`, the units one batch makes (24 parts per print plate: its lines are then the plate's quantities), and the machine time per batch: `machine_type` (a name from `list_machines`, null for none) and `machine_minutes` (whole minutes, 3 h 10 = 190). These settings belong to a revision: a draft is changed in place; an active assembly is never changed, the next draft revision is created with its lines and the new settings; an archived one is refused.
+How an assembly is produced: `batch_qty`, the units one batch makes (24 parts per print plate: its lines are then the plate's quantities), and the machine time per batch: `machine_type` (a name from `list_machines`, null for none) and `machine_minutes` (whole minutes, 3 h 10 = 190). These settings belong to a revision: a draft is changed in place; an active assembly is never changed, the next draft revision is created with its lines, its own selling price and the new settings; an archived one is refused.
 - **Scope:** `catalog:write` · **Permission:** `assemblies.edit` (planner)
 - **Inputs:** `assembly`, `code`, `revision` (selector), `batch_qty`, `machine_type`, `machine_minutes`; left out, they keep their value.
 - **Returns:** the write envelope, `assembly` (with `batch`, `machine_type`, `machine_minutes`), `new_revision`, `active_assembly` and `note` (when a revision was created).
 - **Example:** `set_assembly_production({ "assembly": "LAMP-CLIP", "revision": "Rev2", "batch_qty": "24", "machine_type": "FDM printer", "machine_minutes": 185 })`
 
 ### `new_assembly_revision`
-Copies an assembly (any status) with its lines into the next draft revision of the same part and code. The original is not changed.
+Copies an assembly (any status) with its lines, production settings and own selling price into the next draft revision of the same part and code. The original is not changed.
 - **Scope:** `catalog:write` · **Permission:** `assemblies.edit` (planner)
 - **Inputs:** `assembly`, `code`, `revision` (selector).
 - **Returns:** the write envelope, `assembly` (new draft), `from`, `lines`.
