@@ -231,17 +231,20 @@ describe("assemblies.csv import", () => {
 
 	it("imports the demo assemblies and is idempotent", async () => {
 		await loadDemo();
-		expect(await one("SELECT count(*) AS n FROM assemblies")).toEqual({ n: 8 });
-		expect(await one("SELECT count(*) AS n FROM assemblies WHERE status = 'active'")).toEqual({ n: 7 });
+		expect(await one("SELECT count(*) AS n FROM assemblies")).toEqual({ n: 9 });
+		expect(await one("SELECT count(*) AS n FROM assemblies WHERE status = 'active'")).toEqual({ n: 8 });
 		const html = await (await preview(DEMO.assemblies)).text();
-		expect(html).toContain("0 to create, 0 to update, 8 unchanged.");
+		expect(html).toContain("0 to create, 0 to update, 9 unchanged.");
 		const exported = await (await request("/import/assemblies/export.csv")).text();
-		expect(exported.startsWith("parent_ref,code,revision,status,sale_price,batch_qty,component_ref,qty,notes")).toBe(
-			true,
-		);
+		expect(
+			exported.startsWith(
+				"parent_ref,code,revision,status,sale_price,batch_qty,machine,machine_minutes,component_ref,qty,notes",
+			),
+		).toBe(true);
 		// The warm variant's own selling price survives the round trip.
 		expect(exported).toContain("LAMP-DESK,warm,Rev1,active,94.00,1,");
-		expect(await (await preview(exported)).text()).toContain("0 to create, 0 to update, 8 unchanged.");
+		expect(await (await preview(exported)).text()).toContain("0 to create, 0 to update, 9 unchanged.");
+		expect(exported).toContain("LAMP-CLIP,std,Rev1,active,,24,FDM printer,190,PLA-BLACK,0.26,");
 	});
 
 	it("replaces lines, activates and archives the previous revision", async () => {

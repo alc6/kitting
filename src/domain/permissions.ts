@@ -22,6 +22,8 @@ export const PERMISSIONS = {
 	"assemblies.archive": { min: "admin" },
 	"assemblies.delete": { min: "admin" },
 	"prices.edit": { min: "planner" },
+	// Machine types (with their hourly rate) and machines, retiring included (D147).
+	"machines.edit": { min: "planner" },
 	// Deleting a wrong row of a price history that is not the current price (D143).
 	"prices.delete": { min: "admin" },
 	// Shop floor
@@ -62,6 +64,7 @@ export const PERMISSION_GROUPS = [
 	{ key: "parts", actions: ["parts.edit", "parts.archive", "parts.delete"] },
 	{ key: "assemblies", actions: ["assemblies.edit", "assemblies.archive", "assemblies.delete"] },
 	{ key: "suppliers", actions: ["suppliers.edit", "suppliers.delete"] },
+	{ key: "machines", actions: ["machines.edit"] },
 	{ key: "costs", actions: ["costs.view", "prices.edit", "prices.delete"] },
 	{ key: "builds", actions: ["builds.plan", "builds.complete"] },
 	{ key: "stock", actions: ["stock.adjust", "stock.count"] },
@@ -128,6 +131,7 @@ export const MONEY_COLUMNS: ReadonlySet<string> = new Set([
 	"actual_margin",
 	"actual_rate_pct",
 	"actual_markup_pct",
+	"hourly_rate",
 ]);
 
 /** A CSV table (header row first) without its money columns. */

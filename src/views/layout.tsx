@@ -44,6 +44,7 @@ export const NAV_GROUPS: { key: keyof Dict["navGroups"]; items: NavItem[] }[] = 
 			{ key: "parts", href: "/parts", icon: icons.package },
 			{ key: "assemblies", href: "/assemblies", icon: icons.listTree },
 			{ key: "suppliers", href: "/suppliers", icon: icons.factory },
+			{ key: "machines", href: "/machines", icon: icons.cog },
 			{ key: "margins", href: "/margins", icon: icons.chartColumn, shown: (v) => can(v, "costs.view") },
 		],
 	},

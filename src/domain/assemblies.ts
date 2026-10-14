@@ -6,6 +6,7 @@ import {
 	type AssemblyStatus,
 	assemblies,
 	assemblyLines,
+	machineTypes,
 	type Part,
 	parts,
 } from "../db/schema";
@@ -32,14 +33,47 @@ export const assemblyLineInput = z.object({
 });
 
 /**
- * How an assembly is produced (D145, D146): the units one batch makes. It belongs to the revision: it is set on a draft,
- * copied into new revisions and variants, and changed on an active assembly only through a new revision.
+ * How an assembly is produced (D145, D146, D148): the units one batch makes, and the machine time per batch (a machine
+ * type and whole minutes). It belongs to the revision: it is set on a draft, copied into new revisions and variants,
+ * and changed on an active assembly only through a new revision.
  */
 export const productionInput = z.object({
 	batch_qty: field.qty({ positive: true, empty: MILLI }),
+	machine_type_id: field.id(),
+	machine_time: field.duration(),
 });
 
-export type Production = { batchMilli: number };
+export type Production = { batchMilli: number; machineTypeId: number | null; machineMinutes: number };
+
+/** The production settings of an assembly. */
+export function productionOf(a: Pick<Assembly, "batchQtyMilli" | "machineTypeId" | "machineMinutes">): Production {
+	return { batchMilli: a.batchQtyMilli, machineTypeId: a.machineTypeId, machineMinutes: a.machineMinutes };
+}
+
+/** The production settings of validated input, and what is wrong with them (a machine and a time go together). */
+export async function checkProduction(
+	db: Db,
+	d: z.output<typeof productionInput>,
+): Promise<{ production: Production; errors: FieldErrors }> {
+	const errors: FieldErrors = {};
+	if (d.machine_type_id !== null) {
+		const [type] = await db
+			.select({ id: machineTypes.id })
+			.from(machineTypes)
+			.where(eq(machineTypes.id, d.machine_type_id))
+			.limit(1);
+		if (!type) errors.machine_type_id = "invalid";
+		else if (d.machine_time === 0) errors.machine_time = "machine_time_required";
+	} else if (d.machine_time > 0) errors.machine_type_id = "machine_required";
+	return {
+		production: {
+			batchMilli: d.batch_qty,
+			machineTypeId: d.machine_type_id,
+			machineMinutes: d.machine_type_id === null ? 0 : d.machine_time,
+		},
+		errors,
+	};
+}
 
 /** Why the production settings of this assembly cannot be changed in place, or null. */
 export function productionError(assembly: Pick<Assembly, "status">): string | null {
@@ -50,16 +84,22 @@ export function productionError(assembly: Pick<Assembly, "status">): string | nu
 export function setProductionStatement(db: Db, assemblyId: number, p: Production, user: string, now: string) {
 	return db
 		.update(assemblies)
-		.set({ batchQtyMilli: p.batchMilli, updatedAt: now, updatedBy: user })
+		.set({
+			batchQtyMilli: p.batchMilli,
+			machineTypeId: p.machineTypeId,
+			machineMinutes: p.machineMinutes,
+			updatedAt: now,
+			updatedBy: user,
+		})
 		.where(and(eq(assemblies.id, assemblyId), eq(assemblies.status, "draft")));
 }
 
 export const DEFAULT_CODE = "std";
 export const DEFAULT_REVISION = "Rev1";
 
-/** Loads every part, assembly and line into memory (the catalogue is small). */
+/** Loads every part, assembly, line and machine type into memory (the catalogue is small). */
 export async function loadGraph(db: Db): Promise<AssemblyGraph> {
-	const [p, b, l] = await Promise.all([
+	const [p, b, l, m] = await Promise.all([
 		db
 			.select({
 				id: parts.id,
@@ -80,6 +120,8 @@ export async function loadGraph(db: Db): Promise<AssemblyGraph> {
 				revision: assemblies.revision,
 				status: assemblies.status,
 				batchMilli: assemblies.batchQtyMilli,
+				machineTypeId: assemblies.machineTypeId,
+				machineMinutes: assemblies.machineMinutes,
 			})
 			.from(assemblies),
 		db
@@ -92,8 +134,11 @@ export async function loadGraph(db: Db): Promise<AssemblyGraph> {
 				notes: assemblyLines.notes,
 			})
 			.from(assemblyLines),
+		db
+			.select({ id: machineTypes.id, name: machineTypes.name, rateCents: machineTypes.hourlyRateCents })
+			.from(machineTypes),
 	]);
-	return buildGraph(p, b, l);
+	return buildGraph(p, b, l, m);
 }
 
 export type AssemblyFilters = { q?: string; status?: string; partId?: number | null };
@@ -374,7 +419,7 @@ export function createAssemblyStatements(
 		revision: string;
 		notes: string;
 		status?: AssemblyStatus;
-		production?: Partial<Production>;
+		production?: Production;
 	},
 	sourceAssemblyId: number | null,
 	user: string,
@@ -390,6 +435,8 @@ export function createAssemblyStatements(
 			status: b.status ?? "draft",
 			notes: b.notes,
 			batchQtyMilli: b.production?.batchMilli ?? copied(sql.raw("batch_qty_milli")),
+			machineTypeId: b.production ? b.production.machineTypeId : copied(sql.raw("machine_type_id")),
+			machineMinutes: b.production?.machineMinutes ?? copied(sql.raw("machine_minutes")),
 			createdBy: user,
 			updatedBy: user,
 			createdAt: now,

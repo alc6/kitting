@@ -360,8 +360,13 @@ function Points(props: { bp: number }) {
 	return <span class="num">{fmt(t.margins.points, { n: `${sign}${n}` })}</span>;
 }
 
-/** What moved the planned margin on one day: the selling price and component costs. */
-function ChangeList(props: { point: PlannedPoint; first: boolean; refs: Map<number, string> }) {
+/** What moved the planned margin on one day: the selling price, component costs and machine rates. */
+function ChangeList(props: {
+	point: PlannedPoint;
+	first: boolean;
+	refs: Map<number, string>;
+	machineNames: Map<number, string>;
+}) {
 	const { t } = useApp();
 	const { point, refs } = props;
 	if (props.first) return <span class="text-muted-foreground">{t.margins.start}</span>;
@@ -394,6 +399,17 @@ function ChangeList(props: { point: PlannedPoint; first: boolean; refs: Map<numb
 					{fmt(t.margins.moreChanges, { n: hidden.length })}
 				</li>
 			) : null}
+			{point.rateChanges.map((ch) => (
+				<li class="whitespace-nowrap">
+					<a href={`/machines/types/${ch.machineTypeId}`} class="font-medium">
+						{props.machineNames.get(ch.machineTypeId) ?? ch.machineTypeId}
+					</a>{" "}
+					<Money cents={ch.fromCents} />
+					{" → "}
+					<Money cents={ch.toCents} />
+					{t.machines.perHour}
+				</li>
+			))}
 		</ul>
 	);
 }
@@ -404,7 +420,7 @@ async function historyPage(c: Context<AppEnv>, target: MarginTarget) {
 	const currency = c.env.CURRENCY;
 	const data = await marginHistory(c.var.db, target);
 	if (!data) return notFound(c);
-	const { part, assembly, planned, actual, refs } = data;
+	const { part, assembly, planned, actual, refs, machineNames } = data;
 	const start = planned.some((p) => p.fallback) ? await historyStart(c.var.db) : null;
 	const item = assembly ? `${part.ref} · ${assembly.code} ${assembly.revision}` : part.ref;
 	const title = `${t.margins.historyTitle}: ${item}`;
@@ -543,7 +559,7 @@ async function historyPage(c: Context<AppEnv>, target: MarginTarget) {
 									<TableRow>
 										<TableCell class="whitespace-nowrap tabular-nums">{p.date}</TableCell>
 										<TableCell class="min-w-56">
-											<ChangeList point={p} first={p === first} refs={refs} />
+											<ChangeList point={p} first={p === first} refs={refs} machineNames={machineNames} />
 										</TableCell>
 										<TableCell class="text-right whitespace-nowrap">
 											<Money cents={p.costCents} />

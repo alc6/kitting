@@ -35,6 +35,10 @@ listed user, but costs need planner (or the cost option set on the Users page).
 - **Batches.** An assembly makes `batch` units at a time (1 unless set, e.g. 24 parts per print plate), and its lines
   are the quantities for the whole batch. Quantities needed for a build are line × units / batch, rounded up to the
   thousandth (whole units for serial-tracked parts); costs are per unit.
+- **Machine time.** An assembly can also take `machine_minutes` per batch on a `machine_type` (an FDM printer, a laser
+  cutter); the type carries the `hourly_rate`. Machine time is costed like a component (unit costs include it) and
+  listed as `machine_time[]` (`type`, `minutes` for the quantity asked, `hourly_rate`, `cost`). `minutes` is a
+  decimal number of minutes; say it to people as hours and minutes (190 = 3 h 10).
 
 ## Reading: `catalog:read`
 
@@ -56,15 +60,22 @@ One part in full: details, prices, supplier offers (preferred first), on hand, i
 The structure of an assembly as a tree with cost roll-up. Kits and sub-assemblies are expanded through their active assemblies.
 - **Scope:** `catalog:read` · **Permission:** none
 - **Inputs:** `assembly`, `code`, `revision` (selector), `qty` (how many to build, default 1).
-- **Returns:** `assembly` (`assembly_id`, `part`, `code`, `revision`, `status`, `batch`), `qty`, `cost` (`unit_cost`, `total_cost`, `incomplete`, `missing_costs`), `lines[]` as a tree: `ref`, `kind`, `per_parent` (per batch of the parent; `parent_batch` gives its size when it is not 1), `qty` (cumulative), `mode`, `unit_cost`, `extended_cost`, `cost_incomplete`, `children`.
+- **Returns:** `assembly` (`assembly_id`, `part`, `code`, `revision`, `status`, `batch`, `machine_type`, `machine_minutes` per batch), `qty`, `cost` (`unit_cost`, `total_cost`, `incomplete`, `missing_costs` with machine types without a rate), `machine_time[]` for `qty`, `lines[]` as a tree: `ref`, `kind`, `per_parent` (per batch of the parent; `parent_batch` gives its size when it is not 1), `qty` (cumulative), `mode`, `unit_cost`, `extended_cost`, `cost_incomplete`, `children`.
 - **Example:** `get_assembly({ "assembly": "LAMP-DESK", "code": "warm", "qty": 3 })`
 
 ### `explode_assembly`
 The flat list of components needed for a quantity, with on hand and shortfall. Fee lines are listed apart (cost only).
 - **Scope:** `catalog:read` · **Permission:** none
 - **Inputs:** `assembly`, `code`, `revision` (selector), `qty` (required), `use_stock` (take sub-assemblies already in stock instead of building them; default false).
-- **Returns:** `assembly` (with its `batch`), `qty`, `use_stock`, `components[]` (`ref`, `name`, `kind`, `unit`, `qty`, `on_hand`, `short`, `missing_assembly`, `unit_cost`, `extended_cost`), `fees[]`, `total_cost`, `cost_incomplete`.
+- **Returns:** `assembly` (with its `batch`), `qty`, `use_stock`, `components[]` (`ref`, `name`, `kind`, `unit`, `qty`, `on_hand`, `short`, `missing_assembly`, `unit_cost`, `extended_cost`), `fees[]`, `machine_time[]` (sub-assemblies taken from stock need none), `total_cost` (machine time included), `cost_incomplete`.
 - **Example:** `explode_assembly({ "assembly": "LAMP-DESK", "code": "warm", "qty": 3, "use_stock": true })`
+
+### `list_machines`
+The machine types (what recipes name, with their hourly rate) and the machines the workshop owns, with their status.
+- **Scope:** `catalog:read` · **Permission:** none
+- **Inputs:** `include_retired` (default false).
+- **Returns:** `machine_types[]` (`name`, `hourly_rate`, `active_machines`, `recipes` using it, `planned_minutes` the open builds need), `machines[]` (`name`, `type`, `status`: active, maintenance or retired, `notes`).
+- **Example:** `list_machines({})`
 
 ### `list_recent_changes`
 The change history (who, when, from where, which rows and fields before/after), as on the Recent changes page.
@@ -102,7 +113,7 @@ Builds (production orders), newest first. The query also matches the serials of 
 One build. Done: the as-built record. Open: the pick list from current stock.
 - **Scope:** `builds:read` · **Permission:** none
 - **Inputs:** `number` (e.g. `B-0001`).
-- **Returns:** `build` (`number`, `status`, `part`, `qty`, `serial`, `assembly`, `planned_for`, `done_at`). Done: `as_built[]` (`ref`, `qty`, `serial`, `unit_cost` frozen, `made_by_build`), `total_cost`. Open: `pick_list[]` (`ref`, `qty`, `on_hand`, `short`, `serials_to_scan` count to give), `sub_assemblies[]` (`ref`, `path`, `qty`, `from_stock`, `to_build`), `fees`, `problems` (what blocks completion).
+- **Returns:** `build` (`number`, `status`, `part`, `qty`, `serial`, `assembly`, `planned_for`, `done_at`). Done: `as_built[]` (`ref`, `qty`, `serial`, `unit_cost` frozen, `made_by_build`), `machine_time[]` recorded at completion with its rate, `total_cost`. Open: `pick_list[]` (`ref`, `qty`, `on_hand`, `short`, `serials_to_scan` count to give), `sub_assemblies[]` (`ref`, `path`, `qty`, `from_stock`, `to_build`), `fees`, `machine_time[]`, `problems` (what blocks completion).
 - **Example:** `get_build({ "number": "B-0001" })`
 
 ## Reading: `purchasing:read`
@@ -111,7 +122,7 @@ One build. Done: the as-built record. Open: the pick list from current stock.
 What to buy for all planned and in-progress builds: need minus on hand minus on order, rounded up to the preferred supplier's MOQ and pack size, grouped by supplier.
 - **Scope:** `purchasing:read` · **Permission:** none
 - **Inputs:** none.
-- **Returns:** `open_builds`, `suppliers[]` (`supplier`, `total`, `lines[]` with `ref`, `unit`, `need`, `on_hand`, `on_order`, `net`, `order`, `unit_price`, `supplier_ref`, `moq`, `pack_size`, `lead_days`, `builds`), `missing_assemblies[]` (make or kit parts to build that have no active assembly).
+- **Returns:** `open_builds`, `suppliers[]` (`supplier`, `total`, `lines[]` with `ref`, `unit`, `need`, `on_hand`, `on_order`, `net`, `order`, `unit_price`, `supplier_ref`, `moq`, `pack_size`, `lead_days`, `builds`), `missing_assemblies[]` (make or kit parts to build that have no active assembly), `machine_time[]` (`type`, `minutes` needed, `active_machines` in service, `builds`).
 - **Example:** `get_shortages({})`
 
 ### `list_purchase_orders`
@@ -171,11 +182,11 @@ Replaces every line of an assembly at once, in order, with the editor's checks (
 - **Example:** `set_assembly_lines({ "assembly": "BASE-ASSY", "lines": [{ "ref": "BASE-PLATE", "qty": 1 }, { "ref": "PAD-FELT", "qty": 6 }] })`
 
 ### `set_assembly_production`
-How an assembly is produced: `batch_qty`, the units one batch makes (24 parts per print plate: its lines are then the plate's quantities). These settings belong to a revision: a draft is changed in place; an active assembly is never changed, the next draft revision is created with its lines and the new settings; an archived one is refused.
+How an assembly is produced: `batch_qty`, the units one batch makes (24 parts per print plate: its lines are then the plate's quantities), and the machine time per batch: `machine_type` (a name from `list_machines`, null for none) and `machine_minutes` (whole minutes, 3 h 10 = 190). These settings belong to a revision: a draft is changed in place; an active assembly is never changed, the next draft revision is created with its lines and the new settings; an archived one is refused.
 - **Scope:** `catalog:write` · **Permission:** `assemblies.edit` (planner)
-- **Inputs:** `assembly`, `code`, `revision` (selector), `batch_qty`; left out, it keeps its value.
-- **Returns:** the write envelope, `assembly` (with `batch`), `new_revision`, `active_assembly` and `note` (when a revision was created).
-- **Example:** `set_assembly_production({ "assembly": "LAMP-CLIP", "revision": "Rev2", "batch_qty": "24" })`
+- **Inputs:** `assembly`, `code`, `revision` (selector), `batch_qty`, `machine_type`, `machine_minutes`; left out, they keep their value.
+- **Returns:** the write envelope, `assembly` (with `batch`, `machine_type`, `machine_minutes`), `new_revision`, `active_assembly` and `note` (when a revision was created).
+- **Example:** `set_assembly_production({ "assembly": "LAMP-CLIP", "revision": "Rev2", "batch_qty": "24", "machine_type": "FDM printer", "machine_minutes": 185 })`
 
 ### `new_assembly_revision`
 Copies an assembly (any status) with its lines into the next draft revision of the same part and code. The original is not changed.

@@ -14,7 +14,9 @@ maintain, and a small workshop fits in the free plans.
 - Parts you buy, make or sell as kits, with units, standard costs, selling prices and photos.
 - Suppliers, with several offers per part (price, MOQ, pack size, lead time) and a history of every price.
 - Assemblies (bills of materials) with variants and revisions, cost roll-up, a structure diagram and
-  where-used.
+  where-used. An assembly can make a batch (the 24 parts of a print plate) and take machine time.
+- In-house production on machines: machine types with an hourly rate, the machines you own, machine time in costs,
+  and the machine hours your plans need.
 - Stock kept as a ledger of movements, with adjustments, inventory counts and stock valuation.
 - Builds with a pick list and serial traceability: what went into serial #0042, and which build used a given
   component.
@@ -44,7 +46,8 @@ Then open http://localhost:8787. Locally you are signed in as the email in `.dev
 
 To get some data, open **Import / Export** and import the files in [`examples/demo/`](examples/demo/) in this
 order: suppliers, parts, assemblies, stock. The demo is a fictional desk lamp: a base sub-assembly plus two
-parts. [`examples/full/`](examples/full/) has a larger version with variants, kits and serial numbers.
+parts. [`examples/full/`](examples/full/) has a larger version with variants, kits, serial numbers and a 3D-printed
+part.
 
 ## Deploy
 

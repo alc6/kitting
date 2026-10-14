@@ -208,8 +208,10 @@ describe("assemblies.csv batch_qty", () => {
 		expect(graph.assemblies.get(await assemblyId("SPACER-KIT"))?.batchMilli).toBe(1000);
 		const res = await request("/import/assemblies/export.csv");
 		const csv = await res.text();
-		expect(csv).toContain("parent_ref,code,revision,status,sale_price,batch_qty,component_ref,qty,notes");
-		expect(csv).toContain("SPACER-10,std,Rev1,active,,24,PLA-BLACK,0.26,");
+		expect(csv).toContain(
+			"parent_ref,code,revision,status,sale_price,batch_qty,machine,machine_minutes,component_ref,qty,notes",
+		);
+		expect(csv).toContain("SPACER-10,std,Rev1,active,,24,,,PLA-BLACK,0.26,");
 		// Without the column, the batch is kept.
 		await importCsv(
 			"assemblies",

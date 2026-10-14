@@ -61,7 +61,19 @@ async function fixtures() {
 			supplier,
 		),
 	);
-	return { supplier, buy, make, assembly: returnedId(assembly), po: returnedId(po) };
+	const [machineType] = await seedSql(
+		stmt(
+			"INSERT INTO machine_types (name, created_by, updated_by) VALUES ('FDM printer', 'seed', 'seed') RETURNING id",
+		),
+	);
+	return {
+		supplier,
+		buy,
+		make,
+		assembly: returnedId(assembly),
+		po: returnedId(po),
+		machineType: returnedId(machineType),
+	};
 }
 
 type Fixtures = Awaited<ReturnType<typeof fixtures>>;
@@ -142,6 +154,21 @@ const CASES: Record<string, { insert: (f: Fixtures) => D1PreparedStatement; upda
 		insert: () =>
 			stmt("INSERT INTO settings (key, value, created_by, updated_by) VALUES ('k', '0', 'u', 'u') RETURNING id"),
 		update: "UPDATE settings SET value = '1' WHERE id = ?",
+	},
+	machine_types: {
+		insert: () =>
+			stmt(
+				"INSERT INTO machine_types (name, hourly_rate_cents, created_by, updated_by) VALUES ('Laser cutter', 900, 'u', 'u') RETURNING id",
+			),
+		update: "UPDATE machine_types SET hourly_rate_cents = 1000 WHERE id = ?",
+	},
+	machines: {
+		insert: (f) =>
+			stmt(
+				"INSERT INTO machines (name, machine_type_id, created_by, updated_by) VALUES ('PRINTER-9', ?, 'u', 'u') RETURNING id",
+				f.machineType,
+			),
+		update: "UPDATE machines SET status = 'maintenance' WHERE id = ?",
 	},
 };
 
@@ -281,6 +308,8 @@ describe("change capture", () => {
 			{ summary: "Import suppliers.csv", revertible: 1 },
 			{ summary: "Import parts.csv", revertible: 1 },
 			{ summary: "Import part_suppliers.csv", revertible: 1 },
+			{ summary: "Import machine_types.csv", revertible: 1 },
+			{ summary: "Import machines.csv", revertible: 1 },
 			{ summary: "Import assemblies.csv", revertible: 1 },
 		]);
 	});

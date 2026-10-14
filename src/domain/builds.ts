@@ -6,7 +6,9 @@ import {
 	BUILD_STATUSES,
 	type BuildStatus,
 	buildLines,
+	buildMachineTimes,
 	builds,
+	machineTypes,
 	type Part,
 	parts,
 	stockMoves,
@@ -248,6 +250,21 @@ export async function getBuildLines(db: Db, buildId: number) {
 		.orderBy(parts.ref, buildLines.serial, buildLines.id);
 }
 
+/** The machine time a completed build recorded, per machine type, with the rate frozen at completion (D148). */
+export async function getBuildMachineTimes(db: Db, buildId: number) {
+	return db
+		.select({
+			machineTypeId: buildMachineTimes.machineTypeId,
+			name: machineTypes.name,
+			minutesMilli: buildMachineTimes.minutesMilli,
+			rateCents: buildMachineTimes.rateCents,
+		})
+		.from(buildMachineTimes)
+		.innerJoin(machineTypes, eq(buildMachineTimes.machineTypeId, machineTypes.id))
+		.where(eq(buildMachineTimes.buildId, buildId))
+		.orderBy(machineTypes.name);
+}
+
 /** Builds that consumed a given serial of a part (normally one). */
 export async function buildsConsumingSerial(db: Db, partId: number, serial: string) {
 	return db
@@ -410,6 +427,22 @@ export function completionStatements(
 		}
 	}
 	for (const f of pick.explosion.fees) totalMillicents += calc.extended(f.part.id, f.qtyMilli);
+	// Machine time (D148): priced like a fee, and recorded with the rate of the day.
+	for (const m of pick.explosion.machines) {
+		totalMillicents += calc.machine(m.machineType.id, m.minutesMilli).millicents;
+		lines.push(
+			db.insert(buildMachineTimes).values({
+				buildId: build.id,
+				machineTypeId: m.machineType.id,
+				minutesMilli: m.minutesMilli,
+				rateCents: m.machineType.rateCents,
+				createdBy: user,
+				updatedBy: user,
+				createdAt: now,
+				updatedAt: now,
+			}),
+		);
+	}
 	const unitCostCents = centsOf(roundDiv(totalMillicents * MILLI, build.qtyMilli));
 	const output = db
 		.insert(stockMoves)

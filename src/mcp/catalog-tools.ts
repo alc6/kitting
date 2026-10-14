@@ -10,6 +10,7 @@ import {
 	assemblyInput,
 	assemblyLabel,
 	assemblyLineInput,
+	checkProduction,
 	componentError,
 	createAssemblyStatements,
 	DEFAULT_CODE,
@@ -20,10 +21,12 @@ import {
 	newAssemblyErrors,
 	nextRevision,
 	productionInput,
+	productionOf,
 	replaceAssemblyLinesStatements,
 	setAssemblyStatusStatement,
 	setProductionStatement,
 } from "../domain/assemblies";
+import { findMachineTypeByName, machineTypeOptions } from "../domain/machines";
 import { getOffer } from "../domain/offers";
 import { archivePartStatement, checkPart, getPart, partToForm, savePartStatements } from "../domain/parts";
 import {
@@ -69,13 +72,23 @@ const partView = (p: Part) => ({
 	notes: p.notes,
 });
 
-const assemblyView = (b: Pick<Assembly, "id" | "code" | "revision" | "status" | "batchQtyMilli">, partRef: string) => ({
+const assemblyView = (
+	b: Pick<Assembly, "id" | "code" | "revision" | "status" | "batchQtyMilli" | "machineTypeId" | "machineMinutes">,
+	partRef: string,
+	machineNames?: Map<number, string>,
+) => ({
 	assemblyId: b.id,
 	part: partRef,
 	code: b.code,
 	revision: b.revision,
 	status: b.status,
 	batchMilli: b.batchQtyMilli,
+	...(machineNames
+		? {
+				machineType: b.machineTypeId === null ? null : (machineNames.get(b.machineTypeId) ?? null),
+				machineMinutes: b.machineMinutes,
+			}
+		: {}),
 });
 
 /** Part fields a catalogue tool may set (prices go through prices:write, supplier terms through offers). */
@@ -380,7 +393,7 @@ const setAssemblyLines = tool({
 				[
 					...createAssemblyStatements(
 						ctx.db,
-						{ ...target, notes: assembly.notes, production: { batchMilli: assembly.batchQtyMilli } },
+						{ ...target, notes: assembly.notes, production: productionOf(assembly) },
 						null,
 						ctx.user,
 						stamp,
@@ -417,12 +430,27 @@ const setAssemblyProduction = tool({
 	name: "set_assembly_production",
 	title: "Set how an assembly is produced",
 	description:
-		"Sets the production settings of an assembly: batch_qty, how many units of the part one batch makes (e.g. 24 parts per print plate; its lines are then the quantities for the whole batch). Fields left out keep their value. They belong to a revision: a draft is changed in place, an active assembly is never changed (a new draft revision is created with its lines and these settings, to activate with activate_assembly), an archived one is refused.",
+		"Sets the production settings of an assembly: batch_qty, how many units of the part one batch makes (e.g. 24 parts per print plate; its lines are then the quantities for the whole batch), and the machine time per batch: machine_type (a machine type name, see list_machines; null for none) and machine_minutes (whole minutes per batch, e.g. 190 for 3 h 10). Fields left out keep their value. They belong to a revision: a draft is changed in place, an active assembly is never changed (a new draft revision is created with its lines and these settings, to activate with activate_assembly), an archived one is refused.",
 	rule: { scope: "catalog:write", action: "assemblies.edit" },
 	annotations: writes({ destructive: true, idempotent: false }),
 	input: z.object({
 		...assemblySelector,
 		batch_qty: decimal('Units of the part one batch makes, e.g. "24" (1 = the lines are per unit).').optional(),
+		machine_type: z
+			.string()
+			.trim()
+			.min(1)
+			.max(200)
+			.nullable()
+			.optional()
+			.describe("Name of the machine type a batch runs on (null: no machine time)."),
+		machine_minutes: z
+			.number()
+			.int()
+			.min(0)
+			.max(1_000_000)
+			.optional()
+			.describe("Machine time per batch, in whole minutes (3 h 10 = 190)."),
 	}),
 	run: async (a, ctx) => {
 		const { assembly, part } = await selectAssembly(ctx.db, a);
@@ -431,13 +459,32 @@ const setAssemblyProduction = tool({
 			throw new ToolError(
 				`Assembly ${label} is archived: ${errorMessage("assembly_archived")} Copy it with new_assembly_revision.`,
 			);
+		let typeId = assembly.machineTypeId;
+		if (a.machine_type === null) typeId = null;
+		else if (a.machine_type !== undefined) {
+			const type = await findMachineTypeByName(ctx.db, a.machine_type);
+			if (!type)
+				throw new ToolError(`No machine type named "${a.machine_type}". Use list_machines to see the machine types.`);
+			typeId = type.id;
+		}
+		const minutes = a.machine_type === null ? 0 : (a.machine_minutes ?? assembly.machineMinutes);
 		const v = validate(productionInput, {
 			batch_qty: a.batch_qty === undefined ? formatQtyInput(assembly.batchQtyMilli) : formValue(a.batch_qty),
+			machine_type_id: typeId === null ? "" : String(typeId),
+			machine_time: String(minutes),
 		});
 		if (!v.ok) refuse(v.errors);
-		const production = { batchMilli: v.data.batch_qty };
-		if (production.batchMilli === assembly.batchQtyMilli)
-			return { ...NOTHING_CHANGED, assembly: assemblyView(assembly, part.ref) };
+		const { production, errors } = await checkProduction(ctx.db, v.data);
+		if (Object.keys(errors).length)
+			refuse(errors, {}, { machine_type_id: "machine_type", machine_time: "machine_minutes" });
+		const names = await machineNames(ctx.db);
+		const current = productionOf(assembly);
+		if (
+			production.batchMilli === current.batchMilli &&
+			production.machineTypeId === current.machineTypeId &&
+			production.machineMinutes === current.machineMinutes
+		)
+			return { ...NOTHING_CHANGED, assembly: assemblyView(assembly, part.ref, names) };
 		const t = ctx.t.history.summaries;
 		if (assembly.status === "active") {
 			// Production settings belong to the revision (D146): the active assembly stays as it is.
@@ -458,9 +505,9 @@ const setAssemblyProduction = tool({
 			if (!created) throw new Error("new revision not found");
 			return {
 				...change,
-				assembly: assemblyView(created, part.ref),
+				assembly: assemblyView(created, part.ref, names),
 				newRevision: true,
-				activeAssembly: assemblyView(assembly, part.ref),
+				activeAssembly: assemblyView(assembly, part.ref, names),
 				note: `${label} is active and was left unchanged: the new draft revision ${revision} has its lines and these settings. Call activate_assembly on ${revision} to make builds use it.`,
 			};
 		}
@@ -469,11 +516,25 @@ const setAssemblyProduction = tool({
 		]);
 		return {
 			...change,
-			assembly: { ...assemblyView(assembly, part.ref), batchMilli: production.batchMilli },
+			assembly: assemblyView(
+				{
+					...assembly,
+					batchQtyMilli: production.batchMilli,
+					machineTypeId: production.machineTypeId,
+					machineMinutes: production.machineMinutes,
+				},
+				part.ref,
+				names,
+			),
 			newRevision: false,
 		};
 	},
 });
+
+/** Machine type names by id. */
+async function machineNames(db: Db): Promise<Map<number, string>> {
+	return new Map((await machineTypeOptions(db)).map((m) => [m.id, m.name]));
+}
 
 const newAssemblyRevision = tool({
 	name: "new_assembly_revision",

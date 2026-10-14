@@ -9,11 +9,24 @@ export function StatusBadge(props: { status: AssemblyStatus }) {
 	return <span class={`status status-${props.status}`}>{t.assemblies.statuses[props.status]}</span>;
 }
 
-/** Cost with an "incomplete" marker listing the parts without cost. */
-export function CostView(props: { cost: Cost; refs: Map<number, string>; long?: boolean }) {
+/** What makes a cost incomplete: the parts without a cost, then the machine types without a rate. */
+export function missingNames(cost: Cost, refs: Map<number, string>, machines?: Map<number, string>): string[] {
+	return [
+		...cost.missing.map((id) => refs.get(id) ?? String(id)),
+		...(cost.missingMachines ?? []).map((id) => machines?.get(id) ?? `#${id}`),
+	];
+}
+
+/** Cost with an "incomplete" marker listing the parts without cost (and machine types without a rate). */
+export function CostView(props: {
+	cost: Cost;
+	refs: Map<number, string>;
+	machines?: Map<number, string>;
+	long?: boolean;
+}) {
 	const { t, seeCosts } = useApp();
 	if (!seeCosts) return <Money cents={null} />;
-	const missing = props.cost.missing.map((id) => props.refs.get(id) ?? String(id));
+	const missing = missingNames(props.cost, props.refs, props.machines);
 	return (
 		<span class={props.cost.incomplete ? "cost incomplete" : "cost"}>
 			<Money cents={centsOf(props.cost.millicents)} />

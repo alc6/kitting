@@ -821,3 +821,54 @@ Short log of choices made where the brief left room. Newest at the bottom of eac
   the database (`assembly_production_active`), while a new revision in the same file may have its own. Over MCP,
   `set_assembly_production` follows D128: a draft is changed in place, an active assembly gets the next draft revision
   with its lines and the new settings, an archived one is refused.
+- **D147. Machine types carry the rate; machines are what the workshop owns.** A workshop often has several identical
+  printers: a recipe that named one of them would pick it arbitrarily and pile the plan on it. So a recipe names a
+  **machine type** (`machine_types`: name, `hourly_rate_cents`, notes; NULL = unknown, like a standard cost), and the
+  **machines** (`machines`: name, type, status, notes) belong to a type. Both are tracked tables (migration 0007, new
+  tables only), edited at `/machines` (sidebar, Catalogue) under one new action, `machines.edit` (planner, its own group
+  on the Users matrix): types and their rate, machines, and retiring. A machine's status is `active` (in service),
+  `maintenance` or `retired`; retiring is a status that nothing else depends on (recipes name types, plans only count
+  machines in service), so it is not an admin "archive" (CLAUDE.md), and it can be set back from the form. There is
+  no delete: undoing a creation removes a row, and the undo is refused while the row is used. Names are unique ignoring
+  case, like suppliers. The rate is a cost: the column is `*_cents` (redacted by `redactCosts()` and `toWire()`),
+  `hourly_rate` is a `MONEY_COLUMNS` header, and the pages drop it without `costs.view` (`test/costs-hidden.test.ts`
+  seeds a distinctive rate and sweeps the machine pages, the clip's assembly, its done build and the rate change in the
+  history). Not over MCP for writes yet (list in docs/plan.md): `list_machines` reads them.
+- **D148. Machine time is one step per recipe, in whole minutes per batch, costed like a component.** `assemblies`
+  gains `machine_type_id` and `machine_minutes` (migration 0007, `ALTER TABLE ADD COLUMN`, drizzle-kit wrote the foreign
+  key inline: no rebuild). One step covers "one kind of part per plate"; a process on several machines is one
+  sub-assembly per step for now (routings are in "After v1"). Minutes, because that is what slicers give; the form takes
+  `3:10`, `3h10`, `3 h 10`, `3:10:00` (a spreadsheet time), `3.17h` or a plain number of minutes (`parseMinutes`,
+  `field.duration()`), and pages show "3 h 10" (`formatMinutes`, rounded up to the minute). Like the batch, the
+  machine time belongs to the revision (D146: the same Production card, drafts only, copied into new revisions).
+  - *Needs.* `explode()` returns `machines` per type: minutes × units / batch, in thousandths of a minute, rounded up
+    (`machineNeed`), for the root, every kit and every sub-assembly built now; a sub-assembly taken from stock needs
+    none.
+  - *Costs.* `CostCalculator.batch()` adds `rate × minutes / 60` (in millicents, `machineMillicents`) before dividing by
+    the batch: 0.26 kg of PLA at 20.00 plus 3 h 10 at 1.50 is 9.95 per plate, 0.41 per clip. An unknown rate makes the
+    roll-up incomplete and names the machine type (`Cost.missingMachines`). Valuation, planned margins, margin history
+    and the frozen output cost all follow.
+  - *As built.* Completion adds the machine cost to the output's unit cost (as fees, so the weighted average replay of
+    D91 needs no change) and writes one `build_machine_times` row per type: the minutes and the rate of the day. It is a
+    ledger table (append-only, its trigger marks the change set non-revertible, which completion already is); the done
+    build's page and `get_build` show it.
+- **D149. Machine rates have their own append-only history.** "Like any component" means a rate change must appear in
+  the dated readers as a price change does. `price_history` could not hold it without a rebuild (`part_id` is NOT NULL
+  and its CHECKs list the kinds), so `machine_rate_history` (type, rate, `valid_from`, source from `PRICE_SOURCES`, note)
+  is written in the same batch as every rate change (`saveMachineTypeStatements`, form and import) and never updated.
+  Undo appends the rate it restores with source `revert`, as D111 does for prices, and the history of a type goes with
+  it when an undo deletes it. Readers: the "as of" valuation swaps in `machineRatesAt(date)` (the same `resolveCostsAt`
+  as standard costs, with its fallback flag), and the margin history adds a point on the day a rate in its roll-up
+  changed (`PlannedPoint.rateChanges`). Entering past rates as history (D142 for rates) is left for later.
+- **D150. Plans show machine hours per type, with the machines in service.** `computeShortages` sums the machine time
+  of the planned and in-progress builds per type with the same shared availability as parts (sub-assemblies in stock
+  need no time), and counts the type's active machines: the shortages page's "Machine time needed" card shows the hours,
+  the machines in service and the hours per machine; the machines page shows the same load per type; `get_shortages` and
+  `list_machines` return it. It is a load, not a schedule: printer scheduling is out of scope.
+- **D151. CSV for machines.** `machine_types.csv` (`name,hourly_rate,notes`) and `machines.csv` (`name,type,status,notes`)
+  are upserts by name ignoring case, like `suppliers.csv`; columns absent keep their values; a rate change is appended to
+  the rate history (source `import`); an unknown type in `machines.csv` is a row error (as D32 for suppliers). They come
+  after past prices and before assemblies in the import order. `assemblies.csv` gains `machine` (a type name) and
+  `machine_minutes` (whole minutes, an integer so that Excel never turns `3:10` into a time), one value per assembly like
+  `batch_qty`, with the same rule for active assemblies. The exploded list's CSV lists machine time as rows of kind
+  `machine` in hours.

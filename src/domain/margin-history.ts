@@ -9,6 +9,7 @@ import type { Db } from "../types";
 import { loadGraph } from "./assemblies";
 import { type AssemblyGraph, CostCalculator, centsOf, defaultAssembly } from "./assembly-graph";
 import { buildUnitCents } from "./costing";
+import { machineRateRows } from "./machines";
 import { type Margin, marginOf } from "./margins";
 import { resolveCostsAt } from "./prices";
 import { averageCosts } from "./stock";
@@ -23,6 +24,10 @@ export type SaleRow = { assemblyId: number | null; priceCents: number | null; va
 
 export type CostChange = { partId: number; fromCents: number | null; toCents: number | null };
 
+/** Hourly rate rows of machine types, sorted by type, date, id (D149). */
+export type RateRow = { machineTypeId: number; rateCents: number | null; validFrom: string };
+export type RateChange = { machineTypeId: number; fromCents: number | null; toCents: number | null };
+
 export type PlannedPoint = {
 	/** YYYY-MM-DD: the values hold from this day until the next point. */
 	date: string;
@@ -34,6 +39,8 @@ export type PlannedPoint = {
 	fallback: boolean;
 	/** Components whose standard cost changed that day (none on the first point). */
 	costChanges: CostChange[];
+	/** Machine types whose hourly rate changed that day (none on the first point). */
+	rateChanges: RateChange[];
 	priceChange: { fromCents: number | null; toCents: number | null } | null;
 };
 
@@ -55,10 +62,22 @@ export type ActualPoint = {
  * standard cost does not count.
  */
 export function costInputs(graph: AssemblyGraph, target: MarginTarget): Set<number> {
+	return rollupInputs(graph, target).parts;
+}
+
+/** Machine types whose hourly rate feeds the planned cost of the target: those of every assembly rolled up. */
+export function machineInputs(graph: AssemblyGraph, target: MarginTarget): Set<number> {
+	return rollupInputs(graph, target).machines;
+}
+
+function rollupInputs(graph: AssemblyGraph, target: MarginTarget) {
 	const inputs = new Set<number>();
+	const machines = new Set<number>();
 	const visiting = new Set<number>();
 	const visitAssembly = (assemblyId: number) => {
-		for (const line of graph.assemblies.get(assemblyId)?.lines ?? []) visitPart(line.componentPartId);
+		const assembly = graph.assemblies.get(assemblyId);
+		if (assembly?.machineTypeId != null && assembly.machineMinutes > 0) machines.add(assembly.machineTypeId);
+		for (const line of assembly?.lines ?? []) visitPart(line.componentPartId);
 	};
 	const visitPart = (partId: number) => {
 		const part = graph.parts.get(partId);
@@ -74,7 +93,7 @@ export function costInputs(graph: AssemblyGraph, target: MarginTarget): Set<numb
 	};
 	if (target.assemblyId === null) visitPart(target.partId);
 	else visitAssembly(target.assemblyId);
-	return inputs;
+	return { parts: inputs, machines };
 }
 
 /**
@@ -107,21 +126,43 @@ export function plannedMarginSeries(
 	standardRows: StandardRow[],
 	saleRows: SaleRow[],
 	currentSale: { part: number | null; assembly: number | null },
+	rateRows: RateRow[] = [],
 ): PlannedPoint[] {
-	const inputs = costInputs(graph, target);
+	const { parts: inputs, machines } = rollupInputs(graph, target);
 	const relevant = standardRows.filter((r) => inputs.has(r.partId));
+	// Machine rates replay like standard costs (resolveCostsAt keyed by machine type).
+	const rates = rateRows
+		.filter((r) => machines.has(r.machineTypeId))
+		.map((r) => ({ partId: r.machineTypeId, priceCents: r.rateCents, validFrom: r.validFrom }));
 	const sales = saleRows.filter((r) => r.assemblyId === null || r.assemblyId === target.assemblyId);
-	const dates = [...new Set([...relevant.map((r) => r.validFrom), ...sales.map((r) => r.validFrom)])].sort();
+	const dates = [
+		...new Set([
+			...relevant.map((r) => r.validFrom),
+			...rates.map((r) => r.validFrom),
+			...sales.map((r) => r.validFrom),
+		]),
+	].sort();
 	const current = [...inputs].map((id) => ({ id, costCents: graph.parts.get(id)?.costCents ?? null }));
+	const currentRates = [...machines].map((id) => ({ id, costCents: graph.machineTypes.get(id)?.rateCents ?? null }));
 
 	const points: PlannedPoint[] = [];
 	let previous: Map<number, number | null> | null = null;
+	let previousRates: Map<number, number | null> | null = null;
 	for (const date of dates) {
 		const { costs, fallback } = resolveCostsAt(relevant, current, date);
-		const dated: AssemblyGraph = { parts: new Map(graph.parts), assemblies: graph.assemblies };
+		const datedRates = resolveCostsAt(rates, currentRates, date);
+		const dated: AssemblyGraph = {
+			parts: new Map(graph.parts),
+			assemblies: graph.assemblies,
+			machineTypes: new Map(graph.machineTypes),
+		};
 		for (const id of inputs) {
 			const part = dated.parts.get(id);
 			if (part) dated.parts.set(id, { ...part, costCents: costs.get(id) ?? null });
+		}
+		for (const id of machines) {
+			const type = dated.machineTypes.get(id);
+			if (type) dated.machineTypes.set(id, { ...type, rateCents: datedRates.costs.get(id) ?? null });
 		}
 		const calc = new CostCalculator(dated);
 		const cost = target.assemblyId === null ? calc.part(target.partId) : calc.assembly(target.assemblyId);
@@ -136,11 +177,20 @@ export function plannedMarginSeries(
 				if (from !== to) costChanges.push({ partId: id, fromCents: from, toCents: to });
 			}
 		}
+		const rateChanges: RateChange[] = [];
+		if (previousRates) {
+			for (const id of machines) {
+				const from = previousRates.get(id) ?? null;
+				const to = datedRates.costs.get(id) ?? null;
+				if (from !== to) rateChanges.push({ machineTypeId: id, fromCents: from, toCents: to });
+			}
+		}
 		const priceChange =
 			last && last.priceCents !== priceCents ? { fromCents: last.priceCents, toCents: priceCents } : null;
 		previous = costs;
+		previousRates = datedRates.costs;
 		// A day whose changes did not move this item (e.g. the part's price under a variant's own price).
-		if (last && costChanges.length === 0 && !priceChange) continue;
+		if (last && costChanges.length === 0 && rateChanges.length === 0 && !priceChange) continue;
 		points.push({
 			date,
 			costCents,
@@ -148,8 +198,9 @@ export function plannedMarginSeries(
 			priceCents,
 			// Like the margins page: an incomplete cost still gives a (flagged, overstated) margin.
 			margin: marginOf(priceCents, costCents),
-			fallback: [...inputs].some((id) => fallback.has(id)),
+			fallback: [...inputs].some((id) => fallback.has(id)) || [...machines].some((id) => datedRates.fallback.has(id)),
 			costChanges,
+			rateChanges,
 			priceChange,
 		});
 	}
@@ -183,7 +234,7 @@ export async function marginHistory(db: Db, target: MarginTarget) {
 	const assembly = target.assemblyId === null ? null : partAssemblies.find((b) => b.id === target.assemblyId);
 	if (assembly === undefined) return null;
 
-	const [graph, standardRows, saleRows, done] = await Promise.all([
+	const [graph, standardRows, saleRows, done, rateRows] = await Promise.all([
 		loadGraph(db),
 		db
 			.select({ partId: priceHistory.partId, priceCents: priceHistory.priceCents, validFrom: priceHistory.validFrom })
@@ -210,12 +261,17 @@ export async function marginHistory(db: Db, target: MarginTarget) {
 			.from(builds)
 			.where(and(eq(builds.partId, part.id), eq(builds.status, "done")))
 			.orderBy(asc(builds.doneAt), asc(builds.id)),
+		machineRateRows(db),
 	]);
 
-	const planned = plannedMarginSeries(graph, target, standardRows, saleRows, {
-		part: part.salePriceCents,
-		assembly: assembly?.salePriceCents ?? null,
-	});
+	const planned = plannedMarginSeries(
+		graph,
+		target,
+		standardRows,
+		saleRows,
+		{ part: part.salePriceCents, assembly: assembly?.salePriceCents ?? null },
+		rateRows,
+	);
 
 	// Builds of this variant, any revision (as on the margins page); of any assembly for a part without one.
 	const codeOf = new Map(partAssemblies.map((b) => [b.id, b]));
@@ -242,5 +298,12 @@ export async function marginHistory(db: Db, target: MarginTarget) {
 		};
 	});
 
-	return { part, assembly, planned, actual, refs: new Map([...graph.parts].map(([id, p]) => [id, p.ref])) };
+	return {
+		part,
+		assembly,
+		planned,
+		actual,
+		refs: new Map([...graph.parts].map(([id, p]) => [id, p.ref])),
+		machineNames: new Map([...graph.machineTypes].map(([id, m]) => [id, m.name])),
+	};
 }

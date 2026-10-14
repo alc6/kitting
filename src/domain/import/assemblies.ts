@@ -1,6 +1,13 @@
 import { eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
-import { ASSEMBLY_STATUSES, type AssemblyStatus, assemblies, assemblyLines, priceHistory } from "../../db/schema";
+import {
+	ASSEMBLY_STATUSES,
+	type AssemblyStatus,
+	assemblies,
+	assemblyLines,
+	machineTypes,
+	priceHistory,
+} from "../../db/schema";
 import type { Statement } from "../../lib/db";
 import { formatCentsInput, formatQtyInput, MILLI } from "../../lib/units";
 import { field, REF_PATTERN, validate } from "../../lib/validation";
@@ -28,6 +35,9 @@ const assemblyRow = z.object({
 	sale_price: field.money(),
 	/** Units per batch (D145); empty = not given (0). */
 	batch_qty: field.qty({ positive: true, empty: 0 }),
+	/** Machine type name and whole minutes per batch (D148); empty = not given. */
+	machine: field.text(200),
+	machine_minutes: field.int(),
 	component_ref: field.required(64),
 	qty: field.qty({ positive: true }),
 	notes: field.text(500),
@@ -44,6 +54,9 @@ type Group = {
 	salePrice: number | null;
 	/** Units per batch from the file, null when empty (only used when the batch_qty column is present). */
 	batch: number | null;
+	/** Machine type and minutes per batch from the file, null when empty (only used when their columns are present). */
+	machineTypeId: number | null;
+	machineMinutes: number | null;
 	lines: { line: number; componentId: number; qtyMilli: number; notes: string }[];
 	existing?: GraphAssembly;
 };
@@ -56,32 +69,49 @@ const groupKey = (parentId: number, code: string, revision: string) => `${parent
  * the previously active assembly of the same parent and code. Cycles are rejected.
  * The optional sale_price column sets the variant's selling price (one value per assembly; empty everywhere
  * clears it); without the column, prices are kept. The optional batch_qty column works the same way (empty everywhere
- * means 1), but cannot change the batch of an assembly that is active in the database (D146).
+ * means 1), but cannot change the batch of an assembly that is active in the database (D146). The optional machine and
+ * machine_minutes columns (a machine type name and whole minutes per batch, D148) follow the same rules.
  */
 export const assembliesImporter: Importer = {
 	type: "assemblies",
 	required: ["parent_ref", "component_ref", "qty"],
-	optional: ["code", "revision", "status", "sale_price", "batch_qty", "notes"],
-	columns: ["parent_ref", "code", "revision", "status", "sale_price", "batch_qty", "component_ref", "qty", "notes"],
+	optional: ["code", "revision", "status", "sale_price", "batch_qty", "machine", "machine_minutes", "notes"],
+	columns: [
+		"parent_ref",
+		"code",
+		"revision",
+		"status",
+		"sale_price",
+		"batch_qty",
+		"machine",
+		"machine_minutes",
+		"component_ref",
+		"qty",
+		"notes",
+	],
 	example: [
-		["SA-MAIN", "std", "Rev1", "active", "", "", "RES-10K", "4", ""],
-		["SA-MAIN", "std", "Rev1", "active", "", "", "CBL-2C", "0.35", "cut to length"],
-		["SA-MAIN", "std", "Rev1", "active", "", "", "KIT-SCREWS", "1", ""],
-		["KIT-SCREWS", "std", "Rev1", "active", "", "", "SCREW-M3", "6", ""],
-		["SPACER-10", "std", "Rev1", "active", "", "24", "PLA-BLACK", "0.26", "one print plate"],
+		["SA-MAIN", "std", "Rev1", "active", "", "", "", "", "RES-10K", "4", ""],
+		["SA-MAIN", "std", "Rev1", "active", "", "", "", "", "CBL-2C", "0.35", "cut to length"],
+		["SA-MAIN", "std", "Rev1", "active", "", "", "", "", "KIT-SCREWS", "1", ""],
+		["KIT-SCREWS", "std", "Rev1", "active", "", "", "", "", "SCREW-M3", "6", ""],
+		["SPACER-10", "std", "Rev1", "active", "", "24", "FDM printer", "190", "PLA-BLACK", "0.26", "one print plate"],
 	],
 
 	async plan({ db }, table) {
 		const { errors, warnings } = checkHeader(this, table);
 		if (errors.length) return emptyPlan("assemblies", errors, warnings);
 
-		const [graph, assemblyPrices] = await Promise.all([
+		const [graph, assemblyPrices, types] = await Promise.all([
 			loadGraph(db),
 			db.select({ id: assemblies.id, salePriceCents: assemblies.salePriceCents }).from(assemblies),
+			db.select({ id: machineTypes.id, name: machineTypes.name }).from(machineTypes),
 		]);
+		const typeByName = new Map(types.map((m) => [m.name.toLowerCase(), m.id]));
+		const typeName = (id: number | null) => (id === null ? "∅" : (types.find((m) => m.id === id)?.name ?? `#${id}`));
 		const priceOf = new Map(assemblyPrices.map((b) => [b.id, b.salePriceCents]));
 		const pricesInFile = table.header.includes("sale_price");
 		const batchesInFile = table.header.includes("batch_qty");
+		const machinesInFile = table.header.includes("machine") || table.header.includes("machine_minutes");
 		const byRef = new Map([...graph.parts.values()].map((p) => [p.ref, p]));
 		const existingByKey = new Map(
 			[...graph.assemblies.values()].map((b) => [groupKey(b.parentPartId, b.code, b.revision), b]),
@@ -96,6 +126,11 @@ export const assembliesImporter: Importer = {
 				continue;
 			}
 			const d = v.data;
+			const machineTypeId = d.machine ? (typeByName.get(d.machine.toLowerCase()) ?? null) : null;
+			if (d.machine && machineTypeId === null) {
+				issues.push({ line: rec.line, column: "machine", key: "unknown_machine_type", vars: { name: d.machine } });
+				continue;
+			}
 			const parent = byRef.get(d.parent_ref);
 			const comp = byRef.get(d.component_ref);
 			if (!parent)
@@ -129,6 +164,8 @@ export const assembliesImporter: Importer = {
 					status: d.status,
 					salePrice: d.sale_price,
 					batch: d.batch_qty || null,
+					machineTypeId,
+					machineMinutes: d.machine_minutes || null,
 					lines: [],
 					existing: existingByKey.get(key),
 				};
@@ -142,17 +179,39 @@ export const assembliesImporter: Importer = {
 			} else if (d.batch_qty && g.batch !== null && d.batch_qty !== g.batch) {
 				issues.push({ line: rec.line, column: "batch_qty", key: "assembly_batch_mixed" });
 				continue;
+			} else if (
+				(machineTypeId !== null && g.machineTypeId !== null && machineTypeId !== g.machineTypeId) ||
+				(d.machine_minutes && g.machineMinutes !== null && d.machine_minutes !== g.machineMinutes)
+			) {
+				issues.push({ line: rec.line, column: "machine", key: "assembly_machine_mixed" });
+				continue;
 			} else {
 				if (g.salePrice === null) g.salePrice = d.sale_price;
 				if (g.batch === null) g.batch = d.batch_qty || null;
+				if (g.machineTypeId === null) g.machineTypeId = machineTypeId;
+				if (g.machineMinutes === null) g.machineMinutes = d.machine_minutes || null;
 			}
 			g.lines.push({ line: rec.line, componentId: comp.id, qtyMilli: d.qty, notes: d.notes });
 		}
 
-		// The batch of an active assembly changes only through a new revision (D146).
+		// Production settings: from the file when their columns are present, else kept (D146, D148).
 		const batchOf = (g: Group) => (batchesInFile ? (g.batch ?? MILLI) : (g.existing?.batchMilli ?? MILLI));
+		const machineOf = (g: Group) =>
+			machinesInFile
+				? { typeId: g.machineTypeId, minutes: g.machineTypeId === null ? 0 : (g.machineMinutes ?? 0) }
+				: { typeId: g.existing?.machineTypeId ?? null, minutes: g.existing?.machineMinutes ?? 0 };
+		const machineChanged = (g: Group) =>
+			g.existing !== undefined &&
+			(machineOf(g).typeId !== g.existing.machineTypeId || machineOf(g).minutes !== g.existing.machineMinutes);
 		for (const g of groups.values()) {
-			if (g.existing?.status === "active" && batchOf(g) !== g.existing.batchMilli) {
+			if (machinesInFile && g.machineTypeId !== null && !g.machineMinutes)
+				issues.push({ line: g.firstLine, column: "machine_minutes", key: "machine_time_required" });
+			else if (machinesInFile && g.machineTypeId === null && g.machineMinutes)
+				issues.push({ line: g.firstLine, column: "machine", key: "machine_required" });
+		}
+		// The production settings of an active assembly change only through a new revision (D146).
+		for (const g of groups.values()) {
+			if (g.existing?.status === "active" && (batchOf(g) !== g.existing.batchMilli || machineChanged(g))) {
 				const parentRef = graph.parts.get(g.parentId)?.ref ?? "";
 				issues.push({
 					line: g.firstLine,
@@ -188,7 +247,11 @@ export const assembliesImporter: Importer = {
 		);
 
 		// Apply the changes to a copy of the graph and look for cycles.
-		const next: AssemblyGraph = { parts: graph.parts, assemblies: new Map(graph.assemblies) };
+		const next: AssemblyGraph = {
+			parts: graph.parts,
+			assemblies: new Map(graph.assemblies),
+			machineTypes: graph.machineTypes,
+		};
 		let tempId = -1;
 		for (const b of toArchive) next.assemblies.set(b.id, { ...b, status: "archived" });
 		for (const g of groups.values()) {
@@ -207,6 +270,8 @@ export const assembliesImporter: Importer = {
 				revision: g.revision,
 				status: g.status,
 				batchMilli: batchOf(g),
+				machineTypeId: machineOf(g).typeId,
+				machineMinutes: machineOf(g).minutes,
 				lines,
 			});
 		}
@@ -228,6 +293,12 @@ export const assembliesImporter: Importer = {
 			}
 			if (g.existing && batchOf(g) !== g.existing.batchMilli) {
 				changes.push(`batch_qty: ${formatQtyInput(g.existing.batchMilli)} → ${formatQtyInput(batchOf(g))}`);
+			}
+			if (g.existing && machineChanged(g)) {
+				const m = machineOf(g);
+				changes.push(
+					`machine: ${typeName(g.existing.machineTypeId)} ${g.existing.machineMinutes} min → ${typeName(m.typeId)} ${m.minutes} min`,
+				);
 			}
 			for (const b of toArchive) {
 				if (b.parentPartId === g.parentId && b.code === g.code && g.status === "active") {
@@ -270,7 +341,10 @@ export const assembliesImporter: Importer = {
 				const ordered = [...changed].sort((a, b) => Number(a.status === "active") - Number(b.status === "active"));
 				for (const g of ordered) {
 					const price = pricesInFile ? { salePriceCents: g.salePrice } : {};
-					const batch = batchesInFile ? { batchQtyMilli: batchOf(g) } : {};
+					const batch = {
+						...(batchesInFile ? { batchQtyMilli: batchOf(g) } : {}),
+						...(machinesInFile ? { machineTypeId: machineOf(g).typeId, machineMinutes: machineOf(g).minutes } : {}),
+					};
 					const oldPrice = g.existing ? (priceOf.get(g.existing.id) ?? null) : null;
 					if (g.existing) {
 						stmts.push(
@@ -339,16 +413,19 @@ export const assembliesImporter: Importer = {
 			status: string;
 			sale_price_cents: number | null;
 			batch_qty_milli: number;
+			machine: string | null;
+			machine_minutes: number;
 			component_ref: string;
 			qty_milli: number;
 			notes: string;
 		}>(sql`
 			SELECT p.ref AS parent_ref, b.code, b.revision, b.status, b.sale_price_cents, b.batch_qty_milli,
-				c.ref AS component_ref, l.qty_milli, l.notes
+				m.name AS machine, b.machine_minutes, c.ref AS component_ref, l.qty_milli, l.notes
 			FROM assembly_lines l
 			JOIN assemblies b ON b.id = l.assembly_id
 			JOIN parts p ON p.id = b.parent_part_id
 			JOIN parts c ON c.id = l.component_part_id
+			LEFT JOIN machine_types m ON m.id = b.machine_type_id
 			ORDER BY p.ref, b.code, b.revision, l.position, l.id`);
 		return rows.map((r) => [
 			r.parent_ref,
@@ -357,6 +434,8 @@ export const assembliesImporter: Importer = {
 			r.status,
 			r.sale_price_cents === null ? "" : formatCentsInput(r.sale_price_cents, locale),
 			formatQtyInput(r.batch_qty_milli, locale),
+			r.machine ?? "",
+			r.machine && r.machine_minutes ? String(r.machine_minutes) : "",
 			r.component_ref,
 			formatQtyInput(r.qty_milli, locale),
 			r.notes,

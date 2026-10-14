@@ -1,7 +1,7 @@
 // zod field builders shared by HTML forms and CSV import rows. Every value arrives as
 // a string; issue messages are i18n keys from Dict.errors (translated by errorText()).
 import { z } from "zod";
-import { parseBool, parseCents, parseMilli } from "./units";
+import { parseBool, parseCents, parseMilli, parseMinutes } from "./units";
 
 const issue = (ctx: z.RefinementCtx, message: string) => {
 	ctx.addIssue({ code: "custom", message });
@@ -79,6 +79,16 @@ export const field = {
 			.transform((v, ctx) => {
 				const b = parseBool(v);
 				return b === null ? issue(ctx, "invalid_bool") : b;
+			}),
+	/** Machine time in whole minutes ("3:10", "3h10", "190", see parseMinutes); empty -> 0. */
+	duration: () =>
+		z
+			.string()
+			.trim()
+			.transform((v, ctx) => {
+				if (v === "") return 0;
+				const n = parseMinutes(v);
+				return n === null ? issue(ctx, "invalid_duration") : n;
 			}),
 	/** Optional numeric id from a <select>; empty -> null. */
 	id: () =>

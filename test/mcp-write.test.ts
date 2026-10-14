@@ -490,6 +490,32 @@ describe("catalog tools", () => {
 		});
 	});
 
+	it("sets machine time per batch by machine type name, on a new revision of an active assembly", async () => {
+		await loadDemo();
+		const token = await connect(["catalog:read", "catalog:write"]);
+		const slower = await write(token, "set_assembly_production", {
+			assembly: "LAMP-CLIP",
+			machine_type: "fdm printer",
+			machine_minutes: 200,
+		});
+		expect(slower.data).toMatchObject({
+			new_revision: true,
+			assembly: { revision: "Rev2", batch: "24", machine_type: "FDM printer", machine_minutes: 200 },
+			active_assembly: { revision: "Rev1", machine_minutes: 190 },
+		});
+		const rev2 = await assemblyId("LAMP-CLIP", "std", "Rev2");
+		const unknown = await callTool(token, "set_assembly_production", { assembly: rev2, machine_type: "Lathe" });
+		expect(unknown.text).toContain('No machine type named "Lathe". Use list_machines');
+		const noTime = await callTool(token, "set_assembly_production", { assembly: rev2, machine_minutes: 0 });
+		expect(noTime.text).toContain("machine_minutes: Enter the machine time per batch.");
+		const none = await write(token, "set_assembly_production", { assembly: rev2, machine_type: null });
+		expect(none.data.assembly).toMatchObject({ machine_type: null, machine_minutes: 0 });
+		expect(await one("SELECT machine_type_id, machine_minutes FROM assemblies WHERE id = ?", rev2)).toEqual({
+			machine_type_id: null,
+			machine_minutes: 0,
+		});
+	});
+
 	it("checks every line like the editor and changes nothing when one is refused", async () => {
 		await loadDemo();
 		const token = await connect(["catalog:write"]);

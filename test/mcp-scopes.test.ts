@@ -20,7 +20,14 @@ const READ = ["catalog:read", "stock:read", "builds:read", "purchasing:read"];
 
 /** Every tool, by scope (sorted): the list docs/mcp.md documents. */
 const TOOLS_BY_SCOPE: Record<string, string[]> = {
-	"catalog:read": ["explode_assembly", "get_assembly", "get_part", "list_recent_changes", "search_parts"],
+	"catalog:read": [
+		"explode_assembly",
+		"get_assembly",
+		"get_part",
+		"list_machines",
+		"list_recent_changes",
+		"search_parts",
+	],
 	"catalog:write": [
 		"activate_assembly",
 		"create_assembly",

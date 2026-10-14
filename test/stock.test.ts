@@ -165,7 +165,10 @@ describe("JSON backup and restore", () => {
 		const json = await backupRes.text();
 		const backup = JSON.parse(json);
 		expect(backup.format).toBe("kitting-backup");
-		expect(backup.tables.parts).toHaveLength(25);
+		expect(backup.tables.parts).toHaveLength(27);
+		expect(backup.tables.machine_types).toHaveLength(1);
+		expect(backup.tables.machines).toHaveLength(3);
+		expect(backup.tables.machine_rate_history).toHaveLength(1);
 		const before = await rows("SELECT * FROM stock_moves ORDER BY id");
 
 		// Wreck the data, then restore.
@@ -182,7 +185,10 @@ describe("JSON backup and restore", () => {
 		expect(await one("SELECT name FROM parts WHERE id = ?", await partId("LAMP-DESK"))).toEqual({
 			name: "Modular desk lamp",
 		});
-		expect(await one("SELECT count(*) AS n FROM assembly_lines")).toEqual({ n: 39 });
+		expect(await one("SELECT count(*) AS n FROM assembly_lines")).toEqual({ n: 40 });
+		expect(await one("SELECT machine_minutes FROM assemblies WHERE machine_type_id IS NOT NULL")).toEqual({
+			machine_minutes: 190,
+		});
 	});
 
 	it("rejects foreign files, unknown columns and other schema versions; admin only", async () => {

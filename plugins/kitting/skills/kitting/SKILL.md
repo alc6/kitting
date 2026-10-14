@@ -30,6 +30,10 @@ worked conversations in [references/examples.md](references/examples.md).
   the quantities for the whole batch, and a build of any quantity takes line × quantity / batch (rounded up). Plan in
   batches with `plan_build`'s `batches`. The batch belongs to a revision: change it with `set_assembly_production`,
   which on an active assembly creates a draft revision, like `set_assembly_lines`.
+- **Machines**: a recipe can take machine time per batch (`machine_minutes`, e.g. 190 for 3 h 10) on a **machine type**
+  (an FDM printer) that carries the hourly rate; the machines themselves (PRINTER-1, PRINTER-2) belong to a type and
+  are in service, under maintenance or retired. Machine time is costed like a component, and `machine_time` in
+  results is in minutes: say it as hours and minutes.
 - **Stock** is a ledger: on hand is the sum of signed moves (receipts, build consumption and output,
   adjustments, counts). Nothing edits a move; mistakes are corrected with new moves. Stock can go negative; that
   is a signal (`stock_on_hand` with `below_zero`).
@@ -140,6 +144,15 @@ worked conversations in [references/examples.md](references/examples.md).
   the same part around that date lists the other serials received with it. Query each with `list_builds` to
   find the builds (and product serials) that consumed them, and report open builds that still hold some in
   stock.
+
+### Machine time and printer hours
+- **How many printer hours do my plans need?** `get_shortages` gives `machine_time` per machine type for all open
+  builds (sub-assemblies taken from stock need none) with `active_machines`; divide to say how long each machine in
+  service is busy. `list_machines` lists the types, their rate and their machines.
+- **A recipe from the slicer** ("24 clips, 260 g, 3 h 10"): the lines are the plate's quantities, `batch_qty` 24,
+  `machine_type` and `machine_minutes` 190, set with `set_assembly_lines` and `set_assembly_production` on a draft
+  (each creates the draft revision from an active one), then `activate_assembly` after the user confirms.
+- Machines and their rates are managed in the app (Machines page), not over MCP.
 
 ### Margins and cost questions
 `get_part` gives standard cost, sale price, assembly unit cost and `rolled_up_cost` (with `missing_costs`: parts with

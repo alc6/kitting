@@ -2,6 +2,8 @@ import { createExecutionContext } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { drizzle } from "drizzle-orm/d1";
 import demoAssemblies from "../examples/full/assemblies.csv?raw";
+import demoMachineTypes from "../examples/full/machine_types.csv?raw";
+import demoMachines from "../examples/full/machines.csv?raw";
 import demoOffers from "../examples/full/part_suppliers.csv?raw";
 import demoParts from "../examples/full/parts.csv?raw";
 import demoStock from "../examples/full/stock.csv?raw";
@@ -9,7 +11,7 @@ import demoSuppliers from "../examples/full/suppliers.csv?raw";
 import type { Role } from "../src/db/schema";
 import * as schema from "../src/db/schema";
 import { runChangeSet } from "../src/domain/history";
-import { planImport } from "../src/domain/import";
+import { type ImportType, planImport } from "../src/domain/import";
 import app from "../src/index";
 import type { Db } from "../src/types";
 
@@ -22,6 +24,7 @@ const TABLES = [
 	"users",
 	"settings",
 	"build_lines",
+	"build_machine_times",
 	"builds",
 	"po_lines",
 	"purchase_orders",
@@ -30,6 +33,9 @@ const TABLES = [
 	"part_suppliers",
 	"assembly_lines",
 	"assemblies",
+	"machines",
+	"machine_rate_history",
+	"machine_types",
 	"parts",
 	"suppliers",
 ];
@@ -205,6 +211,8 @@ export const DEMO = {
 	suppliers: demoSuppliers,
 	parts: demoParts,
 	part_suppliers: demoOffers,
+	machine_types: demoMachineTypes,
+	machines: demoMachines,
 	assemblies: demoAssemblies,
 	stock: demoStock,
 };
@@ -214,10 +222,7 @@ export function testDb(): Db {
 }
 
 /** Imports CSV text through the real importer; throws on validation errors. */
-export async function importCsv(
-	type: "suppliers" | "parts" | "part_suppliers" | "price_history" | "assemblies" | "stock",
-	csv: string,
-): Promise<void> {
+export async function importCsv(type: ImportType, csv: string): Promise<void> {
 	const db = testDb();
 	const plan = await planImport({ db, locale: "en" }, type, csv);
 	if (!plan) throw new Error(`no importer ${type}`);
@@ -239,6 +244,8 @@ export async function loadDemo(opts: { stock?: boolean } = {}): Promise<void> {
 	await importCsv("suppliers", DEMO.suppliers);
 	await importCsv("parts", DEMO.parts);
 	await importCsv("part_suppliers", DEMO.part_suppliers);
+	await importCsv("machine_types", DEMO.machine_types);
+	await importCsv("machines", DEMO.machines);
 	await importCsv("assemblies", DEMO.assemblies);
 	if (opts.stock !== false) await importCsv("stock", DEMO.stock);
 }

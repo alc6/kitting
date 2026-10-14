@@ -2,13 +2,21 @@
 import { z } from "zod";
 import { BUILD_STATUSES, MOVE_REASONS, PART_KINDS, PO_STATUSES } from "../db/schema";
 import { loadGraph, partAssemblySummary, whereUsed } from "../domain/assemblies";
-import { CostCalculator, centsOf, type ExplodedNode, explode } from "../domain/assembly-graph";
-import { buildPickList, getBuildLines, listBuilds, makeNodes, serialCount } from "../domain/builds";
+import { CostCalculator, centsOf, type ExplodedNode, explode, type MachineNeed } from "../domain/assembly-graph";
+import {
+	buildPickList,
+	getBuildLines,
+	getBuildMachineTimes,
+	listBuilds,
+	makeNodes,
+	serialCount,
+} from "../domain/builds";
+import { listMachines, listMachineTypes } from "../domain/machines";
 import { partOffers } from "../domain/offers";
 import { listParts, onHandMap, onHandOf } from "../domain/parts";
 import { computeShortages, getPoLines, listPos } from "../domain/purchasing";
 import { isStocked, listMoves, onHandAt } from "../domain/stock";
-import { lineCostCents, MILLI, roundDiv } from "../lib/units";
+import { lineCostCents, MILLI, machineMillicents, roundDiv } from "../lib/units";
 import {
 	assemblySelector,
 	buildByNumber,
@@ -27,6 +35,19 @@ import {
 
 // ---------------------------------------------------------------------------
 // catalog:read
+
+/** Machine time of an explosion, with its cost (D148). */
+function machineTimeView(needs: MachineNeed[], calc: CostCalculator) {
+	return needs.map((m) => {
+		const cost = calc.machine(m.machineType.id, m.minutesMilli);
+		return {
+			type: m.machineType.name,
+			minutesMilli: m.minutesMilli,
+			hourlyRateCents: m.machineType.rateCents,
+			costCents: cost.incomplete ? null : centsOf(cost.millicents),
+		};
+	});
+}
 
 const searchParts = tool({
 	name: "search_parts",
@@ -164,6 +185,7 @@ const getAssemblyTool = tool({
 		const calc = new CostCalculator(graph);
 		const ex = exploding(() => explode(graph, assembly.id, qty));
 		const unit = calc.assembly(assembly.id);
+		const machine = assembly.machineTypeId === null ? undefined : graph.machineTypes.get(assembly.machineTypeId);
 		return {
 			assembly: {
 				assemblyId: assembly.id,
@@ -173,15 +195,21 @@ const getAssemblyTool = tool({
 				revision: assembly.revision,
 				status: assembly.status,
 				batchMilli: assembly.batchQtyMilli,
+				machineType: machine?.name ?? null,
+				machineMinutes: machine ? assembly.machineMinutes : 0,
 			},
 			qtyMilli: qty,
 			cost: {
 				unitCostCents: centsOf(unit.millicents),
 				totalCostCents: centsOf(roundDiv(qty * unit.millicents, MILLI)),
 				incomplete: unit.incomplete,
-				missingCosts: refsOf(graph, unit.missing),
+				missingCosts: [
+					...refsOf(graph, unit.missing),
+					...(unit.missingMachines ?? []).map((id) => graph.machineTypes.get(id)?.name ?? String(id)),
+				],
 			},
 			lines: ex.tree.map((n) => treeNode(n, calc)),
+			machineTime: machineTimeView(ex.machines, calc),
 		};
 	},
 });
@@ -219,6 +247,8 @@ const explodeAssembly = tool({
 		};
 		const components = ex.requirements.map((r) => line(r, true));
 		const fees = ex.fees.map((f) => line(f, false));
+		const machineTime = machineTimeView(ex.machines, calc);
+		for (const m of ex.machines) total += calc.machine(m.machineType.id, m.minutesMilli).millicents;
 		const unit = calc.assembly(assembly.id);
 		return {
 			assembly: {
@@ -233,8 +263,37 @@ const explodeAssembly = tool({
 			useStock: a.use_stock,
 			components,
 			fees,
+			machineTime,
 			totalCostCents: centsOf(total),
 			costIncomplete: unit.incomplete,
+		};
+	},
+});
+
+const listMachinesTool = tool({
+	name: "list_machines",
+	title: "Machines",
+	description:
+		"The machine types (what recipes name, with their hourly rate) and the machines of each type with their status (active = in service, maintenance, retired). Each type also gives how many recipes use it and the machine time its planned and in-progress builds need (planned_minutes).",
+	rule: { scope: "catalog:read" },
+	input: z.object({ include_retired: z.boolean().default(false).describe("Also list retired machines.") }),
+	run: async (a, { db }) => {
+		const [types, list, shortages] = await Promise.all([
+			listMachineTypes(db),
+			listMachines(db, { retired: a.include_retired }),
+			computeShortages(db),
+		]);
+		const load = new Map(shortages.machines.map((m) => [m.machineType.id, m.minutesMilli]));
+		return {
+			machineTypes: types.map((m) => ({
+				name: m.name,
+				hourlyRateCents: m.hourlyRateCents,
+				activeMachines: m.activeMachines,
+				recipes: m.recipeCount,
+				plannedMinutesMilli: load.get(m.id) ?? 0,
+				notes: m.notes || undefined,
+			})),
+			machines: list.map((m) => ({ name: m.name, type: m.typeName, status: m.status, notes: m.notes || undefined })),
 		};
 	},
 });
@@ -386,9 +445,17 @@ const getBuildTool = tool({
 			notes: build.notes || undefined,
 		};
 		if (build.status === "done") {
-			const lines = await getBuildLines(db, build.id);
-			const known = lines.every((l) => l.line.unitCostCents !== null);
-			const total = lines.reduce((s, l) => s + lineCostCents(l.line.qtyMilli, l.line.unitCostCents ?? 0), 0);
+			const [lines, machines] = await Promise.all([getBuildLines(db, build.id), getBuildMachineTimes(db, build.id)]);
+			const known = lines.every((l) => l.line.unitCostCents !== null) && machines.every((m) => m.rateCents !== null);
+			const machineTime = machines.map((m) => ({
+				type: m.name,
+				minutesMilli: m.minutesMilli,
+				hourlyRateCents: m.rateCents,
+				costCents: m.rateCents === null ? null : centsOf(machineMillicents(m.rateCents, m.minutesMilli)),
+			}));
+			const total =
+				lines.reduce((s, l) => s + lineCostCents(l.line.qtyMilli, l.line.unitCostCents ?? 0), 0) +
+				machineTime.reduce((s, m) => s + (m.costCents ?? 0), 0);
 			return {
 				build: header,
 				asBuilt: lines.map((l) => ({
@@ -401,6 +468,7 @@ const getBuildTool = tool({
 					unitCostCents: l.line.unitCostCents,
 					madeByBuild: l.sourceBuildNumber ?? undefined,
 				})),
+				machineTime,
 				totalCostCents: total,
 				costIncomplete: !known,
 			};
@@ -433,6 +501,7 @@ const getBuildTool = tool({
 				toBuildMilli: n.toBuildMilli,
 			})),
 			fees: pick.explosion.fees.map((f) => ({ ref: f.part.ref, name: f.part.name, qtyMilli: f.qtyMilli })),
+			machineTime: machineTimeView(pick.explosion.machines, new CostCalculator(graph)),
 			problems: pick.problems.map((p) => ({ problem: p.key, ...p.vars })),
 		};
 	},
@@ -445,7 +514,7 @@ const getShortages = tool({
 	name: "get_shortages",
 	title: "Shortages",
 	description:
-		"What to buy for all planned and in-progress builds: per purchased part, need − on hand − on order, rounded up to the preferred supplier's MOQ and pack size, grouped by supplier. Also lists make or kit parts that must be built but have no active assembly.",
+		"What to buy for all planned and in-progress builds: per purchased part, need − on hand − on order, rounded up to the preferred supplier's MOQ and pack size, grouped by supplier. Also lists make or kit parts that must be built but have no active assembly, and the machine time the builds need per machine type, with the number of machines in service.",
 	rule: { scope: "purchasing:read" },
 	input: z.object({}),
 	run: async (_a, { db }) => {
@@ -476,6 +545,12 @@ const getShortages = tool({
 				ref: m.ref,
 				name: m.name,
 				qtyMilli: m.qtyMilli,
+				builds: m.builds,
+			})),
+			machineTime: s.machines.map((m) => ({
+				type: m.machineType.name,
+				minutesMilli: m.minutesMilli,
+				activeMachines: m.activeMachines,
 				builds: m.builds,
 			})),
 		};
@@ -557,6 +632,7 @@ export const READ_TOOLS: readonly ToolSpec[] = [
 	getPartTool,
 	getAssemblyTool,
 	explodeAssembly,
+	listMachinesTool,
 	stockOnHand,
 	listMovesTool,
 	listBuildsTool,

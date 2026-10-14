@@ -4,7 +4,7 @@ import { Hono } from "hono";
 import type { Child } from "hono/jsx";
 import { BUILD_STATUSES, type BuildStatus, type Part, parts, stockMoves } from "../db/schema";
 import { loadGraph } from "../domain/assemblies";
-import type { ExplodedNode } from "../domain/assembly-graph";
+import { CostCalculator, centsOf, type ExplodedNode } from "../domain/assembly-graph";
 import {
 	buildableProduct,
 	buildEditInput,
@@ -18,6 +18,7 @@ import {
 	createBuildStatement,
 	getBuild,
 	getBuildLines,
+	getBuildMachineTimes,
 	listBuilds,
 	makeNodes,
 	nextBuildNumber,
@@ -35,12 +36,22 @@ import { onHandAt, serialsInStock } from "../domain/stock";
 import { errorText, fmt } from "../i18n";
 import { cn } from "../lib/cn";
 import { isConstraintError } from "../lib/sql";
-import { formatMoney, formatPercent, formatQty, formatQtyInput, lineCostCents, MILLI, mulDivRound } from "../lib/units";
+import {
+	formatMoney,
+	formatPercent,
+	formatQty,
+	formatQtyInput,
+	lineCostCents,
+	MILLI,
+	machineMillicents,
+	mulDivRound,
+} from "../lib/units";
 import { type FieldErrors, validate } from "../lib/validation";
 import { requirePermission } from "../middleware/roles";
 import type { AppEnv } from "../types";
 import { useApp } from "../views/context";
 import { Icon, icons } from "../views/icons";
+import { MachineTimeCard } from "../views/machines";
 import { idParam, notFound, nowIso, page, redirectOk, saveChanges, translateErrors } from "../views/render";
 import {
 	Alert,
@@ -934,6 +945,7 @@ async function renderBuild(
 	if (open) {
 		const [graph, onHand] = await Promise.all([loadGraph(db), onHandAt(db)]);
 		const pick = buildPickList(graph, onHand, build, part, form, opts.validate ?? false);
+		const calc = new CostCalculator(graph);
 		const tracked = pick.explosion.requirements.filter((r) => r.part.trackSerial);
 		const hints = new Map(
 			await Promise.all(tracked.map(async (r) => [r.part.id, await serialsInStock(db, r.part.id)] as const)),
@@ -969,12 +981,29 @@ async function renderBuild(
 					/>
 				) : null}
 				<PickListForm data={data} pick={pick} values={form} serialHints={hints} />
+				{pick.explosion.machines.length ? (
+					<MachineTimeCard
+						id="machine-time"
+						title={t.machines.time}
+						rows={pick.explosion.machines.map((m) => {
+							const cost = calc.machine(m.machineType.id, m.minutesMilli);
+							return {
+								machineTypeId: m.machineType.id,
+								name: m.machineType.name,
+								minutesMilli: m.minutesMilli,
+								rateCents: m.machineType.rateCents,
+								costCents: cost.incomplete ? null : centsOf(cost.millicents),
+							};
+						})}
+					/>
+				) : null}
 			</>
 		);
 	} else {
 		const done = build.status === "done";
-		const [lines, output, actual] = await Promise.all([
+		const [lines, machineTimes, output, actual] = await Promise.all([
 			getBuildLines(db, build.id),
+			getBuildMachineTimes(db, build.id),
 			db
 				.select({ unitCostCents: stockMoves.unitCostCents })
 				.from(stockMoves)
@@ -986,7 +1015,8 @@ async function renderBuild(
 		]);
 		const outputCost = output[0]?.unitCostCents ?? null;
 		const doneAt = shortDateTime(build.doneAt);
-		const incomplete = lines.some((l) => l.line.unitCostCents === null);
+		const incomplete =
+			lines.some((l) => l.line.unitCostCents === null) || machineTimes.some((m) => m.rateCents === null);
 		// Two different costs: the one frozen at completion (standard costs) and the actual one (weighted average).
 		const priceCents = salePriceOf(part, data.assembly);
 		const margin = marginOf(priceCents, actual?.unitCents ?? null);
@@ -1060,6 +1090,19 @@ async function renderBuild(
 					</Card>
 				) : null}
 				{done ? <AsBuilt lines={lines} outputCost={outputCost} qtyMilli={build.qtyMilli} /> : null}
+				{machineTimes.length ? (
+					<MachineTimeCard
+						id="machine-time"
+						title={t.machines.recorded}
+						rows={machineTimes.map((m) => ({
+							machineTypeId: m.machineTypeId,
+							name: m.name,
+							minutesMilli: m.minutesMilli,
+							rateCents: m.rateCents,
+							costCents: m.rateCents === null ? null : centsOf(machineMillicents(m.rateCents, m.minutesMilli)),
+						}))}
+					/>
+				) : null}
 			</>
 		);
 	}

@@ -12,6 +12,7 @@ import {
 	assemblyLabel,
 	assemblyLineInput,
 	assemblySalePriceStatements,
+	checkProduction,
 	componentError,
 	createAssemblyStatements,
 	DEFAULT_CODE,
@@ -39,6 +40,7 @@ import {
 	type ExplodedNode,
 	type Explosion,
 	explode,
+	machineNeed,
 	walkTree,
 } from "../domain/assembly-graph";
 import { type Margin, marginOf, salePriceOf } from "../domain/margins";
@@ -48,7 +50,10 @@ import { errorText, fmt } from "../i18n";
 import { cn } from "../lib/cn";
 import { isConstraintError } from "../lib/sql";
 import {
+	ceilDiv,
 	formatCentsInput,
+	formatMinutes,
+	formatMinutesInput,
 	formatMoney,
 	formatPercent,
 	formatQty,
@@ -61,10 +66,11 @@ import {
 import { type FieldErrors, field, validate } from "../lib/validation";
 import { requirePermission } from "../middleware/roles";
 import type { AppEnv } from "../types";
-import { CostView, StatusBadge } from "../views/assembly";
+import { CostView, missingNames, StatusBadge } from "../views/assembly";
 import { AssemblyDiagram, type DiagramView, diagramTree, treeDepth } from "../views/assembly-diagram";
 import { useApp } from "../views/context";
 import { Icon, type IconNode, icons } from "../views/icons";
+import { Duration, MachineTimeCard, type MachineTimeRow } from "../views/machines";
 import { PartPicker, PartPickerDialog, PartSelectPicker } from "../views/part-picker";
 import { idParam, notFound, nowIso, page, redirectOk, saveChanges, translateErrors } from "../views/render";
 import {
@@ -533,10 +539,13 @@ function LinesEditor(props: {
 	part: Part;
 	lines: LineRow[];
 	costs: Map<number, Cost>;
-	/** Cost of one batch (the lines as written) and of one unit. */
+	/** Cost of one batch (the lines as written, plus machine time) and of one unit. */
 	batch: Cost;
 	total: Cost;
+	/** Machine time of one batch and its cost (D148). */
+	machine: { typeId: number; name: string; minutesMilli: number; cost: Cost } | null;
 	refs: Map<number, string>;
+	machines: Map<number, string>;
 	options: { ref: string; name: string }[];
 	values: FormValues;
 	errors: FormErrors;
@@ -679,6 +688,21 @@ function LinesEditor(props: {
 						</TableBody>
 						{seeCosts ? (
 							<TableFooter>
+								{props.machine ? (
+									<TableRow class="hover:bg-transparent">
+										<TableCell colspan={editable ? 5 : 4}>
+											<span class="inline-flex flex-wrap items-center gap-x-2">
+												<Icon icon={icons.timer} class="size-4 text-muted-foreground" />
+												{t.machines.time}: <a href={`/machines/types/${props.machine.typeId}`}>{props.machine.name}</a>{" "}
+												· <Duration minutesMilli={props.machine.minutesMilli} />
+											</span>
+										</TableCell>
+										<TableCell class="text-right">
+											<CostView cost={props.machine.cost} refs={props.refs} machines={props.machines} />
+										</TableCell>
+										{editable ? <TableCell /> : null}
+									</TableRow>
+								) : null}
 								{assembly.batchQtyMilli !== MILLI ? (
 									<TableRow class="hover:bg-transparent">
 										<TableCell colspan={editable ? 5 : 4}>
@@ -688,7 +712,7 @@ function LinesEditor(props: {
 											})}
 										</TableCell>
 										<TableCell class="text-right">
-											<CostView cost={props.batch} refs={props.refs} />
+											<CostView cost={props.batch} refs={props.refs} machines={props.machines} />
 										</TableCell>
 										{editable ? <TableCell /> : null}
 									</TableRow>
@@ -696,7 +720,7 @@ function LinesEditor(props: {
 								<TableRow class="hover:bg-transparent">
 									<TableCell colspan={editable ? 5 : 4}>{t.assemblies.totalCost}</TableCell>
 									<TableCell class="text-right font-semibold">
-										<CostView cost={props.total} refs={props.refs} />
+										<CostView cost={props.total} refs={props.refs} machines={props.machines} />
 									</TableCell>
 									{editable ? <TableCell /> : null}
 								</TableRow>
@@ -706,7 +730,7 @@ function LinesEditor(props: {
 				)}
 				{seeCosts && props.total.incomplete ? (
 					<CardContent>
-						<IncompleteNote refs={props.total.missing.map((id) => props.refs.get(id) ?? id).join(", ")} />
+						<IncompleteNote refs={missingNames(props.total, props.refs, props.machines).join(", ")} />
 					</CardContent>
 				) : null}
 				{editable ? (
@@ -803,11 +827,43 @@ function SideCard(props: { title: string; icon: IconNode; children: Child }) {
 }
 
 /** How the assembly is produced: units per batch (D145). Belongs to the revision: editable on drafts only (D146). */
-function ProductionCard(props: { assembly: Assembly; part: Part; values: FormValues; errors: FormErrors }) {
+function ProductionCard(props: {
+	assembly: Assembly;
+	part: Part;
+	machineTypes: { id: number; name: string }[];
+	values: FormValues;
+	errors: FormErrors;
+}) {
 	const view = useApp();
 	const { t } = view;
 	const { assembly, part } = props;
-	const items = [{ label: t.assemblies.batchQty, value: <Qty milli={assembly.batchQtyMilli} unit={part.unit} /> }];
+	const machine = props.machineTypes.find((m) => m.id === assembly.machineTypeId);
+	const items = [
+		{ label: t.assemblies.batchQty, value: <Qty milli={assembly.batchQtyMilli} unit={part.unit} /> },
+		{
+			label: t.machines.timePerBatch,
+			value:
+				machine && assembly.machineMinutes > 0 ? (
+					<span class="flex flex-col gap-0.5">
+						<span>
+							<a href={`/machines/types/${machine.id}`}>{machine.name}</a> ·{" "}
+							<Duration minutesMilli={assembly.machineMinutes * MILLI} />
+						</span>
+						{assembly.batchQtyMilli !== MILLI ? (
+							<span class="text-xs text-muted-foreground">
+								{fmt(t.machines.perUnit, {
+									time: formatMinutes(
+										machineNeed({ machineMinutes: assembly.machineMinutes, batchMilli: assembly.batchQtyMilli }, MILLI),
+									),
+								})}
+							</span>
+						) : null}
+					</span>
+				) : (
+					t.machines.none
+				),
+		},
+	];
 	if (assembly.status !== "draft" || !can(view, "assemblies.edit")) {
 		return (
 			<SideCard title={t.assemblies.productionTitle} icon={icons.factory}>
@@ -820,20 +876,30 @@ function ProductionCard(props: { assembly: Assembly; part: Part; values: FormVal
 			</SideCard>
 		);
 	}
+	const p = { values: props.values, errors: props.errors };
 	return (
 		<Card id="production" class="gap-4">
 			<CardHeader>
 				<CardTitle icon={icons.factory}>{t.assemblies.productionTitle}</CardTitle>
 			</CardHeader>
 			<form method="post" action={`/assemblies/${assembly.id}/production`} class="flex flex-col gap-4">
-				<CardContent>
+				<CardContent class="flex flex-col gap-4">
 					<DecimalField
 						name="batch_qty"
 						label={t.assemblies.batchQty}
 						hint={fmt(t.assemblies.batchHint, { ref: part.ref })}
-						values={props.values}
-						errors={props.errors}
+						{...p}
 					/>
+					<SelectField
+						name="machine_type_id"
+						label={t.machines.machineType}
+						options={[
+							{ value: "", label: t.machines.none },
+							...props.machineTypes.map((m) => ({ value: String(m.id), label: m.name })),
+						]}
+						{...p}
+					/>
+					<TextField name="machine_time" label={t.machines.timePerBatch} hint={t.machines.timeHint} {...p} />
 				</CardContent>
 				<CardFooter>
 					<Button variant="outline" icon={icons.save}>
@@ -845,9 +911,27 @@ function ProductionCard(props: { assembly: Assembly; part: Part; values: FormVal
 	);
 }
 
+/** Machine time of an explosion with its cost, for MachineTimeCard. */
+function machineTimeRows(explosion: Explosion, calc: CostCalculator): MachineTimeRow[] {
+	return explosion.machines.map((m) => {
+		const cost = calc.machine(m.machineType.id, m.minutesMilli);
+		return {
+			machineTypeId: m.machineType.id,
+			name: m.machineType.name,
+			minutesMilli: m.minutesMilli,
+			rateCents: m.machineType.rateCents,
+			costCents: cost.incomplete ? null : centsOf(cost.millicents),
+		};
+	});
+}
+
 /** The production form's values for an assembly. */
 function productionValues(assembly: Assembly, locale: NumberLocale): FormValues {
-	return { batch_qty: formatQtyInput(assembly.batchQtyMilli, locale) };
+	return {
+		batch_qty: formatQtyInput(assembly.batchQtyMilli, locale),
+		machine_type_id: assembly.machineTypeId === null ? "" : String(assembly.machineTypeId),
+		machine_time: formatMinutesInput(assembly.machineMinutes),
+	};
 }
 
 const salePriceInput = z.object({ sale_price: field.money() });
@@ -942,6 +1026,17 @@ async function renderEditor(
 	const total = calc.assembly(assembly.id);
 	const batch = calc.batch(assembly.id);
 	const refs = new Map([...graph.parts.values()].map((p) => [p.id, p.ref]));
+	const machines = new Map([...graph.machineTypes.values()].map((m) => [m.id, m.name]));
+	const machineCost = calc.machineBatch(assembly);
+	const machine =
+		machineCost && assembly.machineTypeId !== null
+			? {
+					typeId: assembly.machineTypeId,
+					name: machines.get(assembly.machineTypeId) ?? "",
+					minutesMilli: assembly.machineMinutes * MILLI,
+					cost: machineCost,
+				}
+			: null;
 	const t = c.var.t;
 	const priceValues = price?.values ?? {
 		sale_price: assembly.salePriceCents === null ? "" : formatCentsInput(assembly.salePriceCents, c.var.locale),
@@ -960,7 +1055,9 @@ async function renderEditor(
 				costs={costs}
 				batch={batch}
 				total={total}
+				machine={machine}
 				refs={refs}
+				machines={machines}
 				options={options.filter((o) => o.id !== part.id)}
 				values={form.values}
 				errors={translateErrors(c, form.errors, form.vars)}
@@ -969,6 +1066,7 @@ async function renderEditor(
 				<ProductionCard
 					assembly={assembly}
 					part={part}
+					machineTypes={[...graph.machineTypes.values()].sort((a, b) => a.name.localeCompare(b.name))}
 					values={production?.values ?? productionValues(assembly, c.var.locale)}
 					errors={translateErrors(c, production?.errors ?? {})}
 				/>
@@ -1174,12 +1272,14 @@ assemblyRoutes.post("/:id/production", requirePermission("assemblies.edit"), asy
 	if (notDraft) return c.redirect(`/assemblies/${assembly.id}?err=${notDraft}`, 303);
 	const body = await c.req.parseBody();
 	const v = validate(productionInput, body);
-	if (!v.ok)
-		return renderEditor(c, data, undefined, 422, { production: { values: body as FormValues, errors: v.errors } });
+	const checked = v.ok ? await checkProduction(c.var.db, v.data) : null;
+	const errors = v.ok ? (checked?.errors ?? {}) : v.errors;
+	if (!checked || Object.keys(errors).length)
+		return renderEditor(c, data, undefined, 422, { production: { values: body as FormValues, errors } });
 	await saveChanges(
 		c,
 		fmt(c.var.t.history.summaries.assemblyProduction, { assembly: assemblyLabel(part.ref, assembly) }),
-		[setProductionStatement(c.var.db, assembly.id, { batchMilli: v.data.batch_qty }, c.var.user, nowIso())],
+		[setProductionStatement(c.var.db, assembly.id, checked.production, c.var.user, nowIso())],
 	);
 	return redirectOk(c, `/assemblies/${assembly.id}`);
 });
@@ -1426,6 +1526,7 @@ assemblyRoutes.get("/:id/tree", async (c) => {
 	} catch (err) {
 		error = err instanceof Error ? err.message : String(err);
 	}
+	const machines = new Map([...graph.machineTypes.values()].map((m) => [m.id, m.name]));
 	const unit = calc.assembly(data.assembly.id);
 	const seeCosts = c.var.seeCosts;
 	return page(
@@ -1478,9 +1579,14 @@ assemblyRoutes.get("/:id/tree", async (c) => {
 					</div>
 				) : null}
 				{seeCosts && unit.incomplete ? (
-					<IncompleteNote refs={unit.missing.map((id) => refs.get(id) ?? id).join(", ")} class="border-t px-4 py-3" />
+					<IncompleteNote refs={missingNames(unit, refs, machines).join(", ")} class="border-t px-4 py-3" />
 				) : null}
 			</Card>
+			{explosion?.machines.length ? (
+				<div class="mt-6">
+					<MachineTimeCard title={t.machines.time} rows={machineTimeRows(explosion, calc)} />
+				</div>
+			) : null}
 		</>,
 	);
 });
@@ -1607,6 +1713,8 @@ assemblyRoutes.get("/:id/explode", async (c) => {
 		const onHand = stock.get(r.part.id) ?? 0;
 		return { ...r, onHand, short: Math.max(0, r.qtyMilli - Math.max(0, onHand)), cost: calc.part(r.part.id) };
 	});
+	const machineRows = ex.machines.map((m) => ({ ...m, cost: calc.machine(m.machineType.id, m.minutesMilli) }));
+	const machines = new Map([...graph.machineTypes.values()].map((m) => [m.id, m.name]));
 	const seeCosts = c.var.seeCosts;
 	if (c.req.query("format") === "csv") {
 		const locale = c.var.locale;
@@ -1626,13 +1734,24 @@ assemblyRoutes.get("/:id/explode", async (c) => {
 					r.cost.incomplete ? "" : formatCentsInput(centsOf(r.cost.millicents), locale),
 					r.cost.incomplete ? "" : formatCentsInput(centsOf(calc.extended(r.part.id, r.qtyMilli)), locale),
 				]),
+				// Machine time (D148): in hours, at the type's hourly rate.
+				...machineRows.map((m) => [
+					m.machineType.name,
+					t.machines.time,
+					"machine",
+					"h",
+					formatQtyInput(ceilDiv(m.minutesMilli, 60), locale),
+					"",
+					"",
+					m.machineType.rateCents === null ? "" : formatCentsInput(m.machineType.rateCents, locale),
+					m.cost.incomplete ? "" : formatCentsInput(centsOf(m.cost.millicents), locale),
+				]),
 			],
 		);
 	}
-	const totalMillicents = [...ex.requirements, ...ex.fees].reduce(
-		(s, r) => s + calc.extended(r.part.id, r.qtyMilli),
-		0,
-	);
+	const totalMillicents =
+		[...ex.requirements, ...ex.fees].reduce((s, r) => s + calc.extended(r.part.id, r.qtyMilli), 0) +
+		machineRows.reduce((s, m) => s + m.cost.millicents, 0);
 	const total = calc.assembly(data.assembly.id);
 	const query = `qty=${encodeURIComponent(formatQtyInput(qty))}${useStock ? "&stock=on" : ""}`;
 	return page(
@@ -1758,6 +1877,40 @@ assemblyRoutes.get("/:id/explode", async (c) => {
 							))}
 						</TableBody>
 					) : null}
+					{machineRows.length ? (
+						<TableBody class="border-t">
+							<TableRow class="bg-muted/30 hover:bg-muted/30">
+								<TableHead colspan={seeCosts ? 8 : 6} scope="rowgroup">
+									{t.machines.time}
+								</TableHead>
+							</TableRow>
+							{machineRows.map((m) => (
+								<TableRow>
+									<TableCell>
+										<a href={`/machines/types/${m.machineType.id}`}>{m.machineType.name}</a>
+									</TableCell>
+									<TableCell>{t.machines.time}</TableCell>
+									<TableCell />
+									<TableCell class="text-right">
+										<Duration minutesMilli={m.minutesMilli} />
+									</TableCell>
+									<TableCell />
+									<TableCell />
+									{seeCosts ? (
+										<>
+											<TableCell class="text-right whitespace-nowrap">
+												<Money cents={m.machineType.rateCents} />
+												{m.machineType.rateCents === null ? null : t.machines.perHour}
+											</TableCell>
+											<TableCell class="text-right">
+												<CostView cost={m.cost} refs={refs} machines={machines} />
+											</TableCell>
+										</>
+									) : null}
+								</TableRow>
+							))}
+						</TableBody>
+					) : null}
 					{seeCosts ? (
 						<TableFooter>
 							<TableRow class="hover:bg-transparent">
@@ -1771,7 +1924,7 @@ assemblyRoutes.get("/:id/explode", async (c) => {
 					) : null}
 				</Table>
 				{seeCosts && total.incomplete ? (
-					<IncompleteNote refs={total.missing.map((id) => refs.get(id) ?? id).join(", ")} class="border-t px-4 py-3" />
+					<IncompleteNote refs={missingNames(total, refs, machines).join(", ")} class="border-t px-4 py-3" />
 				) : null}
 			</Card>
 		</>,

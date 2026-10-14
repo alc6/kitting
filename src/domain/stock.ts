@@ -11,6 +11,7 @@ import { loadGraph } from "./assemblies";
 import { CostCalculator, centsOf } from "./assembly-graph";
 import { averageUnitCents, centsOfMillicents, replayAverageCosts } from "./costing";
 import type { RowIssue } from "./import/types";
+import { machineRatesAt } from "./machines";
 import { historyStart, standardCostsAt } from "./prices";
 
 export const isStocked = (kind: PartKind): boolean => kind === "buy" || kind === "make";
@@ -257,10 +258,11 @@ export async function averageCosts(db: Db, date?: string | null) {
  * Missing costs are flagged per method and make that total understated.
  */
 export async function valuation(db: Db, date?: string | null) {
-	const [graph, onHand, dated, average, start] = await Promise.all([
+	const [graph, onHand, dated, datedRates, average, start] = await Promise.all([
 		loadGraph(db),
 		onHandAt(db, date),
 		date ? standardCostsAt(db, date) : Promise.resolve(null),
+		date ? machineRatesAt(db, date) : Promise.resolve(null),
 		averageCosts(db, date),
 		historyStart(db),
 	]);
@@ -268,6 +270,13 @@ export async function valuation(db: Db, date?: string | null) {
 		// Value with the standard costs of that day (the assembly structure is today's).
 		for (const [id, part] of graph.parts) {
 			if (dated.costs.has(id)) graph.parts.set(id, { ...part, costCents: dated.costs.get(id) ?? null });
+		}
+	}
+	if (datedRates) {
+		// And the machine rates of that day (D149).
+		for (const [id, type] of graph.machineTypes) {
+			if (datedRates.costs.has(id))
+				graph.machineTypes.set(id, { ...type, rateCents: datedRates.costs.get(id) ?? null });
 		}
 	}
 	const calc = new CostCalculator(graph);
@@ -300,8 +309,12 @@ export async function valuation(db: Db, date?: string | null) {
 		incomplete: rows.some((r) => r.incomplete),
 		avgTotalCents: rows.reduce((s, r) => s + r.avgValueCents, 0),
 		avgIncomplete: rows.some((r) => r.avgIncomplete),
-		/** Some standard costs come from before the price history started (on `historyStart`). */
-		fallback: rows.some((r) => r.fallback),
+		/** Some standard costs or machine rates come from before their history started (on `historyStart`). */
+		fallback:
+			rows.some((r) => r.fallback) ||
+			[...graph.assemblies.values()].some(
+				(b) => b.status === "active" && b.machineTypeId !== null && datedRates?.fallback.has(b.machineTypeId),
+			),
 		historyStart: start,
 	};
 }
