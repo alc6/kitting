@@ -43,9 +43,10 @@ const buildNumber = async (id: number) =>
 const COST = 123456; // standard cost of BOX-LAMP
 const OFFER = 111111; // its offer price
 const SALE = 999999; // selling price of LAMP-DESK
-const AMOUNTS = ["1234.56", "1111.11", "9999.99", "987.65", "9876.50"];
+const RATE = 66666; // hourly rate of the FDM printer type
+const AMOUNTS = ["1234.56", "1111.11", "9999.99", "987.65", "9876.50", "666.66"];
 /** The same amounts in cents, as a raw snapshot would hold them. */
-const CENTS = ["123456", "111111", "999999", "98765", "987650"];
+const CENTS = ["123456", "111111", "999999", "98765", "987650", "66666"];
 
 /**
  * Demo data, the amounts above, a lamp built with serial components, a WIDGET (one BOX-LAMP each) with an open
@@ -85,7 +86,21 @@ async function seed() {
 	const line = (await one<{ id: number }>("SELECT id FROM po_lines WHERE po_id = ?", poId)).id;
 	await postForm(`/purchasing/po/${poId}/receive`, { [`recv_${line}`]: "4" });
 	const poNumber = (await one<{ number: string }>("SELECT number FROM purchase_orders WHERE id = ?", poId)).number;
-	return { lamp: await buildNumber(lamp), widget: await buildNumber(widget), po: poNumber };
+	// A machine rate (in the history too), a printed clip built with it and another one planned.
+	await changeSql(
+		"Set the rate of FDM printer",
+		stmt("UPDATE machine_types SET hourly_rate_cents = ? WHERE name = 'FDM printer'", RATE),
+	);
+	const clipDone = await planBuild("LAMP-CLIP", { qty: "24" });
+	expect((await postForm(`/builds/${clipDone}/complete`, {})).status).toBe(303);
+	const clipOpen = await planBuild("LAMP-CLIP", { qty: "10" });
+	return {
+		lamp: await buildNumber(lamp),
+		widget: await buildNumber(widget),
+		po: poNumber,
+		clipDone: await buildNumber(clipDone),
+		clipOpen: await buildNumber(clipOpen),
+	};
 }
 
 /** One call of every tool, with arguments that reach the seeded amounts. */
@@ -107,6 +122,11 @@ function calls(s: Awaited<ReturnType<typeof seed>>): [string, Record<string, unk
 		["list_purchase_orders", { status: "all" }],
 		["get_purchase_order", { number: s.po }],
 		["list_recent_changes", { limit: 100 }],
+		["list_machines", { include_retired: true }],
+		["get_assembly", { assembly: "LAMP-CLIP" }],
+		["explode_assembly", { assembly: "LAMP-CLIP", qty: "24" }],
+		["get_build", { number: s.clipDone }],
+		["get_build", { number: s.clipOpen }],
 	];
 }
 
@@ -245,7 +265,7 @@ describe("read tools", () => {
 			expect.objectContaining({ number: s.lamp, status: "done", serial: "L-0042" }),
 		]);
 		const open = await callTool(token, "list_builds", {});
-		expect((open.data.builds as { number: string }[]).map((b) => b.number)).toEqual([s.widget]);
+		expect((open.data.builds as { number: string }[]).map((b) => b.number)).toEqual([s.clipOpen, s.widget]);
 
 		const done = await callTool(token, "get_build", { number: s.lamp.toLowerCase() });
 		expect(done.data.as_built).toContainEqual(
@@ -266,7 +286,7 @@ describe("read tools", () => {
 		const s = await seed();
 		const token = await connect(["purchasing:read"]);
 		const short = await callTool(token, "get_shortages", {});
-		expect(short.data.open_builds).toBe(1);
+		expect(short.data.open_builds).toBe(2);
 		const lines = (short.data.suppliers as { lines: { ref: string }[] }[]).flatMap((g) => g.lines);
 		expect(lines).toContainEqual(
 			// Rounded up to the preferred offer's pack size (25).
@@ -279,6 +299,42 @@ describe("read tools", () => {
 		expect(po.data.purchase_order).toMatchObject({ number: s.po, status: "partial" });
 		expect(po.data.lines).toEqual([
 			expect.objectContaining({ ref: "BOX-LAMP", qty: "10", received: "4", remaining: "6", unit_price: "987.65" }),
+		]);
+	});
+
+	it("lists machines and gives machine time in assemblies, builds and shortages", async () => {
+		const s = await seed();
+		const token = await connect(ALL);
+		const machines = await callTool(token, "list_machines", {});
+		expect(machines.data.machine_types).toEqual([
+			{
+				name: "FDM printer",
+				hourly_rate: "666.66",
+				active_machines: 2,
+				recipes: 1,
+				planned_minutes: "79.167",
+				notes: expect.any(String),
+			},
+		]);
+		expect((machines.data.machines as { name: string; status: string }[]).map((m) => [m.name, m.status])).toEqual([
+			["PRINTER-1", "active"],
+			["PRINTER-2", "active"],
+			["PRINTER-3", "maintenance"],
+		]);
+		const clip = await callTool(token, "get_assembly", { assembly: "LAMP-CLIP", qty: "48" });
+		expect(clip.data.assembly).toMatchObject({ batch: "24", machine_type: "FDM printer", machine_minutes: 190 });
+		expect(clip.data.machine_time).toEqual([
+			{ type: "FDM printer", minutes: "380", hourly_rate: "666.66", cost: "4222.18" },
+		]);
+		const open = await callTool(token, "get_build", { number: s.clipOpen });
+		expect(open.data.machine_time).toEqual([expect.objectContaining({ type: "FDM printer", minutes: "79.167" })]);
+		const done = await callTool(token, "get_build", { number: s.clipDone });
+		expect(done.data.machine_time).toEqual([
+			{ type: "FDM printer", minutes: "190", hourly_rate: "666.66", cost: "2111.09" },
+		]);
+		const short = await callTool(token, "get_shortages", {});
+		expect(short.data.machine_time).toEqual([
+			{ type: "FDM printer", minutes: "79.167", active_machines: 2, builds: [s.clipOpen] },
 		]);
 	});
 

@@ -23,8 +23,10 @@ const OPTS = { nodeWidth: NODE_W, nodeHeight: NODE_H, colGap: 64, rowGap: 14, pa
 
 export type DiagramDatum = {
 	part: GraphPart;
-	/** Quantity per parent (null for the root). */
+	/** Quantity per batch of the parent (null for the root). */
 	perParentMilli: number | null;
+	/** Units one batch of the parent makes (milli). */
+	parentBatchMilli: number;
 	/** Total for the requested quantity of the root. */
 	qtyMilli: number;
 	mode: NodeMode | "root";
@@ -57,6 +59,7 @@ export function diagramTree(
 			data: {
 				part: n.part,
 				perParentMilli: n.perParentMilli,
+				parentBatchMilli: n.parentBatchMilli,
 				qtyMilli: n.qtyMilli,
 				mode: n.mode,
 				assemblyId: n.assemblyId,
@@ -71,6 +74,7 @@ export function diagramTree(
 		data: {
 			part: root,
 			perParentMilli: null,
+			parentBatchMilli: MILLI,
 			qtyMilli,
 			mode: "root",
 			assemblyId: rootAssemblyId,
@@ -333,7 +337,9 @@ export function AssemblyDiagram(props: { tree: TreeInput<DiagramDatum>; view: Di
 									stroke-width="3"
 									stroke-linejoin="round"
 								>
-									{`×${formatQty(child.perParentMilli, locale)}`}
+									{child.parentBatchMilli === MILLI
+										? `×${formatQty(child.perParentMilli, locale)}`
+										: `×${formatQty(child.perParentMilli, locale)} / ${formatQty(child.parentBatchMilli, locale)}`}
 								</text>
 							);
 						})}

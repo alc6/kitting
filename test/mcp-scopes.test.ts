@@ -20,7 +20,14 @@ const READ = ["catalog:read", "stock:read", "builds:read", "purchasing:read"];
 
 /** Every tool, by scope (sorted): the list docs/mcp.md documents. */
 const TOOLS_BY_SCOPE: Record<string, string[]> = {
-	"catalog:read": ["explode_assembly", "get_assembly", "get_part", "list_recent_changes", "search_parts"],
+	"catalog:read": [
+		"explode_assembly",
+		"get_assembly",
+		"get_part",
+		"list_machines",
+		"list_recent_changes",
+		"search_parts",
+	],
 	"catalog:write": [
 		"activate_assembly",
 		"create_assembly",
@@ -28,6 +35,7 @@ const TOOLS_BY_SCOPE: Record<string, string[]> = {
 		"create_supplier",
 		"new_assembly_revision",
 		"set_assembly_lines",
+		"set_assembly_production",
 		"update_part",
 		"update_supplier",
 	],
@@ -36,7 +44,7 @@ const TOOLS_BY_SCOPE: Record<string, string[]> = {
 	"stock:read": ["list_moves", "stock_on_hand"],
 	"stock:write": ["adjust_stock", "count_stock"],
 	"builds:read": ["get_build", "list_builds"],
-	"builds:write": ["cancel_build", "complete_build", "plan_build"],
+	"builds:write": ["cancel_build", "complete_build", "plan_build", "record_build"],
 	"purchasing:read": ["get_purchase_order", "get_shortages", "list_purchase_orders"],
 	"purchasing:write": ["cancel_po", "close_po", "create_draft_pos", "mark_po_sent", "receive_po", "update_draft_po"],
 };

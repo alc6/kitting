@@ -149,6 +149,12 @@ const CASES: WriteCase[] = [
 		min: "planner",
 		args: () => ({ assembly: "ARM-ASSY", lines: [{ ref: "ARM-TUBE-300", qty: "2" }] }),
 	},
+	{
+		tool: "set_assembly_production",
+		scope: "catalog:write",
+		min: "planner",
+		args: () => ({ assembly: "ARM-ASSY", batch_qty: "4" }),
+	},
 	{ tool: "new_assembly_revision", scope: "catalog:write", min: "planner", args: () => ({ assembly: "LAMP-DESK" }) },
 	{
 		tool: "activate_assembly",
@@ -200,6 +206,13 @@ const CASES: WriteCase[] = [
 	{ tool: "plan_build", scope: "builds:write", min: "operator", args: () => ({ ref: "ARM-ASSY", qty: "2" }) },
 	{ tool: "complete_build", scope: "builds:write", min: "operator", args: (s) => ({ number: s.build }), ledger: true },
 	{ tool: "cancel_build", scope: "builds:write", min: "operator", args: (s) => ({ number: s.build }) },
+	{
+		tool: "record_build",
+		scope: "builds:write",
+		min: "operator",
+		args: () => ({ ref: "LAMP-CLIP", batches: "1" }),
+		ledger: true,
+	},
 	{
 		tool: "create_draft_pos",
 		scope: "purchasing:write",
@@ -449,6 +462,65 @@ describe("catalog tools", () => {
 		expect(back.data.archived).toEqual([expect.objectContaining({ revision: "Rev3" })]);
 		const noop = await write(token, "activate_assembly", { assembly: active });
 		expect(noop.data).toMatchObject({ change_set_id: null, note: "LAMP-DESK std Rev2 is already active." });
+	});
+
+	it("sets the batch of a draft in place and of an active assembly on a new draft revision", async () => {
+		await loadDemo();
+		const token = await connect(["catalog:read", "catalog:write"]);
+		const active = await write(token, "set_assembly_production", { assembly: "ARM-ASSY", batch_qty: "4" });
+		expect(active.data).toMatchObject({
+			new_revision: true,
+			assembly: { part: "ARM-ASSY", revision: "Rev2", status: "draft", batch: "4" },
+			active_assembly: { revision: "Rev1", status: "active", batch: "1" },
+		});
+		expect(active.text).toContain("left unchanged");
+		// The new revision has the active one's lines.
+		const lines = (id: number) =>
+			rows("SELECT component_part_id, qty_milli FROM assembly_lines WHERE assembly_id = ?", id);
+		const rev1 = await assemblyId("ARM-ASSY", "std", "Rev1");
+		const rev2 = await assemblyId("ARM-ASSY", "std", "Rev2");
+		expect(await lines(rev2)).toEqual(await lines(rev1));
+		const draft = await write(token, "set_assembly_production", { assembly: rev2, batch_qty: 8 });
+		expect(draft.data).toMatchObject({ new_revision: false, assembly: { revision: "Rev2", batch: "8" } });
+		expect(await one("SELECT batch_qty_milli FROM assemblies WHERE id = ?", rev2)).toEqual({ batch_qty_milli: 8000 });
+		expect((await write(token, "set_assembly_production", { assembly: rev2, batch_qty: "8" })).text).toContain(
+			"Nothing changed",
+		);
+		const zero = await callTool(token, "set_assembly_production", { assembly: rev2, batch_qty: "0" });
+		expect(zero.text).toContain("batch_qty: Must be more than zero.");
+		// Reading it back: the tree's lines are per batch of the parent.
+		await write(token, "activate_assembly", { assembly: rev2 });
+		const tree = await write(token, "get_assembly", { assembly: "ARM-ASSY", qty: "8" });
+		expect(tree.data.assembly).toMatchObject({ revision: "Rev2", batch: "8" });
+		expect((tree.data.lines as { per_parent: string; parent_batch?: string; qty: string }[])[0]).toMatchObject({
+			parent_batch: "8",
+		});
+	});
+
+	it("sets machine time per batch by machine type name, on a new revision of an active assembly", async () => {
+		await loadDemo();
+		const token = await connect(["catalog:read", "catalog:write"]);
+		const slower = await write(token, "set_assembly_production", {
+			assembly: "LAMP-CLIP",
+			machine_type: "fdm printer",
+			machine_minutes: 200,
+		});
+		expect(slower.data).toMatchObject({
+			new_revision: true,
+			assembly: { revision: "Rev2", batch: "24", machine_type: "FDM printer", machine_minutes: 200 },
+			active_assembly: { revision: "Rev1", machine_minutes: 190 },
+		});
+		const rev2 = await assemblyId("LAMP-CLIP", "std", "Rev2");
+		const unknown = await callTool(token, "set_assembly_production", { assembly: rev2, machine_type: "Lathe" });
+		expect(unknown.text).toContain('No machine type named "Lathe". Use list_machines');
+		const noTime = await callTool(token, "set_assembly_production", { assembly: rev2, machine_minutes: 0 });
+		expect(noTime.text).toContain("machine_minutes: Enter the machine time per batch.");
+		const none = await write(token, "set_assembly_production", { assembly: rev2, machine_type: null });
+		expect(none.data.assembly).toMatchObject({ machine_type: null, machine_minutes: 0 });
+		expect(await one("SELECT machine_type_id, machine_minutes FROM assemblies WHERE id = ?", rev2)).toEqual({
+			machine_type_id: null,
+			machine_minutes: 0,
+		});
 	});
 
 	it("checks every line like the editor and changes nothing when one is refused", async () => {
@@ -743,6 +815,15 @@ describe("build tools", () => {
 		expect(variant.text).toContain("code: Choose an active assembly of this part.");
 		const date = await callTool(token, "plan_build", { ref: "ARM-ASSY", planned_for: "02/11/2026" });
 		expect(date.isError).toBe(true);
+		// In batches of the chosen assembly.
+		await postForm(`/assemblies/${await assemblyId("ARM-ASSY")}/revision`, {});
+		const rev2 = await assemblyId("ARM-ASSY", "std", "Rev2");
+		await postForm(`/assemblies/${rev2}/production`, { batch_qty: "6" });
+		await postForm(`/assemblies/${rev2}/activate`, {});
+		const batches = await write(token, "plan_build", { ref: "ARM-ASSY", batches: "2" });
+		expect(batches.data.build).toMatchObject({ qty: "12", assembly: { revision: "Rev2", batch: "6" } });
+		const both = await callTool(token, "plan_build", { ref: "ARM-ASSY", qty: "1", batches: "1" });
+		expect(both.text).toContain("Give qty or batches, not both.");
 	});
 
 	it("completes a build through the pick list's checks: serials, sub-assembly choices, once only", async () => {
@@ -801,6 +882,32 @@ describe("build tools", () => {
 		expect(twice.text).toContain("This build is already done or cancelled.");
 		const cancel = await callTool(token, "cancel_build", { number });
 		expect(cancel.text).toContain("This build is already done or cancelled.");
+	});
+
+	it("records a finished build in one step, refusing what needs the build page", async () => {
+		await loadDemo();
+		const token = await connect(["builds:write"]);
+		const run = await write(token, "record_build", { ref: "lamp-clip", batches: 2, notes: "Friday plates" });
+		expect(run.data.build).toMatchObject({
+			number: "B-0001",
+			status: "done",
+			part: "LAMP-CLIP",
+			qty: "48",
+			assembly: { code: "std", batch: "24" },
+		});
+		expect(run.data.as_built).toEqual([expect.objectContaining({ ref: "PLA-BLACK", qty: "0.52" })]);
+		expect(run.data.machine_time).toEqual([{ type: "FDM printer", minutes: "380" }]);
+		expect(run.data.revertible).toBe(false);
+		expect(run.text).toContain("reverse movements");
+		expect(await one("SELECT summary FROM change_sets ORDER BY id DESC LIMIT 1")).toEqual({
+			summary: "Record build B-0001 of LAMP-CLIP",
+		});
+		const tracked = await callTool(token, "record_build", { ref: "LAMP-DESK", serial: "L-0900" });
+		expect(tracked.text).toContain("Refused, nothing was changed.");
+		expect(tracked.text).toContain("need one serial number per unit");
+		const both = await callTool(token, "record_build", { ref: "LAMP-CLIP", qty: 1, batches: 1 });
+		expect(both.text).toContain("Give qty or batches, not both.");
+		expect(await rows("SELECT number FROM builds")).toEqual([{ number: "B-0001" }]);
 	});
 
 	it("cancels open builds, freeing their serial", async () => {

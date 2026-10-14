@@ -8,7 +8,7 @@ Cloudflare Access decides who can sign in. Kitting decides what each person can 
 | --- | --- |
 | Viewer | See everything, change nothing. |
 | Operator | Shop-floor work: run builds, adjust and count stock, receive deliveries. |
-| Planner | Office work as well: edit parts, assemblies, suppliers, offers, prices and purchase orders, export data and preview imports. |
+| Planner | Office work as well: edit parts, assemblies, suppliers, machines, offers, prices and purchase orders, export data and preview imports. |
 | Administrator | Everything: confirm imports, delete and archive, restore backups, manage users. |
 
 The people listed in `ADMIN_EMAILS` are always administrators. They give everyone else a role on the **Users**

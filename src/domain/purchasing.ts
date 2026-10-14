@@ -3,6 +3,7 @@ import { and, asc, desc, eq, inArray, type SQL, sql } from "drizzle-orm";
 import { z } from "zod";
 import {
 	builds,
+	machines,
 	type PoStatus,
 	partSuppliers,
 	parts,
@@ -17,7 +18,7 @@ import { lineCostCents, MILLI, parseMilli, roundOrderQty } from "../lib/units";
 import { type FieldErrors, field } from "../lib/validation";
 import type { Db } from "../types";
 import { loadGraph } from "./assemblies";
-import { explode, type GraphPart } from "./assembly-graph";
+import { explode, type GraphMachineType, type GraphPart } from "./assembly-graph";
 import { OPEN_STATUSES } from "./builds";
 import { NO_TERMS, type OfferTerms, offersByPart, poUnitPrice } from "./offers";
 import { moveValues, onHandAt } from "./stock";
@@ -64,10 +65,20 @@ export type SupplierGroup = {
 	totalCents: number;
 };
 
+/** Machine time the open builds need on one machine type, and how many of its machines are in service (D150). */
+export type MachineLoad = {
+	machineType: GraphMachineType;
+	minutesMilli: number;
+	activeMachines: number;
+	builds: string[];
+};
+
 export type Shortages = {
 	groups: SupplierGroup[];
 	/** Make/kit parts that must be built for open builds but have no active assembly. */
 	missingAssemblies: { ref: string; name: string; qtyMilli: number; builds: string[] }[];
+	/** Machine time of the open builds, per machine type (sub-assemblies taken from stock need none). */
+	machines: MachineLoad[];
 	buildCount: number;
 };
 
@@ -94,7 +105,7 @@ export async function onOrderMap(db: Db): Promise<Map<number, number>> {
  * Parts already below zero count as a need of their deficit.
  */
 export async function computeShortages(db: Db): Promise<Shortages> {
-	const [graph, onHand, onOrder, open, partRows, offers] = await Promise.all([
+	const [graph, onHand, onOrder, open, partRows, offers, active] = await Promise.all([
 		loadGraph(db),
 		onHandAt(db),
 		onOrderMap(db),
@@ -105,6 +116,11 @@ export async function computeShortages(db: Db): Promise<Shortages> {
 			.orderBy(sql`${builds.plannedFor} IS NULL`, asc(builds.plannedFor), asc(builds.id)),
 		db.select({ id: parts.id, supplierId: parts.supplierId }).from(parts),
 		offersByPart(db),
+		db
+			.select({ typeId: machines.machineTypeId, n: sql<number>`count(*)` })
+			.from(machines)
+			.where(eq(machines.status, "active"))
+			.groupBy(machines.machineTypeId),
 	]);
 	const preferredSupplier = new Map(partRows.map((p) => [p.id, p.supplierId]));
 	const available = new Map(onHand);
@@ -116,11 +132,24 @@ export async function computeShortages(db: Db): Promise<Shortages> {
 		e.builds.add(build);
 		into.set(partId, e);
 	};
+	const load = new Map<number, MachineLoad>();
+	const activeOf = new Map(active.map((a) => [a.typeId, a.n]));
 	for (const b of open) {
 		const ex = explode(graph, b.assemblyId, b.qtyMilli, { available });
 		for (const r of ex.requirements) {
 			if (r.missingAssembly) add(missing, r.part.id, r.qtyMilli, b.number);
 			else if (r.part.kind === "buy") add(need, r.part.id, r.qtyMilli, b.number);
+		}
+		for (const m of ex.machines) {
+			const l = load.get(m.machineType.id) ?? {
+				machineType: m.machineType,
+				minutesMilli: 0,
+				activeMachines: activeOf.get(m.machineType.id) ?? 0,
+				builds: [],
+			};
+			l.minutesMilli += m.minutesMilli;
+			if (!l.builds.includes(b.number)) l.builds.push(b.number);
+			load.set(m.machineType.id, l);
 		}
 	}
 	// Parts already below zero are short of their deficit even without open builds.
@@ -182,6 +211,7 @@ export async function computeShortages(db: Db): Promise<Shortages> {
 			qtyMilli: m.qty,
 			builds: [...m.builds],
 		})),
+		machines: [...load.values()].sort((a, b) => a.machineType.name.localeCompare(b.machineType.name)),
 		buildCount: open.length,
 	};
 }

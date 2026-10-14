@@ -26,6 +26,14 @@ worked conversations in [references/examples.md](references/examples.md).
   (editable, not used), `active` (the one builds and explosions use; one per part and code) or `archived`
   (read-only history, can be re-activated). Select an assembly with `assembly` (an id, or the part ref for its active assembly)
   and optionally `code` and `revision`.
+- **Batches**: an assembly can make several units at once (`batch`, e.g. 24 parts per print plate); its lines are then
+  the quantities for the whole batch, and a build of any quantity takes line × quantity / batch (rounded up). Plan in
+  batches with `plan_build`'s `batches`. The batch belongs to a revision: change it with `set_assembly_production`,
+  which on an active assembly creates a draft revision, like `set_assembly_lines`.
+- **Machines**: a recipe can take machine time per batch (`machine_minutes`, e.g. 190 for 3 h 10) on a **machine type**
+  (an FDM printer) that carries the hourly rate; the machines themselves (PRINTER-1, PRINTER-2) belong to a type and
+  are in service, under maintenance or retired. Machine time is costed like a component, and `machine_time` in
+  results is in minutes: say it as hours and minutes.
 - **Stock** is a ledger: on hand is the sum of signed moves (receipts, build consumption and output,
   adjustments, counts). Nothing edits a move; mistakes are corrected with new moves. Stock can go negative; that
   is a signal (`stock_on_hand` with `below_zero`).
@@ -52,7 +60,8 @@ worked conversations in [references/examples.md](references/examples.md).
    receiving and completing are separate steps, each confirmed.
 4. **Report what happened.** After a write, say what changed, quote the change number, and give the undo link
    (`history_url`) when `revertible` is true. For ledger writes (`adjust_stock`, `count_stock`, `complete_build`,
-   `receive_po`) there is no link: say they cannot be undone and are corrected with a reverse adjustment.
+   `record_build`, `receive_po`) there is no link: say they cannot be undone and are corrected with a reverse
+   adjustment.
    You cannot undo anything yourself.
 5. **Archive, never delete.** There is no delete over MCP. Use `archive_part` / `archive_assembly` (reversible).
 6. **A refusal is information.** `Refused, nothing was changed...` lists every problem; fix them and ask again,
@@ -91,6 +100,13 @@ worked conversations in [references/examples.md](references/examples.md).
 4. Confirm the summary: product, quantity, serials, sub-assembly choices. Then `complete_build`. This cannot be
    undone. Report the as-built record.
 5. A mistaken plan before completion: `cancel_build` (frees the serial).
+
+### Record a run that is already done
+When the user reports production after the fact ("we printed 2 plates of clips this morning"), use `record_build`:
+it plans and completes in one step, now. Check the part and its batch first (`get_assembly`), confirm product,
+quantity (`batches` or `qty`) and that it cannot be undone, then call it and report the as-built record and the
+machine time. It is refused when serial-tracked components need serials: then `plan_build` and `complete_build`
+with the serials.
 
 ### Inventory count
 1. `stock_on_hand` (filter or `query`) for the parts to count; the user gives the counted quantities.
@@ -136,6 +152,15 @@ worked conversations in [references/examples.md](references/examples.md).
   the same part around that date lists the other serials received with it. Query each with `list_builds` to
   find the builds (and product serials) that consumed them, and report open builds that still hold some in
   stock.
+
+### Machine time and printer hours
+- **How many printer hours do my plans need?** `get_shortages` gives `machine_time` per machine type for all open
+  builds (sub-assemblies taken from stock need none) with `active_machines`; divide to say how long each machine in
+  service is busy. `list_machines` lists the types, their rate and their machines.
+- **A recipe from the slicer** ("24 clips, 260 g, 3 h 10"): the lines are the plate's quantities, `batch_qty` 24,
+  `machine_type` and `machine_minutes` 190, set with `set_assembly_lines` and `set_assembly_production` on a draft
+  (each creates the draft revision from an active one), then `activate_assembly` after the user confirms.
+- Machines and their rates are managed in the app (Machines page), not over MCP.
 
 ### Margins and cost questions
 `get_part` gives standard cost, sale price, assembly unit cost and `rolled_up_cost` (with `missing_costs`: parts with

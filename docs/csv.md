@@ -8,7 +8,8 @@ Files from French or English versions of Excel work as they are: the separator c
 tab, decimals can use a point or a comma, and the encoding can be UTF-8 or Windows-1252. Header names are not
 case-sensitive.
 
-Import the files in this order: suppliers, parts, supplier offers, past prices, assemblies, stock.
+Import the files in this order: suppliers, parts, supplier offers, past prices, machine types, machines, assemblies,
+stock.
 
 ## suppliers.csv
 
@@ -62,9 +63,25 @@ history, dated `valid_from` (`YYYY-MM-DD`).
 The export lists the standard cost and supplier price history of every part in this format. It is a record to read
 or archive: importing it again is refused, since its rows already exist.
 
+## machine_types.csv
+
+`name,hourly_rate,notes`
+
+The kinds of machine that recipes name (an FDM printer, a laser cutter), matched by name. `hourly_rate` is the cost of
+one hour on a machine of this type, excluding VAT; empty means unknown, which makes the cost of every recipe using it
+incomplete. Every rate change is kept in the type's rate history.
+
+## machines.csv
+
+`name,type,status,notes`
+
+The machines the workshop owns, matched by name. `type` is the name of a machine type, which must exist. `status` is
+`active` (in service, the default), `maintenance` or `retired`.
+
 ## assemblies.csv
 
-`parent_ref,code,revision,status,component_ref,qty`, plus the optional `sale_price` and `notes`
+`parent_ref,code,revision,status,component_ref,qty`, plus the optional `sale_price`, `batch_qty`, `machine`,
+`machine_minutes` and `notes`
 
 One row per component. Rows are grouped by `parent_ref`, `code` and `revision`, and each assembly in the file ends
 up with exactly the components listed for it.
@@ -72,6 +89,12 @@ up with exactly the components listed for it.
 - `code` is the variant and defaults to `std`. `revision` defaults to `Rev1` and `status` to `draft`.
 - Importing an assembly as `active` archives the active revision of the same variant.
 - `sale_price`, one value per assembly, is that variant's selling price. It overrides the part's.
+- `batch_qty`, one value per assembly, is how many units of `parent_ref` one batch makes (for example the 24 parts of a
+  print plate). The `qty` of its rows are then the quantities for the whole batch. Empty means 1. It cannot change on an
+  assembly that is already active: import a new revision instead.
+- `machine` and `machine_minutes`, one value per assembly, are the machine time of one batch: the name of a machine
+  type and whole minutes (190 for 3 h 10). Give both, or neither. Like `batch_qty`, they cannot change on an active
+  assembly.
 
 ## stock.csv
 

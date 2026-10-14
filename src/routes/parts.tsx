@@ -46,7 +46,7 @@ import { getSupplier } from "../domain/suppliers";
 import { errorText, fmt } from "../i18n";
 import { cn } from "../lib/cn";
 import { isConstraintError } from "../lib/sql";
-import { formatMoney, formatPercent, lineCostCents } from "../lib/units";
+import { formatMoney, formatPercent, lineCostCents, MILLI } from "../lib/units";
 import { type FieldErrors, validate } from "../lib/validation";
 import { requirePermission } from "../middleware/roles";
 import type { AppEnv } from "../types";
@@ -1347,7 +1347,19 @@ function WhereUsed(props: { rows: WhereUsedRow[] }) {
 											<Badge variant="outline">{fmt(t.assemblies.via, { ref: r.viaRef })}</Badge>
 										)}
 									</TableCell>
-									<TableCell class="text-right">{r.depth === 1 ? <Qty milli={r.qtyMilli} /> : null}</TableCell>
+									<TableCell class="text-right">
+										{r.depth === 1 ? (
+											<>
+												<Qty milli={r.qtyMilli} />
+												{r.batchMilli !== MILLI ? (
+													<span class="text-xs text-muted-foreground">
+														{" "}
+														/ <Qty milli={r.batchMilli} />
+													</span>
+												) : null}
+											</>
+										) : null}
+									</TableCell>
 								</TableRow>
 							))}
 						</TableBody>

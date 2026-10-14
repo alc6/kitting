@@ -15,6 +15,7 @@ import {
 	changeContext,
 	changeLog,
 	changeSets,
+	machineTypes,
 	parts,
 	purchaseOrders,
 	suppliers,
@@ -318,6 +319,7 @@ export const REFERENCE_COLUMNS: Record<string, string> = {
 	supplier_id: "suppliers",
 	assembly_id: "assemblies",
 	po_id: "purchase_orders",
+	machine_type_id: "machine_types",
 };
 
 /** Labels of referenced rows, keyed "table:id" (from referenceLabels). */
@@ -353,6 +355,9 @@ export function rowName(table: string, row: Snapshot | null, labels: Labels): st
 			return s("email");
 		case "settings":
 			return s("key");
+		case "machine_types":
+		case "machines":
+			return s("name");
 		default:
 			return `#${s("id")}`;
 	}
@@ -365,6 +370,7 @@ export async function referenceLabels(db: Db, views: EntryView[]): Promise<Map<s
 		suppliers: new Set(),
 		assemblies: new Set(),
 		purchase_orders: new Set(),
+		machine_types: new Set(),
 	};
 	for (const v of views) {
 		for (const [col, table] of Object.entries(REFERENCE_COLUMNS)) {
@@ -396,6 +402,11 @@ export async function referenceLabels(db: Db, views: EntryView[]): Promise<Map<s
 				.select({ id: purchaseOrders.id, label: purchaseOrders.number })
 				.from(purchaseOrders)
 				.where(inArray(purchaseOrders.id, part)),
+		machine_types: (part) =>
+			db
+				.select({ id: machineTypes.id, label: machineTypes.name })
+				.from(machineTypes)
+				.where(inArray(machineTypes.id, part)),
 	};
 	for (const [table, query] of Object.entries(queries)) {
 		for (const part of chunks([...(ids[table] ?? [])])) {

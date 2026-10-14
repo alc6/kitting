@@ -53,6 +53,7 @@ import type { AppEnv } from "../types";
 import { type AppView, useApp } from "../views/context";
 import { RecordTabs } from "../views/history";
 import { Icon, icons } from "../views/icons";
+import { MachineLoadCard } from "../views/machines";
 import { PartPicker, PartPickerDialog } from "../views/part-picker";
 import { idParam, notFound, nowIso, page, redirectOk, saveChanges, translateErrors } from "../views/render";
 import {
@@ -348,6 +349,11 @@ purchasingRoutes.get("/", async (c) => {
 					) : null}
 				</form>
 			)}
+			{shortages.machines.length ? (
+				<div class="mt-6">
+					<MachineLoadCard rows={shortages.machines} />
+				</div>
+			) : null}
 		</>,
 	);
 });

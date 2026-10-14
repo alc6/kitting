@@ -4,7 +4,7 @@ import { Hono } from "hono";
 import type { Child } from "hono/jsx";
 import { BUILD_STATUSES, type BuildStatus, type Part, parts, stockMoves } from "../db/schema";
 import { loadGraph } from "../domain/assemblies";
-import type { ExplodedNode } from "../domain/assembly-graph";
+import { CostCalculator, centsOf, type ExplodedNode } from "../domain/assembly-graph";
 import {
 	buildableProduct,
 	buildEditInput,
@@ -18,14 +18,18 @@ import {
 	createBuildStatement,
 	getBuild,
 	getBuildLines,
+	getBuildMachineTimes,
 	listBuilds,
 	makeNodes,
 	nextBuildNumber,
 	OPEN_STATUSES,
 	type PickList,
+	recordProblems,
+	recordStatements,
 	serialCount,
 	serialField,
 	startBuildStatement,
+	unitsToBuild,
 	updateBuildStatement,
 } from "../domain/builds";
 import { buildActualCost, marginOf, salePriceOf } from "../domain/margins";
@@ -34,12 +38,22 @@ import { onHandAt, serialsInStock } from "../domain/stock";
 import { errorText, fmt } from "../i18n";
 import { cn } from "../lib/cn";
 import { isConstraintError } from "../lib/sql";
-import { formatMoney, formatPercent, formatQtyInput, lineCostCents } from "../lib/units";
+import {
+	formatMoney,
+	formatPercent,
+	formatQty,
+	formatQtyInput,
+	lineCostCents,
+	MILLI,
+	machineMillicents,
+	mulDivRound,
+} from "../lib/units";
 import { type FieldErrors, validate } from "../lib/validation";
-import { requirePermission } from "../middleware/roles";
+import { forbidden, requirePermission } from "../middleware/roles";
 import type { AppEnv } from "../types";
 import { useApp } from "../views/context";
 import { Icon, icons } from "../views/icons";
+import { MachineTimeCard } from "../views/machines";
 import { idParam, notFound, nowIso, page, redirectOk, saveChanges, translateErrors } from "../views/render";
 import {
 	Alert,
@@ -57,6 +71,7 @@ import {
 	FieldError,
 	FieldGroup,
 	FieldLabel,
+	FieldWrap,
 	Flash,
 	type FormErrors,
 	type FormValues,
@@ -161,7 +176,14 @@ buildRoutes.get("/", async (c) => {
 			<PageHeader
 				title={t.builds.title}
 				subtitle={t.builds.intro}
-				actions={canBuild ? <LinkButton href="/builds/new" label={t.builds.new} icon={icons.plus} /> : undefined}
+				actions={
+					<>
+						{canBuild && can(c.var, "builds.complete") ? (
+							<LinkButton href="/builds/record" label={t.builds.record} icon={icons.check} variant="outline" />
+						) : null}
+						{canBuild ? <LinkButton href="/builds/new" label={t.builds.new} icon={icons.plus} /> : null}
+					</>
+				}
 			/>
 			<Flash ok={c.req.query("ok")} message={c.req.query("ok") === "cancelled" ? t.builds.cancelled : undefined} />
 			<SearchBar action="/builds" q={q}>
@@ -197,19 +219,70 @@ buildRoutes.get("/", async (c) => {
 // ---------------------------------------------------------------------------
 // New build
 
-type AssemblyOption = { id: number; code: string; revision: string };
+type AssemblyOption = { id: number; code: string; revision: string; batchMilli: number };
 
+/** Quantity of a build: in units, or in batches when a variant makes batches (D145). */
+export function BuildQtyField(props: {
+	unit: string;
+	assemblyOptions: AssemblyOption[];
+	values: FormValues;
+	errors: FormErrors;
+}) {
+	const { t, locale } = useApp();
+	const batched = props.assemblyOptions.filter((b) => b.batchMilli !== MILLI);
+	const p = { values: props.values, errors: props.errors };
+	if (batched.length === 0) return <TextField name="qty" label={t.builds.qty} inputmode="decimal" required {...p} />;
+	const error = props.errors.qty;
+	const inBatches = props.values.qty_in === "batches";
+	return (
+		<FieldWrap
+			name="qty"
+			label={t.builds.qty}
+			required
+			hint={batched
+				.map((b) => fmt(t.builds.batchInfo, { code: b.code, qty: `${formatQty(b.batchMilli, locale)} ${props.unit}` }))
+				.join(" · ")}
+			{...p}
+		>
+			<div class="flex items-center gap-2">
+				<input
+					id="f-qty"
+					data-slot="input"
+					name="qty"
+					inputmode="decimal"
+					required
+					value={props.values.qty ?? ""}
+					class="min-w-0 flex-1"
+					aria-invalid={error ? "true" : undefined}
+					aria-describedby={error ? "e-qty" : undefined}
+				/>
+				<select name="qty_in" aria-label={t.builds.qtyIn} class="w-auto">
+					<option value="units" selected={!inBatches}>
+						{fmt(t.builds.qtyUnits, { unit: props.unit })}
+					</option>
+					<option value="batches" selected={inBatches}>
+						{t.builds.qtyBatches}
+					</option>
+				</select>
+			</div>
+		</FieldWrap>
+	);
+}
+
+/** The new build form; `record` makes it the form of a finished build (D152): no planned date, done now. */
 function NewBuildForm(props: {
 	values: FormValues;
 	errors: FormErrors;
 	products: { id: number; ref: string; name: string }[];
 	product: Part | undefined;
 	assemblyOptions: AssemblyOption[];
+	record?: boolean;
 }) {
 	const { t } = useApp();
 	const p = { values: props.values, errors: props.errors };
+	const base = props.record ? "/builds/record" : "/builds/new";
 	const reload = {
-		"hx-get": "/builds/new",
+		"hx-get": base,
 		"hx-include": "closest form",
 		"hx-target": "#build-form",
 		"hx-select": "#build-form",
@@ -220,7 +293,12 @@ function NewBuildForm(props: {
 	return (
 		<Card class="max-w-3xl">
 			<CardContent>
-				<form method="post" action="/builds" class="flex flex-col gap-6" id="build-form">
+				<form
+					method="post"
+					action={props.record ? "/builds/record" : "/builds"}
+					class="flex flex-col gap-6"
+					id="build-form"
+				>
 					{Object.keys(props.errors).length > 0 ? (
 						<Alert variant="destructive" class="mb-0">
 							{t.common.fixErrors}
@@ -253,7 +331,7 @@ function NewBuildForm(props: {
 										</option>
 									))}
 								</select>
-								<Button variant="outline" formmethod="get" formaction="/builds/new">
+								<Button variant="outline" formmethod="get" formaction={base}>
 									{t.builds.choosePart}
 								</Button>
 							</div>
@@ -281,7 +359,7 @@ function NewBuildForm(props: {
 											}))}
 											{...p}
 										/>
-										<TextField name="qty" label={t.builds.qty} inputmode="decimal" required {...p} />
+										<BuildQtyField unit={props.product.unit} assemblyOptions={props.assemblyOptions} {...p} />
 										<TextField
 											name="serial"
 											label={t.builds.serial}
@@ -289,7 +367,9 @@ function NewBuildForm(props: {
 											required={props.product.trackSerial}
 											{...p}
 										/>
-										<TextField name="planned_for" label={t.builds.plannedFor} type="date" {...p} />
+										{props.record ? null : (
+											<TextField name="planned_for" label={t.builds.plannedFor} type="date" {...p} />
+										)}
 									</div>
 									<TextArea name="notes" label={t.common.notes} {...p} />
 								</>
@@ -298,7 +378,11 @@ function NewBuildForm(props: {
 					</FieldGroup>
 					{ready ? (
 						<div class="flex flex-wrap items-center gap-2">
-							<Button icon={icons.plus}>{t.common.create}</Button>
+							{props.record ? (
+								<Button icon={icons.check}>{t.builds.recordSubmit}</Button>
+							) : (
+								<Button icon={icons.plus}>{t.common.create}</Button>
+							)}
 							<Button href="/builds" variant="outline">
 								{t.common.cancel}
 							</Button>
@@ -324,18 +408,7 @@ buildRoutes.get("/new", requirePermission("builds.plan"), async (c) => {
 	const q = c.req.query();
 	const partId = /^\d+$/.test(q.part_id ?? q.part ?? "") ? Number(q.part_id ?? q.part) : null;
 	const data = await newBuildData(c, partId);
-	const std = data.assemblyOptions.find((b) => b.code === "std") ?? data.assemblyOptions[0];
-	const values: FormValues = {
-		qty: "1",
-		...q,
-		part_id: partId ? String(partId) : "",
-		assembly_id:
-			q.assembly_id && data.assemblyOptions.some((b) => String(b.id) === q.assembly_id)
-				? q.assembly_id
-				: std
-					? String(std.id)
-					: "",
-	};
+	const values = newBuildValues(q, partId, data.assemblyOptions);
 	return page(
 		c,
 		t.builds.new,
@@ -354,8 +427,9 @@ buildRoutes.post("/", requirePermission("builds.plan"), async (c) => {
 	const errors: FieldErrors = v.ok ? {} : { ...v.errors };
 	const partId = v.ok ? v.data.part_id : null;
 	const data = await newBuildData(c, partId);
-	if (v.ok) Object.assign(errors, await buildPlanErrors(db, v.data, data.product, data.assemblyOptions));
-	if (!v.ok || Object.keys(errors).length > 0 || !data.product) {
+	const d = v.ok ? { ...v.data, qty: unitsToBuild(v.data, data.assemblyOptions) } : undefined;
+	if (d) Object.assign(errors, await buildPlanErrors(db, d, data.product, data.assemblyOptions));
+	if (!d || Object.keys(errors).length > 0 || !data.product) {
 		return page(
 			c,
 			t.builds.new,
@@ -366,7 +440,6 @@ buildRoutes.post("/", requirePermission("builds.plan"), async (c) => {
 			422,
 		);
 	}
-	const d = v.data;
 	const user = c.var.user;
 	// Numbers are sequential; retry once if another user took the same number meanwhile.
 	for (let attempt = 0; ; attempt++) {
@@ -390,6 +463,118 @@ buildRoutes.post("/", requirePermission("builds.plan"), async (c) => {
 				),
 			]);
 			return redirectOk(c, `/builds/${results[0][0]?.id}`, "created");
+		} catch (err) {
+			if (attempt > 0 || !isConstraintError(err, "UNIQUE")) throw err;
+		}
+	}
+});
+
+// ---------------------------------------------------------------------------
+// Record a finished build in one step (D152)
+
+/** The form's first values: quantity 1 and the std variant (else the first active one), unless the query says. */
+function newBuildValues(q: Record<string, string>, partId: number | null, options: AssemblyOption[]): FormValues {
+	const std = options.find((b) => b.code === "std") ?? options[0];
+	return {
+		qty: "1",
+		...q,
+		part_id: partId ? String(partId) : "",
+		assembly_id:
+			q.assembly_id && options.some((b) => String(b.id) === q.assembly_id) ? q.assembly_id : std ? String(std.id) : "",
+	};
+}
+
+function RecordPage(props: {
+	values: FormValues;
+	errors: FormErrors;
+	problems?: string[];
+	data: Awaited<ReturnType<typeof newBuildData>>;
+}) {
+	const { t } = useApp();
+	return (
+		<>
+			<PageHeader title={t.builds.record} subtitle={t.builds.recordIntro} />
+			{props.problems?.length ? (
+				<Alert variant="destructive" title={t.builds.recordRefused}>
+					<ul class="m-0 flex list-disc flex-col gap-1 pl-4">
+						{props.problems.map((p) => (
+							<li>{p}</li>
+						))}
+					</ul>
+				</Alert>
+			) : null}
+			<NewBuildForm values={props.values} errors={props.errors} {...props.data} record />
+		</>
+	);
+}
+
+buildRoutes.get("/record", requirePermission("builds.complete"), async (c) => {
+	const q = c.req.query();
+	const partId = /^\d+$/.test(q.part_id ?? q.part ?? "") ? Number(q.part_id ?? q.part) : null;
+	const data = await newBuildData(c, partId);
+	return page(
+		c,
+		c.var.t.builds.record,
+		<RecordPage values={newBuildValues(q, partId, data.assemblyOptions)} errors={{}} data={data} />,
+	);
+});
+
+// Plans and completes in one change set: it needs both rights (both operator today).
+buildRoutes.post("/record", requirePermission("builds.complete"), async (c) => {
+	if (!can(c.var, "builds.plan")) return forbidden(c);
+	const t = c.var.t;
+	const db = c.var.db;
+	const body = await c.req.parseBody();
+	const v = validate(buildInput, { ...body, planned_for: "" });
+	const errors: FieldErrors = v.ok ? {} : { ...v.errors };
+	const data = await newBuildData(c, v.ok ? v.data.part_id : null);
+	const d = v.ok ? { ...v.data, qty: unitsToBuild(v.data, data.assemblyOptions) } : undefined;
+	if (d) Object.assign(errors, await buildPlanErrors(db, d, data.product, data.assemblyOptions));
+	const refuse = (problems: string[] = []) =>
+		page(
+			c,
+			t.builds.record,
+			<RecordPage values={body as FormValues} errors={translateErrors(c, errors)} problems={problems} data={data} />,
+			422,
+		);
+	if (!d || Object.keys(errors).length > 0 || !data.product) return refuse();
+	const product = data.product;
+	const assemblyId = d.assembly_id as number;
+	const [graph, onHand] = await Promise.all([loadGraph(db), onHandAt(db)]);
+	const pick = buildPickList(
+		graph,
+		onHand,
+		{ assemblyId, qtyMilli: d.qty, serial: d.serial || null },
+		product,
+		{},
+		true,
+	);
+	const problems = recordProblems(pick);
+	if (problems.length) return refuse(problems.map((p) => errorText(t, p.key, p.vars)));
+	// Numbers are sequential; retry once if another user took the same number meanwhile.
+	for (let attempt = 0; ; attempt++) {
+		try {
+			const number = await nextBuildNumber(db);
+			const { results } = await saveChanges(
+				c,
+				fmt(t.history.summaries.buildRecord, { number, ref: product.ref }),
+				recordStatements(
+					db,
+					graph,
+					{
+						number,
+						partId: product.id,
+						assemblyId,
+						qtyMilli: d.qty,
+						serial: d.serial || null,
+						notes: d.notes,
+					},
+					pick,
+					c.var.user,
+					nowIso(),
+				),
+			);
+			return redirectOk(c, `/builds/${(results[0] as { id: number }[])[0]?.id}`, "recorded");
 		} catch (err) {
 			if (attempt > 0 || !isConstraintError(err, "UNIQUE")) throw err;
 		}
@@ -854,16 +1039,28 @@ async function renderBuild(
 	const flash =
 		ok === "completed"
 			? t.builds.completed
-			: ok === "started"
-				? t.builds.started
-				: ok === "cancelled"
-					? t.builds.cancelled
-					: ok === "created"
-						? t.builds.created
-						: undefined;
+			: ok === "recorded"
+				? t.builds.recorded
+				: ok === "started"
+					? t.builds.started
+					: ok === "cancelled"
+						? t.builds.cancelled
+						: ok === "created"
+							? t.builds.created
+							: undefined;
 	const open = OPEN_STATUSES.includes(build.status);
+	const batch = data.assembly.batchQtyMilli;
 	const qtyStat = (
-		<StatCard label={t.builds.qty} value={<Qty milli={build.qtyMilli} unit={part.unit} />} icon={icons.package} />
+		<StatCard
+			label={t.builds.qty}
+			value={<Qty milli={build.qtyMilli} unit={part.unit} />}
+			hint={
+				batch !== MILLI
+					? fmt(t.builds.batches, { n: formatQty(mulDivRound(build.qtyMilli, MILLI, batch), c.var.locale) })
+					: undefined
+			}
+			icon={icons.package}
+		/>
 	);
 	const serialStat = <StatCard label={t.builds.serial} value={build.serial ?? t.common.none} icon={icons.barcode} />;
 	const plannedStat = (
@@ -874,6 +1071,7 @@ async function renderBuild(
 	if (open) {
 		const [graph, onHand] = await Promise.all([loadGraph(db), onHandAt(db)]);
 		const pick = buildPickList(graph, onHand, build, part, form, opts.validate ?? false);
+		const calc = new CostCalculator(graph);
 		const tracked = pick.explosion.requirements.filter((r) => r.part.trackSerial);
 		const hints = new Map(
 			await Promise.all(tracked.map(async (r) => [r.part.id, await serialsInStock(db, r.part.id)] as const)),
@@ -909,12 +1107,29 @@ async function renderBuild(
 					/>
 				) : null}
 				<PickListForm data={data} pick={pick} values={form} serialHints={hints} />
+				{pick.explosion.machines.length ? (
+					<MachineTimeCard
+						id="machine-time"
+						title={t.machines.time}
+						rows={pick.explosion.machines.map((m) => {
+							const cost = calc.machine(m.machineType.id, m.minutesMilli);
+							return {
+								machineTypeId: m.machineType.id,
+								name: m.machineType.name,
+								minutesMilli: m.minutesMilli,
+								rateCents: m.machineType.rateCents,
+								costCents: cost.incomplete ? null : centsOf(cost.millicents),
+							};
+						})}
+					/>
+				) : null}
 			</>
 		);
 	} else {
 		const done = build.status === "done";
-		const [lines, output, actual] = await Promise.all([
+		const [lines, machineTimes, output, actual] = await Promise.all([
 			getBuildLines(db, build.id),
+			getBuildMachineTimes(db, build.id),
 			db
 				.select({ unitCostCents: stockMoves.unitCostCents })
 				.from(stockMoves)
@@ -926,7 +1141,8 @@ async function renderBuild(
 		]);
 		const outputCost = output[0]?.unitCostCents ?? null;
 		const doneAt = shortDateTime(build.doneAt);
-		const incomplete = lines.some((l) => l.line.unitCostCents === null);
+		const incomplete =
+			lines.some((l) => l.line.unitCostCents === null) || machineTimes.some((m) => m.rateCents === null);
 		// Two different costs: the one frozen at completion (standard costs) and the actual one (weighted average).
 		const priceCents = salePriceOf(part, data.assembly);
 		const margin = marginOf(priceCents, actual?.unitCents ?? null);
@@ -1000,6 +1216,19 @@ async function renderBuild(
 					</Card>
 				) : null}
 				{done ? <AsBuilt lines={lines} outputCost={outputCost} qtyMilli={build.qtyMilli} /> : null}
+				{machineTimes.length ? (
+					<MachineTimeCard
+						id="machine-time"
+						title={t.machines.recorded}
+						rows={machineTimes.map((m) => ({
+							machineTypeId: m.machineTypeId,
+							name: m.name,
+							minutesMilli: m.minutesMilli,
+							rateCents: m.rateCents,
+							costCents: m.rateCents === null ? null : centsOf(machineMillicents(m.rateCents, m.minutesMilli)),
+						}))}
+					/>
+				) : null}
 			</>
 		);
 	}

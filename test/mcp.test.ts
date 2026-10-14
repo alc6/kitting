@@ -23,7 +23,14 @@ import {
 } from "./mcp-helpers";
 
 const ALL = ["catalog:read", "stock:read", "builds:read", "purchasing:read"];
-const CATALOG_TOOLS = ["explode_assembly", "get_assembly", "get_part", "list_recent_changes", "search_parts"];
+const CATALOG_TOOLS = [
+	"explode_assembly",
+	"get_assembly",
+	"get_part",
+	"list_machines",
+	"list_recent_changes",
+	"search_parts",
+];
 const STOCK_TOOLS = ["list_moves", "stock_on_hand"];
 
 beforeEach(async () => {

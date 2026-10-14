@@ -55,6 +55,7 @@ const CALLS: Record<Action, (ids: Ids) => Call> = {
 	"parts.delete": (i) => ({ path: `/parts/${i.part}/delete` }),
 	"suppliers.edit": () => ({ path: "/suppliers", form: { name: "Acme", email: "", phone: "", notes: "" } }),
 	"suppliers.delete": (i) => ({ path: `/suppliers/${i.supplier}/delete` }),
+	"machines.edit": () => ({ path: "/machines/types", form: { name: "Laser cutter", hourly_rate: "", notes: "" } }),
 	"assemblies.edit": (i) => ({ path: `/assemblies/${i.assembly}/revision` }),
 	"assemblies.archive": (i) => ({ path: `/assemblies/${i.assembly}/archive` }),
 	// Used by the planned build: refused with a redirect (in_use), after the permission check.

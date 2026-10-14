@@ -59,13 +59,14 @@ was built with; `npx skills update` refreshes it.
   price history), `images.ts` (product images in R2), `users.ts` (who has which role, cost visibility option),
   `permissions.ts` (what each role may do: the permission table, `can()`, cost redaction),
   `history.ts` (`runChangeSet()`, history queries, field diffs, row names), `revert.ts` (undo, conflicts,
-  `TABLE_ACTIONS`), `mcp-scopes.ts` (MCP scopes and their permission actions).
+  `TABLE_ACTIONS`), `mcp-scopes.ts` (MCP scopes and their permission actions), `machines.ts` (machine types and their
+  rate history, machines, dated rates).
   `src/db/history-sql.ts` generates the history triggers (`scripts/history-triggers.mjs` prints them).
   `src/domain/import/`: one importer per CSV type, all implementing `Importer`.
 - `src/routes/*.tsx`: one Hono router per area, with its page components.
 - `src/views/`: layout (sidebar, header), shadcn-style components (`ui.tsx`), icons (`icons.tsx`),
-  assembly diagram (`assembly-diagram.tsx`), time charts (`chart.tsx`), render helpers, view context
-  (`useApp()`: locale, theme, sidebar…).
+  assembly diagram (`assembly-diagram.tsx`), time charts (`chart.tsx`), machine time tables (`machines.tsx`), render
+  helpers, view context (`useApp()`: locale, theme, sidebar…).
 - Part picker (D138): `PartPicker`/`PartPickerDialog` in `src/views/part-picker.tsx` (dialog after the form, scoped by
   `kinds`/`exclude` to what the form accepts), results from `GET /parts/pick` (`src/routes/part-picker.tsx`, `src/domain/part-picker.ts`).
 - `src/styles/app.css`: Tailwind source: shadcn tokens (light/dark), base layer, legacy classes.
@@ -118,6 +119,7 @@ was built with; `npx skills update` refreshes it.
 - `price_history` is append-only too: every change of a standard cost, an offer price or a selling price
   adds a row in the same batch (`priceRecordStatement`, or go through `savePartStatements`,
   `saveOfferStatements`, `setStandardCostStatements`, `assemblySalePriceStatements`). Prices paid are the receipt moves.
+  Machine type rates follow the same rule in `machine_rate_history` (go through `saveMachineTypeStatements`).
 - Supplier terms live in `part_suppliers` (one offer per part and supplier); `parts.supplier_id` is the
   preferred one. `parts.supplier_ref/moq_milli/pack_size_milli/lead_days` are deprecated: never use them.
 - Product images live in the optional `IMAGES` R2 bucket: always go through `imagesBucket(c.env)` (null when

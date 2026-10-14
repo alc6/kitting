@@ -54,6 +54,10 @@ export type ChangeSource = (typeof CHANGE_SOURCES)[number];
 export const CHANGE_OPS = ["insert", "update", "delete"] as const;
 export type ChangeOp = (typeof CHANGE_OPS)[number];
 
+/** A machine is in service, out of service for a while, or retired (kept for the record). */
+export const MACHINE_STATUSES = ["active", "maintenance", "retired"] as const;
+export type MachineStatus = (typeof MACHINE_STATUSES)[number];
+
 /** What a signed-in user may do, from least to most. Each role can do everything the previous one can. */
 export const ROLES = ["viewer", "operator", "planner", "admin"] as const;
 export type Role = (typeof ROLES)[number];
@@ -110,6 +114,66 @@ export const parts = sqliteTable(
 	],
 );
 
+// A kind of machine (e.g. "FDM printer"): what recipes name and what carries the hourly rate (D147).
+export const machineTypes = sqliteTable(
+	"machine_types",
+	{
+		id: integer("id").primaryKey({ autoIncrement: true }),
+		name: text("name").notNull(),
+		// Cost of one hour on a machine of this type. NULL = unknown, which makes roll-ups incomplete.
+		hourlyRateCents: integer("hourly_rate_cents"),
+		notes: text("notes").notNull().default(""),
+		...audit(),
+	},
+	(t) => [
+		uniqueIndex("machine_types_name_unique").on(t.name),
+		check("machine_types_rate_check", sql`${t.hourlyRateCents} IS NULL OR ${t.hourlyRateCents} >= 0`),
+	],
+);
+
+// The machines the workshop owns, each of a type (D147).
+export const machines = sqliteTable(
+	"machines",
+	{
+		id: integer("id").primaryKey({ autoIncrement: true }),
+		name: text("name").notNull(),
+		machineTypeId: integer("machine_type_id")
+			.notNull()
+			.references(() => machineTypes.id),
+		status: text("status", { enum: MACHINE_STATUSES }).notNull().default("active"),
+		notes: text("notes").notNull().default(""),
+		...audit(),
+	},
+	(t) => [
+		uniqueIndex("machines_name_unique").on(t.name),
+		index("machines_type_idx").on(t.machineTypeId),
+		check("machines_status_check", inList("status", MACHINE_STATUSES)),
+	],
+);
+
+// Append-only log of hourly rates, like price_history for prices (D149): every change of a rate adds a row in the
+// same batch. Never UPDATE or DELETE.
+export const machineRateHistory = sqliteTable(
+	"machine_rate_history",
+	{
+		id: integer("id").primaryKey({ autoIncrement: true }),
+		machineTypeId: integer("machine_type_id")
+			.notNull()
+			.references(() => machineTypes.id, { onDelete: "cascade" }),
+		// The new rate. NULL = cleared / unknown.
+		rateCents: integer("rate_cents"),
+		validFrom: text("valid_from").notNull(),
+		source: text("source", { enum: PRICE_SOURCES }).notNull(),
+		note: text("note").notNull().default(""),
+		...audit(),
+	},
+	(t) => [
+		index("machine_rate_history_type_idx").on(t.machineTypeId, t.validFrom),
+		check("machine_rate_history_source_check", inList("source", PRICE_SOURCES)),
+		check("machine_rate_history_rate_check", sql`${t.rateCents} IS NULL OR ${t.rateCents} >= 0`),
+	],
+);
+
 export const assemblies = sqliteTable(
 	"assemblies",
 	{
@@ -124,6 +188,12 @@ export const assemblies = sqliteTable(
 		salePriceCents: integer("sale_price_cents"),
 		notes: text("notes").notNull().default(""),
 		...audit(),
+		// Units of the parent one batch makes (milli, D145): the lines are the quantities for the whole batch. Checked
+		// in src/domain (> 0) rather than by a CHECK, which SQLite cannot add without rebuilding the table.
+		batchQtyMilli: integer("batch_qty_milli").notNull().default(1000),
+		// Machine time per batch (D148): one step on a machine of this type, in whole minutes (0 = none).
+		machineTypeId: integer("machine_type_id").references(() => machineTypes.id),
+		machineMinutes: integer("machine_minutes").notNull().default(0),
 	},
 	(t) => [
 		uniqueIndex("assemblies_parent_code_revision_unique").on(t.parentPartId, t.code, t.revision),
@@ -277,6 +347,25 @@ export const buildLines = sqliteTable(
 		...audit(),
 	},
 	(t) => [index("build_lines_build_idx").on(t.buildId), index("build_lines_part_serial_idx").on(t.partId, t.serial)],
+);
+
+// As-built record of machine time (D148): one row per machine type a completed build used, with the minutes (milli)
+// and the hourly rate frozen at completion. Written with the build's ledger moves, never changed.
+export const buildMachineTimes = sqliteTable(
+	"build_machine_times",
+	{
+		id: integer("id").primaryKey({ autoIncrement: true }),
+		buildId: integer("build_id")
+			.notNull()
+			.references(() => builds.id),
+		machineTypeId: integer("machine_type_id")
+			.notNull()
+			.references(() => machineTypes.id),
+		minutesMilli: integer("minutes_milli").notNull(),
+		rateCents: integer("rate_cents"),
+		...audit(),
+	},
+	(t) => [index("build_machine_times_build_idx").on(t.buildId)],
 );
 
 // A supplier's offer for a part: its reference, price and ordering terms. One row per (part, supplier);
@@ -433,8 +522,8 @@ export const changeContext = sqliteTable(
 
 /**
  * Tables whose every row change is recorded in change_log (by triggers generated from this list, see
- * scripts/history-triggers.mjs). Not tracked: the append-only ledgers (stock_moves, build_lines,
- * price_history) and the history tables themselves.
+ * scripts/history-triggers.mjs). Not tracked: the append-only ledgers (stock_moves, build_lines, build_machine_times,
+ * price_history, machine_rate_history) and the history tables themselves.
  */
 export const HISTORY_TABLES: SQLiteTable[] = [
 	parts,
@@ -447,16 +536,25 @@ export const HISTORY_TABLES: SQLiteTable[] = [
 	builds,
 	users,
 	settings,
+	machineTypes,
+	machines,
 ];
 
 /**
  * Append-only ledgers: corrected with reverse movements, never undone. A change set that writes to them is
  * marked non-revertible by a trigger.
  */
-export const LEDGER_TABLES: SQLiteTable[] = [stockMoves, buildLines];
+export const LEDGER_TABLES: SQLiteTable[] = [stockMoves, buildLines, buildMachineTimes];
 
 /** Tables deliberately left out of the history (a test checks every table is in one list or the other). */
-export const UNTRACKED_TABLES: SQLiteTable[] = [...LEDGER_TABLES, priceHistory, changeSets, changeLog, changeContext];
+export const UNTRACKED_TABLES: SQLiteTable[] = [
+	...LEDGER_TABLES,
+	priceHistory,
+	machineRateHistory,
+	changeSets,
+	changeLog,
+	changeContext,
+];
 
 export type ChangeSet = typeof changeSets.$inferSelect;
 export type ChangeLogRow = typeof changeLog.$inferSelect;
@@ -472,3 +570,6 @@ export type Build = typeof builds.$inferSelect;
 export type BuildLine = typeof buildLines.$inferSelect;
 export type PartSupplier = typeof partSuppliers.$inferSelect;
 export type PriceHistoryRow = typeof priceHistory.$inferSelect;
+export type MachineType = typeof machineTypes.$inferSelect;
+export type Machine = typeof machines.$inferSelect;
+export type BuildMachineTime = typeof buildMachineTimes.$inferSelect;

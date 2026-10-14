@@ -1,5 +1,6 @@
 import { parseCsv } from "../../lib/csv";
 import { assembliesImporter } from "./assemblies";
+import { machinesImporter, machineTypesImporter } from "./machines";
 import { offersImporter } from "./offers";
 import { partsImporter } from "./parts";
 import { priceHistoryImporter } from "./price-history";
@@ -15,6 +16,8 @@ export const IMPORTERS: Importer[] = [
 	partsImporter,
 	offersImporter,
 	priceHistoryImporter,
+	machineTypesImporter,
+	machinesImporter,
 	assembliesImporter,
 	stockImporter,
 ];

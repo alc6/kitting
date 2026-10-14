@@ -85,6 +85,8 @@ const TYPE_ICONS: Record<ImportType, IconNode> = {
 	parts: icons.package,
 	part_suppliers: icons.truck,
 	price_history: icons.history,
+	machine_types: icons.cog,
+	machines: icons.cog,
 	assemblies: icons.listTree,
 	stock: icons.warehouse,
 };

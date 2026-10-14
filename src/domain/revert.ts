@@ -14,6 +14,7 @@ import {
 	changeLog,
 	changeSets,
 	HISTORY_TABLES,
+	machineRateHistory,
 	type PriceKind,
 	priceHistory,
 	UNTRACKED_TABLES,
@@ -36,6 +37,8 @@ export const TABLE_ACTIONS: Record<string, Action> = {
 	builds: "builds.plan",
 	users: "users.manage",
 	settings: "users.manage",
+	machine_types: "machines.edit",
+	machines: "machines.edit",
 };
 
 /** Price columns whose changes the append-only price history must follow (CLAUDE.md, "Data rules"). */
@@ -165,9 +168,11 @@ type Fk = ReturnType<typeof foreignKeys>[number];
 
 /**
  * Whether rows of `fk.childName` keep the parent from being deleted. The price history of a part or an assembly
- * goes with it (ON DELETE CASCADE), as when deleting the part or assembly from its page.
+ * goes with it (ON DELETE CASCADE), as when deleting the part or assembly from its page; so does the rate history of
+ * a machine type.
  */
-const blocksDelete = (fk: Fk) => !(fk.childName === getTableName(priceHistory) && fk.onDelete === "cascade");
+const HISTORY_LOGS: string[] = [getTableName(priceHistory), getTableName(machineRateHistory)];
+const blocksDelete = (fk: Fk) => !(HISTORY_LOGS.includes(fk.childName) && fk.onDelete === "cascade");
 
 async function changedSince(db: Db, after: number, table: string, rowId: number): Promise<ChangedBy | undefined> {
 	const rows = await db
@@ -363,6 +368,25 @@ function priceStatements(db: Db, rows: Touched[], setId: number, user: string, n
 					priceCents: price,
 					supplierId: r.name === "part_suppliers" ? (restored.supplier_id as number) : null,
 					assemblyId: r.name === "assemblies" ? r.rowId : null,
+					validFrom: now.slice(0, 10),
+					source: "revert",
+					note: `#${setId}`,
+					createdBy: user,
+					updatedBy: user,
+					createdAt: now,
+					updatedAt: now,
+				}),
+			);
+		}
+		// A machine type's hourly rate follows the same rule, in its own log (D149).
+		if (r.name === "machine_types") {
+			const rate = (restored.hourly_rate_cents ?? null) as number | null;
+			const current = (r.after?.hourly_rate_cents ?? null) as number | null;
+			if (r.after !== null ? rate === current : rate === null) continue;
+			stmts.push(
+				db.insert(machineRateHistory).values({
+					machineTypeId: r.rowId,
+					rateCents: rate,
 					validFrom: now.slice(0, 10),
 					source: "revert",
 					note: `#${setId}`,

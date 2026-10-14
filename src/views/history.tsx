@@ -13,7 +13,7 @@ import {
 import { can } from "../domain/permissions";
 import type { ChangedBy, RevertConflict } from "../domain/revert";
 import { fmt } from "../i18n";
-import { formatQty } from "../lib/units";
+import { formatMinutes, formatQty, MILLI } from "../lib/units";
 import { type AppView, useApp } from "./context";
 import { icons } from "./icons";
 import { Alert, Badge, CardEmpty, LinkTabs, Money, PostButton, shortDateTime, TableCard } from "./ui";
@@ -79,6 +79,10 @@ function recordHref(table: string, rowId: number, row: Row): string | null {
 			return num(row.po_id) ? `/purchasing/po/${row.po_id}` : null;
 		case "builds":
 			return `/builds/${rowId}`;
+		case "machine_types":
+			return `/machines/types/${rowId}`;
+		case "machines":
+			return `/machines/${rowId}`;
 		default:
 			return null;
 	}
@@ -94,6 +98,8 @@ function FieldValue(props: { table: string; column: string; value: unknown; labe
 		return <span class="text-muted-foreground">{t.common.none}</span>;
 	if (column.endsWith("_milli") && typeof value === "number")
 		return <span class="num">{formatQty(value, locale)}</span>;
+	if (column === "machine_minutes" && typeof value === "number")
+		return <span class="num">{formatMinutes(value * MILLI)}</span>;
 	if (BOOLEAN_COLUMNS.has(`${table}.${column}`)) return <span>{value ? t.common.yes : t.common.no}</span>;
 	const ref = REFERENCE_COLUMNS[column];
 	if (ref) return <span>{labelOf(props.labels, ref, value)}</span>;
@@ -105,6 +111,7 @@ function FieldValue(props: { table: string; column: string; value: unknown; labe
 			assemblies: t.assemblies.statuses,
 			purchase_orders: t.purchasing.statuses,
 			builds: t.builds.statuses,
+			machines: t.machines.statuses,
 		};
 		return <span>{statuses[table]?.[text] ?? text}</span>;
 	}

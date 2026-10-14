@@ -137,6 +137,14 @@ export function mulDivRound(a: number, b: number, c: number): number {
 	return Number(q);
 }
 
+/** ceil(a × b / c) for positive c, exact for large values (BigInt intermediate): quantities never round down. */
+export function mulDivCeil(a: number, b: number, c: number): number {
+	const n = BigInt(a) * BigInt(b);
+	const d = BigInt(c);
+	const q = n / d;
+	return Number(n % d !== 0n && n > 0n === d > 0n ? q + 1n : q);
+}
+
 /** A ratio in basis points (1 % = 100): numerator / denominator × 10 000, rounded; null when undefined. */
 export function basisPoints(numerator: number, denominator: number): number | null {
 	return denominator === 0 ? null : mulDivRound(numerator, 10_000, denominator);
@@ -146,3 +154,51 @@ export function basisPoints(numerator: number, denominator: number): number | nu
 export function formatPercent(bp: number, locale: NumberLocale = "en"): string {
 	return `${formatScaled(roundDiv(bp, 10), 1, { locale, minDecimals: 1, group: true })} %`;
 }
+
+// ---------------------------------------------------------------------------
+// Machine time (D148): stored in whole minutes per batch; needs are minutes in milli (exact for any quantity).
+
+/**
+ * Parses a duration into whole minutes: "190" or "45 min" (minutes), "3:10", "3h10", "3 h 10", "3h10m", "3h",
+ * "3:10:00" (a spreadsheet time; seconds round up to the next minute) or "3.5 h" (decimal hours, rounded to the
+ * minute). Returns null when the input is not a duration.
+ */
+export function parseMinutes(input: string): number | null {
+	const s = input.trim().toLowerCase().replace(SPACES, "");
+	let m = /^(\d+)(?:min|mn|m)?$/.exec(s);
+	if (m) return safe(Number(m[1]));
+	m = /^(\d+)(?::|h)(\d{1,2})?(?:min|mn|m)?$/.exec(s);
+	if (m) {
+		const minutes = Number(m[2] ?? 0);
+		return minutes < 60 ? safe(Number(m[1]) * 60 + minutes) : null;
+	}
+	m = /^(\d+):(\d{2}):(\d{2})$/.exec(s);
+	if (m) {
+		const [h, min, sec] = [Number(m[1]), Number(m[2]), Number(m[3])];
+		return min < 60 && sec < 60 ? safe(h * 60 + min + (sec > 0 ? 1 : 0)) : null;
+	}
+	m = /^(\d*[.,]\d+)h$/.exec(s);
+	if (m) {
+		const hoursMilli = parseScaled(m[1] ?? "", 3);
+		return hoursMilli === null ? null : safe(roundDiv(hoursMilli * 60, MILLI));
+	}
+	return null;
+}
+
+const safe = (n: number): number | null => (Number.isSafeInteger(n) ? n : null);
+
+/** Minutes in milli as "3 h 10" or "45 min", rounded up to the minute (a plan never shows less than it needs). */
+export function formatMinutes(minutesMilli: number): string {
+	const minutes = ceilDiv(minutesMilli, MILLI);
+	if (minutes < 60) return `${minutes} min`;
+	const h = Math.floor(minutes / 60);
+	return `${h} h ${String(minutes % 60).padStart(2, "0")}`;
+}
+
+/** Whole minutes as a form value: "3:10" (parsed back by parseMinutes), empty for none. */
+export const formatMinutesInput = (minutes: number): string =>
+	minutes === 0 ? "" : `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, "0")}`;
+
+/** Cost of machine time in millicents: an hourly rate (cents) × minutes (milli) / 60, rounded half away from zero. */
+export const machineMillicents = (rateCents: number, minutesMilli: number): number =>
+	mulDivRound(rateCents, minutesMilli, 60);

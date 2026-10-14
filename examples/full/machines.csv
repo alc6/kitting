@@ -1,0 +1,4 @@
+name,type,status,notes
+PRINTER-1,FDM printer,active,
+PRINTER-2,FDM printer,active,
+PRINTER-3,FDM printer,maintenance,Nozzle to replace

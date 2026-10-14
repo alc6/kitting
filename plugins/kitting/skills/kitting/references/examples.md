@@ -1,7 +1,7 @@
 # Worked examples
 
 All on the fictional demo dataset (`examples/full/`: the modular desk lamp `LAMP-DESK`, variants `std` and
-`warm`). Numbers are illustrative; always read the real ones from the tools.
+`warm`, and the 3D-printed cable clip `LAMP-CLIP`). Numbers are illustrative; always read the real ones from the tools.
 
 ## 1. Plan five warm lamps and order what is missing
 
@@ -78,3 +78,17 @@ No write is made without that confirmation.
 `set_standard_cost` is not offered: it needs the `prices:write` scope and a planner. Claude says so, does not try
 `update_part` or `upsert_supplier_offer` instead, and suggests asking a planner or an admin (Users page), or
 reconnecting the app with the scope ticked if the role allows it.
+
+## 5. How many printer hours this week?
+
+**User:** We have 48 clips and 10 more to print. How long will the printers be busy?
+
+1. `get_assembly({ "assembly": "LAMP-CLIP", "qty": 48 })`: `batch` 24, `machine_type` FDM printer, `machine_minutes`
+   190 per plate; `machine_time` for 48 is 380 minutes.
+2. After the user confirms the two builds: `plan_build({ "ref": "LAMP-CLIP", "batches": 2 })` (48 clips) and
+   `plan_build({ "ref": "LAMP-CLIP", "qty": 10 })`.
+3. `get_shortages({})`: `machine_time` for FDM printer is 459.167 minutes over both builds, with `active_machines` 2.
+   No filament to buy: 629 g are needed and 2.4 kg are in stock.
+
+   > **Claude:** The two builds need about 7 h 40 of printing on the FDM printers. Two printers are in service
+   > (PRINTER-3 is under maintenance), so that is about 3 h 50 each. The filament in stock covers it.

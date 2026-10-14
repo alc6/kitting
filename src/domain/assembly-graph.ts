@@ -2,7 +2,7 @@
 // The whole catalogue is small (tens to hundreds of parts), so loading it once per
 // request and walking it in TypeScript is simpler and easier to test than SQL.
 import type { AssemblyStatus, PartKind } from "../db/schema";
-import { MILLI, mulMilli, roundDiv } from "../lib/units";
+import { MILLI, machineMillicents, mulDivCeil, mulDivRound, roundDiv } from "../lib/units";
 
 export type GraphPart = {
 	id: number;
@@ -17,27 +17,52 @@ export type GraphPart = {
 
 export type GraphLine = { id: number; componentPartId: number; qtyMilli: number; position: number; notes: string };
 
+/** A machine type and its hourly rate (null = unknown), D147. */
+export type GraphMachineType = { id: number; name: string; rateCents: number | null };
+
 export type GraphAssembly = {
 	id: number;
 	parentPartId: number;
 	code: string;
 	revision: string;
 	status: AssemblyStatus;
+	/** Units of the parent one batch makes (milli); the lines are the quantities for the whole batch (D145). */
+	batchMilli: number;
+	/** Machine time per batch (D148): a machine type and whole minutes (0 = none). */
+	machineTypeId: number | null;
+	machineMinutes: number;
 	lines: GraphLine[];
 };
 
 export type AssemblyGraph = {
 	parts: Map<number, GraphPart>;
 	assemblies: Map<number, GraphAssembly>;
+	machineTypes: Map<number, GraphMachineType>;
 };
+
+type AssemblyInput = Omit<GraphAssembly, "lines" | "batchMilli" | "machineTypeId" | "machineMinutes"> &
+	Partial<Pick<GraphAssembly, "batchMilli" | "machineTypeId" | "machineMinutes">>;
 
 export function buildGraph(
 	parts: GraphPart[],
-	assemblies: Omit<GraphAssembly, "lines">[],
+	assemblies: AssemblyInput[],
 	lines: (GraphLine & { assemblyId: number })[],
+	machineTypes: GraphMachineType[] = [],
 ) {
-	const graph: AssemblyGraph = { parts: new Map(parts.map((p) => [p.id, p])), assemblies: new Map() };
-	for (const b of assemblies) graph.assemblies.set(b.id, { ...b, lines: [] });
+	const graph: AssemblyGraph = {
+		parts: new Map(parts.map((p) => [p.id, p])),
+		assemblies: new Map(),
+		machineTypes: new Map(machineTypes.map((m) => [m.id, m])),
+	};
+	for (const b of assemblies) {
+		graph.assemblies.set(b.id, {
+			...b,
+			batchMilli: b.batchMilli ?? MILLI,
+			machineTypeId: b.machineTypeId ?? null,
+			machineMinutes: b.machineMinutes ?? 0,
+			lines: [],
+		});
+	}
 	for (const l of lines) graph.assemblies.get(l.assemblyId)?.lines.push(l);
 	for (const b of graph.assemblies.values()) b.lines.sort((x, y) => x.position - y.position || x.id - y.id);
 	return graph;
@@ -78,8 +103,10 @@ export type ExplodedNode = {
 	lineId: number;
 	part: GraphPart;
 	depth: number;
-	/** Quantity per one unit of the parent line (the assembly line quantity). */
+	/** Quantity per batch of the parent (the assembly line quantity): per one unit when `parentBatchMilli` is 1000. */
 	perParentMilli: number;
+	/** Units one batch of the parent's assembly makes (milli). */
+	parentBatchMilli: number;
 	/** Total quantity needed for the requested root quantity. */
 	qtyMilli: number;
 	mode: NodeMode;
@@ -97,6 +124,9 @@ export type Requirement = {
 	missingAssembly: boolean;
 };
 
+/** Machine time needed, per machine type: minutes in milli, rounded up (D148). */
+export type MachineNeed = { machineType: GraphMachineType; minutesMilli: number };
+
 export type Explosion = {
 	assembly: GraphAssembly;
 	qtyMilli: number;
@@ -105,6 +135,8 @@ export type Explosion = {
 	requirements: Requirement[];
 	/** Fee lines: count in cost only. */
 	fees: Requirement[];
+	/** Machine time of every assembly built: the root, kits and sub-assemblies built now (not those from stock). */
+	machines: MachineNeed[];
 };
 
 export type ExplodeOptions = {
@@ -120,6 +152,25 @@ export type ExplodeOptions = {
 };
 
 export const MAX_DEPTH = 32;
+
+/** Machine time of `units` of an assembly's parent: minutes per batch × units / batch, in milli, rounded up. */
+export function machineNeed(assembly: Pick<GraphAssembly, "machineMinutes" | "batchMilli">, units: number): number {
+	return mulDivCeil(units, assembly.machineMinutes * MILLI, assembly.batchMilli);
+}
+
+/**
+ * Quantity of a line needed for `units` of its parent: line × units / batch (D145), rounded up to the thousandth so
+ * nothing is under-picked (D26), and to whole units for a serial-tracked component (one serial per unit).
+ */
+export function lineNeed(
+	line: { qtyMilli: number },
+	units: number,
+	batchMilli: number,
+	part: { trackSerial: boolean },
+) {
+	const need = mulDivCeil(line.qtyMilli, units, batchMilli);
+	return part.trackSerial ? Math.ceil(need / MILLI) * MILLI : need;
+}
 
 export class AssemblyCycleError extends Error {
 	constructor(public readonly refs: string[]) {
@@ -146,6 +197,14 @@ export function explode(
 	const useStock = opts.stock !== undefined || opts.available !== undefined;
 	const reqs = new Map<number, Requirement>();
 	const fees = new Map<number, Requirement>();
+	const machines = new Map<number, MachineNeed>();
+	const addMachine = (b: GraphAssembly, units: number) => {
+		const type = b.machineTypeId === null ? undefined : graph.machineTypes.get(b.machineTypeId);
+		if (!type || b.machineMinutes <= 0 || units <= 0) return;
+		const m = machines.get(type.id);
+		if (m) m.minutesMilli += machineNeed(b, units);
+		else machines.set(type.id, { machineType: type, minutesMilli: machineNeed(b, units) });
+	};
 	const add = (into: Map<number, Requirement>, part: GraphPart, qty: number, missingAssembly = false) => {
 		if (qty <= 0) return;
 		const r = into.get(part.id);
@@ -160,17 +219,19 @@ export function explode(
 			throw new AssemblyCycleError([...stack, b.parentPartId].map((id) => graph.parts.get(id)?.ref ?? String(id)));
 		}
 		const nextStack = [...stack, b.parentPartId];
+		addMachine(b, units);
 		return b.lines.map((line) => {
 			const part = graph.parts.get(line.componentPartId);
 			if (!part) throw new Error(`Unknown part ${line.componentPartId}`);
 			const path = prefix ? `${prefix}/${line.id}` : String(line.id);
-			const need = mulMilli(line.qtyMilli, units);
+			const need = lineNeed(line, units, b.batchMilli, part);
 			const node: ExplodedNode = {
 				path,
 				lineId: line.id,
 				part,
 				depth,
 				perParentMilli: line.qtyMilli,
+				parentBatchMilli: b.batchMilli,
 				qtyMilli: need,
 				mode: "buy",
 				fromStockMilli: 0,
@@ -234,6 +295,7 @@ export function explode(
 		tree,
 		requirements: [...reqs.values()].sort(byRef),
 		fees: [...fees.values()].sort(byRef),
+		machines: [...machines.values()].sort((a, b) => a.machineType.name.localeCompare(b.machineType.name)),
 	};
 }
 
@@ -251,10 +313,12 @@ export function* walkTree(nodes: ExplodedNode[]): Generator<ExplodedNode> {
 export type Cost = {
 	/** Unit cost in millicents. */
 	millicents: number;
-	/** True when some leaf has no known cost (or a make/kit part has no assembly and no cost). */
+	/** True when some leaf has no known cost (or a make/kit part has no assembly and no cost, or a machine no rate). */
 	incomplete: boolean;
 	/** Parts responsible for incompleteness. */
 	missing: number[];
+	/** Machine types without an hourly rate that the roll-up needs (D148). */
+	missingMachines?: number[];
 };
 
 export const centsOf = (millicents: number): number => roundDiv(millicents, MILLI);
@@ -289,22 +353,55 @@ export class CostCalculator {
 		return cost;
 	}
 
-	/** Cost of one unit of an assembly's parent, built from this assembly. */
+	/** Cost of one unit of an assembly's parent, built from this assembly: its batch cost divided by the batch. */
 	assembly(assemblyId: number): Cost {
+		const assembly = this.graph.assemblies.get(assemblyId);
+		if (!assembly) return { millicents: 0, incomplete: true, missing: [] };
+		const batch = this.batch(assemblyId);
+		return { ...batch, millicents: mulDivRound(batch.millicents, MILLI, assembly.batchMilli) };
+	}
+
+	/** Cost of one batch of an assembly (its lines as written), in millicents. */
+	batch(assemblyId: number): Cost {
 		const assembly = this.graph.assemblies.get(assemblyId);
 		if (!assembly) return { millicents: 0, incomplete: true, missing: [] };
 		let millicents = 0;
 		let incomplete = false;
 		const missing = new Set<number>();
+		const missingMachines = new Set<number>();
 		for (const line of assembly.lines) {
 			const c = this.part(line.componentPartId);
 			millicents += roundDiv(line.qtyMilli * c.millicents, MILLI);
 			if (c.incomplete) {
 				incomplete = true;
 				for (const m of c.missing) missing.add(m);
+				for (const m of c.missingMachines ?? []) missingMachines.add(m);
 			}
 		}
-		return { millicents, incomplete, missing: [...missing] };
+		const machine = this.machineBatch(assembly);
+		if (machine) {
+			millicents += machine.millicents;
+			if (machine.incomplete) {
+				incomplete = true;
+				for (const m of machine.missingMachines ?? []) missingMachines.add(m);
+			}
+		}
+		const cost: Cost = { millicents, incomplete, missing: [...missing] };
+		if (missingMachines.size) cost.missingMachines = [...missingMachines];
+		return cost;
+	}
+
+	/** Cost of the machine time of one batch of an assembly, or null when it has none. */
+	machineBatch(assembly: Pick<GraphAssembly, "machineTypeId" | "machineMinutes">): Cost | null {
+		if (assembly.machineTypeId === null || assembly.machineMinutes <= 0) return null;
+		return this.machine(assembly.machineTypeId, assembly.machineMinutes * MILLI);
+	}
+
+	/** Cost of machine time on a machine type (minutes in milli), in millicents; incomplete without a rate. */
+	machine(machineTypeId: number, minutesMilli: number): Cost {
+		const rate = this.graph.machineTypes.get(machineTypeId)?.rateCents ?? null;
+		if (rate === null) return { millicents: 0, incomplete: true, missing: [], missingMachines: [machineTypeId] };
+		return { millicents: machineMillicents(rate, minutesMilli), incomplete: false, missing: [] };
 	}
 
 	/** Extended cost of a quantity of a part, in millicents. */

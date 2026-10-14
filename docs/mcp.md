@@ -41,14 +41,14 @@ the corresponding page.
 
 | Scope | Tools |
 | --- | --- |
-| `catalog:read` | `search_parts`, `get_part`, `get_assembly`, `explode_assembly`, `list_recent_changes` |
-| `catalog:write` | `create_part`, `update_part`, `create_supplier`, `update_supplier`, `create_assembly`, `set_assembly_lines`, `new_assembly_revision`, `activate_assembly` |
+| `catalog:read` | `search_parts`, `get_part`, `get_assembly`, `explode_assembly`, `list_machines`, `list_recent_changes` |
+| `catalog:write` | `create_part`, `update_part`, `create_supplier`, `update_supplier`, `create_assembly`, `set_assembly_lines`, `set_assembly_production`, `new_assembly_revision`, `activate_assembly` |
 | `prices:write` | `set_standard_cost`, `set_sale_price`, `upsert_supplier_offer` |
 | `catalog:archive` | `archive_part`, `unarchive_part`, `archive_assembly` |
 | `stock:read` | `stock_on_hand`, `list_moves` |
 | `stock:write` | `adjust_stock`, `count_stock` |
 | `builds:read` | `list_builds`, `get_build` |
-| `builds:write` | `plan_build`, `complete_build`, `cancel_build` |
+| `builds:write` | `plan_build`, `complete_build`, `record_build`, `cancel_build` |
 | `purchasing:read` | `get_shortages`, `list_purchase_orders`, `get_purchase_order` |
 | `purchasing:write` | `create_draft_pos`, `update_draft_po`, `mark_po_sent`, `receive_po`, `cancel_po`, `close_po` |
 

@@ -6,14 +6,16 @@ import {
 	BUILD_STATUSES,
 	type BuildStatus,
 	buildLines,
+	buildMachineTimes,
 	builds,
+	machineTypes,
 	type Part,
 	parts,
 	stockMoves,
 } from "../db/schema";
 import type { Statement } from "../lib/db";
 import { likePattern } from "../lib/sql";
-import { MILLI, roundDiv } from "../lib/units";
+import { MILLI, mulDivCeil, roundDiv } from "../lib/units";
 import { type FieldErrors, field } from "../lib/validation";
 import type { Db } from "../types";
 import {
@@ -34,12 +36,27 @@ export const buildInput = z.object({
 	part_id: field.id(),
 	assembly_id: field.id(),
 	qty: field.qty({ positive: true, empty: MILLI }),
+	/** What `qty` counts: units of the product (the default) or batches of the chosen assembly (D145). */
+	qty_in: z
+		.string()
+		.trim()
+		.transform((v): "units" | "batches" => (v === "batches" ? "batches" : "units")),
 	serial: field.text(100),
 	planned_for: field.date(),
 	notes: field.text(),
 });
 
 export type BuildInput = z.output<typeof buildInput>;
+
+/** The quantity to build in units of the product: `qty` itself, or that many batches of the chosen assembly. */
+export function unitsToBuild(
+	d: Pick<BuildInput, "qty" | "qty_in" | "assembly_id">,
+	assemblyOptions: { id: number; batchMilli: number }[],
+): number {
+	if (d.qty_in !== "batches") return d.qty;
+	const batch = assemblyOptions.find((b) => b.id === d.assembly_id)?.batchMilli ?? MILLI;
+	return mulDivCeil(d.qty, batch, MILLI);
+}
 
 export const buildEditInput = z.object({
 	serial: field.text(100),
@@ -73,7 +90,12 @@ export async function buildableProduct(db: Db, partId: number | null) {
 	const product = partId ? (await db.select().from(parts).where(eq(parts.id, partId)).limit(1))[0] : undefined;
 	const assemblyOptions = product
 		? await db
-				.select({ id: assemblies.id, code: assemblies.code, revision: assemblies.revision })
+				.select({
+					id: assemblies.id,
+					code: assemblies.code,
+					revision: assemblies.revision,
+					batchMilli: assemblies.batchQtyMilli,
+				})
 				.from(assemblies)
 				.where(and(eq(assemblies.parentPartId, product.id), eq(assemblies.status, "active")))
 				.orderBy(asc(assemblies.code))
@@ -228,6 +250,21 @@ export async function getBuildLines(db: Db, buildId: number) {
 		.orderBy(parts.ref, buildLines.serial, buildLines.id);
 }
 
+/** The machine time a completed build recorded, per machine type, with the rate frozen at completion (D148). */
+export async function getBuildMachineTimes(db: Db, buildId: number) {
+	return db
+		.select({
+			machineTypeId: buildMachineTimes.machineTypeId,
+			name: machineTypes.name,
+			minutesMilli: buildMachineTimes.minutesMilli,
+			rateCents: buildMachineTimes.rateCents,
+		})
+		.from(buildMachineTimes)
+		.innerJoin(machineTypes, eq(buildMachineTimes.machineTypeId, machineTypes.id))
+		.where(eq(buildMachineTimes.buildId, buildId))
+		.orderBy(machineTypes.name);
+}
+
 /** Builds that consumed a given serial of a part (normally one). */
 export async function buildsConsumingSerial(db: Db, partId: number, serial: string) {
 	return db
@@ -315,12 +352,12 @@ export function buildPickList(
 /**
  * The completion batch: consume moves, the output move (with the frozen as-built unit cost),
  * the as-built lines, then the status change. The unique `build_output` index makes a second
- * completion of the same build abort the whole batch.
+ * completion of the same build abort the whole batch. `build.id` is SQL for a build planned in the same batch.
  */
 export function completionStatements(
 	db: Db,
 	graph: AssemblyGraph,
-	build: { id: number; partId: number; qtyMilli: number; serial: string | null; number: string },
+	build: { id: number | SQL; partId: number; qtyMilli: number; serial: string | null; number: string },
 	pick: PickList,
 	user: string,
 	now: string,
@@ -390,6 +427,22 @@ export function completionStatements(
 		}
 	}
 	for (const f of pick.explosion.fees) totalMillicents += calc.extended(f.part.id, f.qtyMilli);
+	// Machine time (D148): priced like a fee, and recorded with the rate of the day.
+	for (const m of pick.explosion.machines) {
+		totalMillicents += calc.machine(m.machineType.id, m.minutesMilli).millicents;
+		lines.push(
+			db.insert(buildMachineTimes).values({
+				buildId: build.id,
+				machineTypeId: m.machineType.id,
+				minutesMilli: m.minutesMilli,
+				rateCents: m.machineType.rateCents,
+				createdBy: user,
+				updatedBy: user,
+				createdAt: now,
+				updatedAt: now,
+			}),
+		);
+	}
 	const unitCostCents = centsOf(roundDiv(totalMillicents * MILLI, build.qtyMilli));
 	const output = db
 		.insert(stockMoves)
@@ -404,6 +457,49 @@ export function completionStatements(
 		.set({ status: "done", doneAt: now, updatedAt: now, updatedBy: user })
 		.where(and(eq(builds.id, build.id), inArray(builds.status, OPEN_STATUSES)));
 	return [...consume, output, ...lines, done];
+}
+
+/**
+ * Why a finished build cannot be recorded in one step (D152): what blocks its completion, and the serial-tracked
+ * components, whose serials only the build page asks for. Empty when it can be recorded.
+ */
+export function recordProblems(pick: PickList): { key: string; vars?: Record<string, string> }[] {
+	const problems = [...pick.problems];
+	const tracked = pick.explosion.requirements.filter((r) => r.part.trackSerial && serialCount(r) > 0);
+	if (tracked.length)
+		problems.push({ key: "record_needs_serials", vars: { refs: tracked.map((r) => r.part.ref).join(", ") } });
+	return problems;
+}
+
+/**
+ * A finished build recorded in one change set (D152): planned for today and completed now, with the pick list's
+ * default choices (sub-assemblies from stock when there are enough). The completion finds the build by its number.
+ */
+export function recordStatements(
+	db: Db,
+	graph: AssemblyGraph,
+	b: { number: string; partId: number; assemblyId: number; qtyMilli: number; serial: string | null; notes: string },
+	pick: PickList,
+	user: string,
+	now: string,
+): Statement[] {
+	return [
+		createBuildStatement(db, { ...b, plannedFor: now.slice(0, 10) }, user, now),
+		...completionStatements(
+			db,
+			graph,
+			{
+				id: sql`(SELECT id FROM builds WHERE number = ${b.number})`,
+				partId: b.partId,
+				qtyMilli: b.qtyMilli,
+				serial: b.serial,
+				number: b.number,
+			},
+			pick,
+			user,
+			now,
+		),
+	];
 }
 
 /** Make nodes of an explosion (where the user can choose "use stock" or "build now"). */

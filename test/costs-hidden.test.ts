@@ -23,6 +23,7 @@ const OFFER = 111111; // its offer price
 const SALE = 999999; // selling price of LAMP-DESK
 const PAID = 98765; // PO unit price, also the cost of the receipt moves
 const PAST = 77777; // a past standard cost entered as history (D142)
+const RATE = 66666; // hourly rate of the FDM printer type (D147)
 // The history keeps rows as JSON with raw cents: those must not leak either.
 const AMOUNTS = [
 	"1,234.56",
@@ -38,6 +39,8 @@ const AMOUNTS = [
 	"98765",
 	"777.77",
 	"77777",
+	"666.66",
+	"66666",
 ];
 
 /**
@@ -94,6 +97,27 @@ async function seed() {
 	expect((await postForm(`/builds/${done}/complete`, {})).status).toBe(303);
 	const open = await plan("100");
 	const priced = (await one<{ id: number }>("SELECT min(id) AS id FROM change_sets WHERE summary = 'Set prices'")).id;
+	// A machine rate, through the form (logged in the history and the rate history), and a printed clip built with it.
+	const type = (await one<{ id: number }>("SELECT id FROM machine_types WHERE name = 'FDM printer'")).id;
+	await postForm(`/machines/types/${type}`, { name: "FDM printer", hourly_rate: "666.66", notes: "" });
+	const rated = (await one<{ id: number }>("SELECT max(id) AS id FROM change_sets")).id;
+	const clip = await partId("LAMP-CLIP");
+	const clipAssembly = await assemblyId("LAMP-CLIP");
+	const printed = await postForm("/builds", {
+		part_id: String(clip),
+		assembly_id: String(clipAssembly),
+		qty: "1",
+		qty_in: "batches",
+		serial: "",
+		planned_for: "",
+		notes: "",
+	});
+	const clipBuild = Number(/\/builds\/(\d+)/.exec(printed.headers.get("Location") ?? "")?.[1]);
+	expect((await postForm(`/builds/${clipBuild}/complete`, {})).status).toBe(303);
+	expect(await one("SELECT rate_cents FROM build_machine_times WHERE build_id = ?", clipBuild)).toEqual({
+		rate_cents: RATE,
+	});
+	const machine = (await one<{ id: number }>("SELECT id FROM machines WHERE name = 'PRINTER-1'")).id;
 	return {
 		box,
 		widget,
@@ -104,6 +128,12 @@ async function seed() {
 		priced,
 		assembly: await assemblyId("WIDGET"),
 		lampAssembly: await assemblyId("LAMP-DESK"),
+		type,
+		rated,
+		clip,
+		clipAssembly,
+		clipBuild,
+		machine,
 	};
 }
 
@@ -145,6 +175,17 @@ function pages(s: Awaited<ReturnType<typeof seed>>): string[] {
 		`/assemblies/${s.lampAssembly}/history`,
 		`/purchasing/po/${s.poId}/history`,
 		"/connected-apps",
+		"/machines",
+		"/machines?retired=1",
+		`/machines/types/${s.type}`,
+		`/machines/${s.machine}`,
+		`/parts/${s.clip}`,
+		`/assemblies/${s.clipAssembly}`,
+		`/assemblies/${s.clipAssembly}/tree`,
+		`/assemblies/${s.clipAssembly}/explode`,
+		`/assemblies/${s.clipAssembly}/explode?format=csv`,
+		`/builds/${s.clipBuild}`,
+		`/history/${s.rated}`,
 		// Closed to these roles: refused without leaking anything.
 		"/margins",
 		`/margins/assemblies/${s.lampAssembly}`,
@@ -153,6 +194,8 @@ function pages(s: Awaited<ReturnType<typeof seed>>): string[] {
 		"/import/parts/export.csv",
 		"/import/price_history/export.csv",
 		"/import/price_history/template.csv",
+		"/import/machine_types/export.csv",
+		`/margins/assemblies/${s.clipAssembly}`,
 		"/import/backup.json",
 	];
 }
@@ -187,6 +230,12 @@ describe("cost visibility", () => {
 		expect(await (await request("/stock/moves?format=csv", {}, NOT_ADMIN)).text()).toContain("987.65");
 		expect(await (await request(`/history/${s.priced}`, {}, NOT_ADMIN)).text()).toContain("1,234.56");
 		expect(await (await request(`/purchasing/po/${s.poId}/history`, {}, NOT_ADMIN)).text()).toContain("987.65");
+		// The machine rate, where the sweep looks for it (so the sweep would catch a leak there).
+		for (const path of ["/machines", `/machines/types/${s.type}`, `/builds/${s.clipBuild}`, `/history/${s.rated}`])
+			expect(await (await request(path, {}, NOT_ADMIN)).text(), path).toContain("666.66");
+		expect(await (await request(`/assemblies/${s.clipAssembly}/explode?format=csv`, {}, NOT_ADMIN)).text()).toContain(
+			"FDM printer,Machine time,machine,h,3.167,,,666.66,",
+		);
 
 		await letLowerRolesSeeCosts();
 		await setRole("operator");
