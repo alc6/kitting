@@ -161,7 +161,8 @@ Batch recipes, machines and machine time, and one-step runs, starting with 3D pr
 
 - [x] Batch recipes: an assembly makes N units (migration 0006, default 1), lines are for the whole batch; explosion,
       pick lists, completion and shortages take line × units / batch, rounded up per line; costs per unit
-- [x] Builds of any quantity, entered in units or batches; batch on drafts only, copied into revisions and variants
+- [x] Builds of any quantity, entered in units or batches; batch on drafts only (since D153: edited with the lines),
+      copied into revisions and variants
 - [x] Machine types with an hourly rate (its own append-only history) and the machines owned, with a status; Machines
       page, `machines.edit` (planner), rates hidden without `costs.view` (migration 0007, new tables only)
 - [x] Machine time per batch on a recipe, in the cost roll-up, as-built record, valuation (dated), margins and margin
@@ -191,7 +192,8 @@ Making something in-house as one flow, from the part outwards (D153–D157); no 
 - Reservations of stock for planned builds; build scheduling.
 - PDF purchase orders.
 - Product images in the assembly diagram and on build pick lists; a purge of images orphaned by a restore.
-- Multi-level "build all missing sub-assemblies" helper from the shortage list.
+- A "plan all" button on To make (D156 lists what to make; one build per row today, as build numbers are assigned
+  one at a time).
 - Where-used diagram (the assembly diagram reversed) on the part page; SVG/PDF export of diagrams.
 - Choose one valuation method once the accountant decides (D91), and drop the deprecated `parts` supplier columns
   in a planned table rebuild.

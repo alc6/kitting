@@ -90,11 +90,10 @@ up with exactly the components listed for it.
 - Importing an assembly as `active` archives the active revision of the same variant.
 - `sale_price`, one value per assembly, is that variant's selling price. It overrides the part's.
 - `batch_qty`, one value per assembly, is how many units of `parent_ref` one batch makes (for example the 24 parts of a
-  print plate). The `qty` of its rows are then the quantities for the whole batch. Empty means 1. It cannot change on an
-  assembly that is already active: import a new revision instead.
+  print plate). The `qty` of its rows are then the quantities for the whole batch. Empty means 1. Like the rows, it may
+  change an assembly that is already active.
 - `machine` and `machine_minutes`, one value per assembly, are the machine time of one batch: the name of a machine
-  type and whole minutes (190 for 3 h 10). Give both, or neither. Like `batch_qty`, they cannot change on an active
-  assembly.
+  type and whole minutes (190 for 3 h 10). Give both, or neither. They follow the same rule as `batch_qty`.
 
 ## stock.csv
 
