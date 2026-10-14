@@ -627,6 +627,15 @@ export const fr: Dict = {
 			"Sort du stock ce qu’il a consommé et entre le produit en stock, aujourd’hui. Les sous-ensembles sont pris en stock s’il y en a assez, les autres sont fabriqués avec.",
 		whenPlanned: "À fabriquer : le planifier",
 		whenPlannedHint: "Apparaît dans ce qu’il faut fabriquer et acheter ; terminez-le depuis sa page une fois fait.",
+		toMake: "À fabriquer",
+		toMakeIntro:
+			"Articles fabriqués dont les fabrications prévues ont besoin, au-delà du stock et de ce qui est déjà planifié, arrondis au lot entier. Les plus profonds d’abord : fabriquez-les avant ce qui les utilise.",
+		toBuyLink: "{n} article(s) à acheter →",
+		shortQty: "Manque",
+		plannedQty: "Planifié",
+		toMakeQty: "À fabriquer",
+		forBuilds: "Pour",
+		made: "Fait",
 		emptyHint: "Planifiez une fabrication pour obtenir sa liste de prélèvement.",
 		source: "Origine",
 		toPick: "Composants à prélever",
@@ -645,6 +654,7 @@ export const fr: Dict = {
 		tabs: { shortages: "Manquants", pos: "Commandes" },
 		shortagesIntro:
 			"À commander pour les {n} fabrication(s) prévues et en cours : besoin − stock − en commande, arrondi au MOQ et au conditionnement.",
+		toMakeLink: "Et {n} article(s) fabriqué(s) à faire pour ces fabrications : voir Fabrications →",
 		noShortages: "Aucun manquant : le stock et les commandes en cours couvrent toutes les fabrications.",
 		need: "Besoin",
 		onHand: "En stock",

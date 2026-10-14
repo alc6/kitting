@@ -611,6 +611,15 @@ export const en = {
 			"Takes what it used from stock and adds it to stock, today. Sub-assemblies come from stock when there are enough, the others are built with it.",
 		whenPlanned: "To make: plan it",
 		whenPlannedHint: "Appears in what to make and to buy; complete it from its page once made.",
+		toMake: "To make",
+		toMakeIntro:
+			"Made parts the planned builds need, beyond stock and what is already planned, rounded up to whole runs. Deepest first: make them before what uses them.",
+		toBuyLink: "{n} part(s) to buy →",
+		shortQty: "Short",
+		plannedQty: "Planned",
+		toMakeQty: "To make",
+		forBuilds: "For",
+		made: "Made",
 		emptyHint: "Plan a build to get its pick list.",
 		source: "Source",
 		toPick: "Components to pick",
@@ -629,6 +638,7 @@ export const en = {
 		tabs: { shortages: "Shortages", pos: "Purchase orders" },
 		shortagesIntro:
 			"What to order for the {n} planned and in-progress build(s): need − on hand − on order, rounded up to MOQ and pack size.",
+		toMakeLink: "And {n} made part(s) to make for these builds: see Builds →",
 		noShortages: "No shortages: every open build is covered by stock and open orders.",
 		need: "Need",
 		onHand: "On hand",

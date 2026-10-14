@@ -53,7 +53,6 @@ import type { AppEnv } from "../types";
 import { type AppView, useApp } from "../views/context";
 import { RecordTabs } from "../views/history";
 import { Icon, icons } from "../views/icons";
-import { MachineLoadCard } from "../views/machines";
 import { PartPicker, PartPickerDialog } from "../views/part-picker";
 import { idParam, notFound, nowIso, page, redirectOk, saveChanges, translateErrors } from "../views/render";
 import {
@@ -334,6 +333,11 @@ purchasingRoutes.get("/", async (c) => {
 			<PurchasingTabs active="shortages" />
 			<div class="mb-4 flex max-w-3xl flex-col gap-1 text-sm text-muted-foreground">
 				<p>{fmt(t.purchasing.shortagesIntro, { n: shortages.buildCount })}</p>
+				{shortages.toMake.length > 0 ? (
+					<p>
+						<a href="/builds#to-make">{fmt(t.purchasing.toMakeLink, { n: shortages.toMake.length })}</a>
+					</p>
+				) : null}
 				{choosing ? <p>{t.purchasing.orderFromHint}</p> : null}
 			</div>
 			{shortages.groups.length === 0 && shortages.missingAssemblies.length === 0 ? (
@@ -349,11 +353,6 @@ purchasingRoutes.get("/", async (c) => {
 					) : null}
 				</form>
 			)}
-			{shortages.machines.length ? (
-				<div class="mt-6">
-					<MachineLoadCard rows={shortages.machines} />
-				</div>
-			) : null}
 		</>,
 	);
 });

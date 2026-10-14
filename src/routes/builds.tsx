@@ -34,6 +34,7 @@ import {
 } from "../domain/builds";
 import { buildActualCost, marginOf, salePriceOf } from "../domain/margins";
 import { can } from "../domain/permissions";
+import { computeShortages, type ToMakeLine } from "../domain/purchasing";
 import { onHandAt, serialsInStock } from "../domain/stock";
 import { errorText, fmt } from "../i18n";
 import { cn } from "../lib/cn";
@@ -47,13 +48,14 @@ import {
 	MILLI,
 	machineMillicents,
 	mulDivRound,
+	type NumberLocale,
 } from "../lib/units";
 import { type FieldErrors, validate } from "../lib/validation";
 import { forbidden, requirePermission } from "../middleware/roles";
 import type { AppEnv } from "../types";
 import { useApp } from "../views/context";
 import { Icon, icons } from "../views/icons";
-import { MachineTimeCard } from "../views/machines";
+import { Duration, MachineLoadCard, MachineTimeCard } from "../views/machines";
 import { idParam, notFound, nowIso, page, redirectOk, saveChanges, translateErrors } from "../views/render";
 import {
 	Alert,
@@ -87,6 +89,7 @@ import {
 	shortDateTime,
 	Table,
 	TableBody,
+	TableCard,
 	TableCell,
 	TableFooter,
 	TableHead,
@@ -163,11 +166,124 @@ export function BuildsTable(props: { rows: BuildRow[] }) {
 	);
 }
 
+/** A link to the new build form, prefilled with a part to make (D156). */
+function toMakeHref(l: ToMakeLine, when: "done" | "planned", locale: NumberLocale): string {
+	const q = new URLSearchParams({
+		part: String(l.part.id),
+		assembly_id: String(l.assembly.id),
+		qty: formatQtyInput(l.toMakeMilli, locale),
+		when,
+	});
+	return `/builds/new?${q}`;
+}
+
+/**
+ * What to make for the open builds (D156): made parts neither in stock nor planned, deepest first, rounded up to whole
+ * runs, with their machine time; each can be planned or recorded from here. What to buy stays on Purchasing.
+ */
+function ToMakeCard(props: { lines: ToMakeLine[]; toBuy: number }) {
+	const view = useApp();
+	const { t, locale } = view;
+	const canPlan = can(view, "builds.plan");
+	const canRecord = canPlan && can(view, "builds.complete");
+	return (
+		<TableCard
+			id="to-make"
+			title={
+				<span class="inline-flex items-center gap-2">
+					<Icon icon={icons.factory} class="size-4" />
+					{t.builds.toMake}
+				</span>
+			}
+			action={
+				props.toBuy > 0 ? (
+					<a href="/purchasing" class="text-sm">
+						{fmt(t.builds.toBuyLink, { n: props.toBuy })}
+					</a>
+				) : undefined
+			}
+		>
+			<p class="px-4 pt-3 text-sm text-muted-foreground">{t.builds.toMakeIntro}</p>
+			<Table>
+				<TableHeader>
+					<TableRow>
+						<TableHead>{t.builds.part}</TableHead>
+						<TableHead class="text-right">{t.builds.shortQty}</TableHead>
+						<TableHead class="text-right">{t.parts.onHand}</TableHead>
+						<TableHead class="text-right">{t.builds.plannedQty}</TableHead>
+						<TableHead class="text-right">{t.builds.toMakeQty}</TableHead>
+						<TableHead class="text-right">{t.machines.time}</TableHead>
+						<TableHead>{t.builds.forBuilds}</TableHead>
+						{canPlan ? (
+							<TableHead class="w-px">
+								<span class="sr-only">{t.common.actions}</span>
+							</TableHead>
+						) : null}
+					</TableRow>
+				</TableHeader>
+				<TableBody>
+					{props.lines.map((l) => (
+						<TableRow>
+							<TableCell>
+								<div class="flex flex-wrap items-center gap-x-2">
+									<a href={`/parts/${l.part.id}#how-its-made`}>{l.part.ref}</a>
+									<span class="text-muted-foreground">{l.part.name}</span>
+								</div>
+							</TableCell>
+							<TableCell class="text-right">
+								<Qty milli={l.shortMilli} unit={l.part.unit} />
+							</TableCell>
+							<TableCell class="text-right">
+								<Qty milli={l.onHandMilli} unit={l.part.unit} />
+							</TableCell>
+							<TableCell class="text-right">
+								<Qty milli={l.plannedMilli} unit={l.part.unit} />
+							</TableCell>
+							<TableCell class="text-right">
+								<div class="font-semibold">
+									<Qty milli={l.toMakeMilli} unit={l.part.unit} />
+								</div>
+								{l.assembly.batchMilli !== MILLI ? (
+									<div class="text-xs text-muted-foreground">{fmt(t.builds.batches, { n: l.runs })}</div>
+								) : null}
+							</TableCell>
+							<TableCell class="text-right whitespace-nowrap">
+								{l.machine ? (
+									<>
+										<Duration minutesMilli={l.machine.minutesMilli} />
+										<div class="text-xs text-muted-foreground">{l.machine.machineType.name}</div>
+									</>
+								) : null}
+							</TableCell>
+							<TableCell class="text-muted-foreground">{l.builds.join(", ")}</TableCell>
+							{canPlan ? (
+								<TableCell class="py-1">
+									<div class="flex justify-end gap-1.5">
+										<Button href={toMakeHref(l, "planned", locale)} variant="outline" size="sm">
+											{t.parts.planBuild}
+										</Button>
+										{canRecord ? (
+											<Button href={toMakeHref(l, "done", locale)} variant="ghost" size="sm" icon={icons.check}>
+												{t.builds.made}
+											</Button>
+										) : null}
+									</div>
+								</TableCell>
+							) : null}
+						</TableRow>
+					))}
+				</TableBody>
+			</Table>
+		</TableCard>
+	);
+}
+
 buildRoutes.get("/", async (c) => {
 	const t = c.var.t;
 	const q = c.req.query("q") ?? "";
 	const status = c.req.query("status") ?? "open";
-	const rows = await listBuilds(c.var.db, { q, status });
+	const [rows, shortages] = await Promise.all([listBuilds(c.var.db, { q, status }), computeShortages(c.var.db)]);
+	const toBuy = shortages.groups.reduce((n, g) => n + g.lines.length, 0);
 	const canBuild = can(c.var, "builds.plan");
 	return page(
 		c,
@@ -179,6 +295,12 @@ buildRoutes.get("/", async (c) => {
 				actions={canBuild ? <LinkButton href="/builds/new" label={t.builds.new} icon={icons.plus} /> : undefined}
 			/>
 			<Flash ok={c.req.query("ok")} message={c.req.query("ok") === "cancelled" ? t.builds.cancelled : undefined} />
+			{shortages.toMake.length > 0 || shortages.machines.length > 0 ? (
+				<div class="mb-6 flex flex-col gap-4">
+					{shortages.toMake.length > 0 ? <ToMakeCard lines={shortages.toMake} toBuy={toBuy} /> : null}
+					{shortages.machines.length > 0 ? <MachineLoadCard rows={shortages.machines} /> : null}
+				</div>
+			) : null}
 			<SearchBar action="/builds" q={q}>
 				<select name="status" aria-label={t.builds.status} class="w-auto flex-[0_1_220px]">
 					<option value="open">{t.builds.statusFilter.open}</option>

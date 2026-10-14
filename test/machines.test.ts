@@ -306,7 +306,8 @@ describe("machine time in builds and plans", () => {
 			["FDM printer", 459_167, 2, ["B-0001", "B-0002"]],
 		]);
 		// 460 min = 7 h 40, i.e. 3 h 50 on each of the 2 printers in service (PRINTER-3 is under maintenance).
-		const page = await (await request("/purchasing")).text();
+		// With what to make on the Builds page (D156).
+		const page = await (await request("/builds")).text();
 		expect(page).toContain('id="machine-load"');
 		expect(page).toContain("7 h 40");
 		expect(page).toContain("3 h 50 per machine in service");

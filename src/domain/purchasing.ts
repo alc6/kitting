@@ -18,7 +18,14 @@ import { lineCostCents, MILLI, parseMilli, roundOrderQty } from "../lib/units";
 import { type FieldErrors, field } from "../lib/validation";
 import type { Db } from "../types";
 import { loadGraph } from "./assemblies";
-import { explode, type GraphMachineType, type GraphPart } from "./assembly-graph";
+import {
+	defaultAssembly,
+	explode,
+	type GraphMachineType,
+	type GraphPart,
+	machineNeed,
+	walkTree,
+} from "./assembly-graph";
 import { OPEN_STATUSES } from "./builds";
 import { NO_TERMS, type OfferTerms, offersByPart, poUnitPrice } from "./offers";
 import { moveValues, onHandAt } from "./stock";
@@ -73,8 +80,33 @@ export type MachineLoad = {
 	builds: string[];
 };
 
+/**
+ * A made part the open builds need but that is neither in stock nor planned (D156): what to make, before what to buy.
+ * Sub-assemblies built inside their parent's build show here too, so making them ahead is one click.
+ */
+export type ToMakeLine = {
+	part: GraphPart;
+	/** The assembly a build of it would use (its default active one): its batch and machine time. */
+	assembly: { id: number; code: string; revision: string; batchMilli: number };
+	/** Short: needed by the open builds and covered neither by stock nor by planned builds of it. */
+	shortMilli: number;
+	onHandMilli: number;
+	/** Output of its own open builds (planned and in progress). */
+	plannedMilli: number;
+	/** Short, rounded up to whole runs of its assembly (D145). */
+	toMakeMilli: number;
+	runs: number;
+	/** Machine time of `toMakeMilli` on its machine type, or null. */
+	machine: { machineType: GraphMachineType; minutesMilli: number } | null;
+	/** Depth below the builds that need it (0 = a direct component): deeper parts are made first. */
+	depth: number;
+	builds: string[];
+};
+
 export type Shortages = {
 	groups: SupplierGroup[];
+	/** Made parts to make for the open builds, deepest first (D156). */
+	toMake: ToMakeLine[];
 	/** Make/kit parts that must be built for open builds but have no active assembly. */
 	missingAssemblies: { ref: string; name: string; qtyMilli: number; builds: string[] }[];
 	/** Machine time of the open builds, per machine type (sub-assemblies taken from stock need none). */
@@ -99,7 +131,8 @@ export async function onOrderMap(db: Db): Promise<Map<number, number>> {
 /**
  * Shortages for all planned and in-progress builds:
  * 1. explode every open build (earliest planned first), sharing sub-assembly stock so two builds
- *    never take the same units;
+ *    never take the same units; the output of open builds counts as stock to come (D156), so a sub-assembly planned
+ *    on its own is not built a second time inside its parent;
  * 2. for buy parts: net = need − on-hand − on order (make parts taken from stock are already covered);
  * 3. round up to MOQ and pack size; group by supplier.
  * Parts already below zero count as a need of their deficit.
@@ -110,7 +143,12 @@ export async function computeShortages(db: Db): Promise<Shortages> {
 		onHandAt(db),
 		onOrderMap(db),
 		db
-			.select({ number: builds.number, assemblyId: builds.assemblyId, qtyMilli: builds.qtyMilli })
+			.select({
+				number: builds.number,
+				partId: builds.partId,
+				assemblyId: builds.assemblyId,
+				qtyMilli: builds.qtyMilli,
+			})
 			.from(builds)
 			.where(inArray(builds.status, OPEN_STATUSES))
 			.orderBy(sql`${builds.plannedFor} IS NULL`, asc(builds.plannedFor), asc(builds.id)),
@@ -123,7 +161,12 @@ export async function computeShortages(db: Db): Promise<Shortages> {
 			.groupBy(machines.machineTypeId),
 	]);
 	const preferredSupplier = new Map(partRows.map((p) => [p.id, p.supplierId]));
+	// Stock to come from the open builds (D156): what they will make is available to the builds that need it.
+	const planned = new Map<number, number>();
+	for (const b of open) planned.set(b.partId, (planned.get(b.partId) ?? 0) + b.qtyMilli);
 	const available = new Map(onHand);
+	for (const [partId, qty] of planned) available.set(partId, Math.max(0, available.get(partId) ?? 0) + qty);
+	const toMake = new Map<number, { qty: number; depth: number; builds: Set<string> }>();
 	const need = new Map<number, { qty: number; builds: Set<string> }>();
 	const missing = new Map<number, { qty: number; builds: Set<string> }>();
 	const add = (into: typeof need, partId: number, qty: number, build: string) => {
@@ -136,6 +179,14 @@ export async function computeShortages(db: Db): Promise<Shortages> {
 	const activeOf = new Map(active.map((a) => [a.typeId, a.n]));
 	for (const b of open) {
 		const ex = explode(graph, b.assemblyId, b.qtyMilli, { available });
+		for (const node of walkTree(ex.tree)) {
+			if (node.part.kind !== "make" || node.toBuildMilli <= 0 || node.mode === "missing_assembly") continue;
+			const e = toMake.get(node.part.id) ?? { qty: 0, depth: node.depth, builds: new Set<string>() };
+			e.qty += node.toBuildMilli;
+			e.depth = Math.max(e.depth, node.depth);
+			e.builds.add(b.number);
+			toMake.set(node.part.id, e);
+		}
 		for (const r of ex.requirements) {
 			if (r.missingAssembly) add(missing, r.part.id, r.qtyMilli, b.number);
 			else if (r.part.kind === "buy") add(need, r.part.id, r.qtyMilli, b.number);
@@ -203,8 +254,34 @@ export async function computeShortages(db: Db): Promise<Shortages> {
 		a.supplierId === null ? 1 : b.supplierId === null ? -1 : a.supplierName.localeCompare(b.supplierName),
 	);
 	for (const g of sorted) g.lines.sort((a, b) => a.part.ref.localeCompare(b.part.ref));
+	const toMakeLines: ToMakeLine[] = [];
+	for (const [partId, m] of toMake) {
+		const part = graph.parts.get(partId);
+		const assembly = defaultAssembly(graph, partId);
+		if (!part || !assembly) continue;
+		const runs = Math.ceil(m.qty / assembly.batchMilli);
+		const toMakeMilli = assembly.batchMilli === MILLI ? m.qty : runs * assembly.batchMilli;
+		const machineType =
+			assembly.machineTypeId !== null && assembly.machineMinutes > 0
+				? graph.machineTypes.get(assembly.machineTypeId)
+				: undefined;
+		toMakeLines.push({
+			part,
+			assembly: { id: assembly.id, code: assembly.code, revision: assembly.revision, batchMilli: assembly.batchMilli },
+			shortMilli: m.qty,
+			onHandMilli: onHand.get(partId) ?? 0,
+			plannedMilli: planned.get(partId) ?? 0,
+			toMakeMilli,
+			runs,
+			machine: machineType ? { machineType, minutesMilli: machineNeed(assembly, toMakeMilli) } : null,
+			depth: m.depth,
+			builds: [...m.builds],
+		});
+	}
+	toMakeLines.sort((a, b) => b.depth - a.depth || a.part.ref.localeCompare(b.part.ref));
 	return {
 		groups: sorted,
+		toMake: toMakeLines,
 		missingAssemblies: [...missing].map(([partId, m]) => ({
 			ref: graph.parts.get(partId)?.ref ?? String(partId),
 			name: graph.parts.get(partId)?.name ?? "",
