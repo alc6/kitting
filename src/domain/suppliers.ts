@@ -27,7 +27,9 @@ export async function listSuppliers(db: Db, q = "") {
 			name: suppliers.name,
 			email: suppliers.email,
 			phone: suppliers.phone,
-			partCount: sql<number>`(SELECT count(*) FROM parts WHERE parts.supplier_id = ${suppliers.id} AND parts.archived = 0)`,
+			// Names the outer table explicitly: in a select without joins Drizzle renders ${suppliers.id} unqualified,
+			// which inside the subquery would mean parts.id.
+			partCount: sql<number>`(SELECT count(*) FROM parts WHERE parts.supplier_id = suppliers.id AND parts.archived = 0)`,
 		})
 		.from(suppliers)
 		.where(where)

@@ -1,5 +1,18 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { insertMove, insertPart, insertSupplier, NOT_ADMIN, one, postForm, request, rows, setRole } from "./helpers";
+import { listSuppliers } from "../src/domain/suppliers";
+import {
+	insertMove,
+	insertPart,
+	insertSupplier,
+	loadDemo,
+	NOT_ADMIN,
+	one,
+	postForm,
+	request,
+	rows,
+	setRole,
+	testDb,
+} from "./helpers";
 
 // NOT_ADMIN requests run as a planner, so admin-only actions are refused by requireAdmin itself.
 beforeEach(() => setRole("planner"));
@@ -56,6 +69,17 @@ describe("suppliers", () => {
 		const res = await postForm(`/suppliers/${s}/delete`, {});
 		expect(res.headers.get("Location")).toBe(`/suppliers/${s}?err=in_use`);
 		expect(await rows("SELECT id FROM suppliers")).toHaveLength(1);
+	});
+
+	it("counts the active parts each supplier is the preferred supplier of", async () => {
+		await loadDemo({ stock: false });
+		const list = await listSuppliers(testDb());
+		expect(list.find((s) => s.name === "Bolt & Nut Depot")?.partCount).toBe(6);
+		const expected = await rows<{ name: string; partCount: number }>(
+			`SELECT s.name, count(p.id) AS partCount FROM suppliers s
+				LEFT JOIN parts p ON p.supplier_id = s.id AND p.archived = 0 GROUP BY s.id ORDER BY s.name`,
+		);
+		expect(list.map((s) => ({ name: s.name, partCount: s.partCount }))).toEqual(expected);
 	});
 });
 
