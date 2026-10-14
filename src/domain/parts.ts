@@ -250,7 +250,8 @@ export async function hasAssemblies(db: Db, partId: number): Promise<boolean> {
 	return rows.length > 0;
 }
 
-export const onHandSql = sql<number>`(SELECT COALESCE(SUM(sm.qty_milli), 0) FROM stock_moves sm WHERE sm.part_id = ${parts.id})`;
+// Names the outer table explicitly: a select without joins would render ${parts.id} unqualified, as sm.id.
+export const onHandSql = sql<number>`(SELECT COALESCE(SUM(sm.qty_milli), 0) FROM stock_moves sm WHERE sm.part_id = parts.id)`;
 
 export type PartFilters = { q?: string; kind?: string; supplierId?: number | null; archived?: boolean };
 
