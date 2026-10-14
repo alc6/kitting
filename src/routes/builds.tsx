@@ -176,14 +176,7 @@ buildRoutes.get("/", async (c) => {
 			<PageHeader
 				title={t.builds.title}
 				subtitle={t.builds.intro}
-				actions={
-					<>
-						{canBuild && can(c.var, "builds.complete") ? (
-							<LinkButton href="/builds/record" label={t.builds.record} icon={icons.check} variant="outline" />
-						) : null}
-						{canBuild ? <LinkButton href="/builds/new" label={t.builds.new} icon={icons.plus} /> : null}
-					</>
-				}
+				actions={canBuild ? <LinkButton href="/builds/new" label={t.builds.new} icon={icons.plus} /> : undefined}
 			/>
 			<Flash ok={c.req.query("ok")} message={c.req.query("ok") === "cancelled" ? t.builds.cancelled : undefined} />
 			<SearchBar action="/builds" q={q}>
@@ -269,18 +262,31 @@ export function BuildQtyField(props: {
 	);
 }
 
-/** The new build form; `record` makes it the form of a finished build (D152): no planned date, done now. */
+/** When a new build happens (D155): already made, recorded now (D152), or to make, planned. */
+type When = "done" | "planned";
+
+/** The when of a submitted or requested form: done only for those who may complete builds. */
+function whenOf(value: unknown, canRecord: boolean): When {
+	if (value === "planned") return "planned";
+	if (value === "done") return canRecord ? "done" : "planned";
+	return canRecord ? "done" : "planned";
+}
+
+/**
+ * The one build form (D155): a product, its variant and quantity, and whether it is already made (recorded now, in one
+ * step) or to make (planned for a date). The product select reloads the form (htmx, or the Choose button without it).
+ */
 function NewBuildForm(props: {
 	values: FormValues;
 	errors: FormErrors;
 	products: { id: number; ref: string; name: string }[];
 	product: Part | undefined;
 	assemblyOptions: AssemblyOption[];
-	record?: boolean;
 }) {
-	const { t } = useApp();
+	const view = useApp();
+	const { t } = view;
 	const p = { values: props.values, errors: props.errors };
-	const base = props.record ? "/builds/record" : "/builds/new";
+	const base = "/builds/new";
 	const reload = {
 		"hx-get": base,
 		"hx-include": "closest form",
@@ -288,17 +294,14 @@ function NewBuildForm(props: {
 		"hx-select": "#build-form",
 		"hx-swap": "outerHTML",
 	};
+	const canRecord = can(view, "builds.complete");
+	const when = whenOf(props.values.when, canRecord);
 	const partError = props.errors.part_id;
 	const ready = props.product !== undefined && props.assemblyOptions.length > 0;
 	return (
 		<Card class="max-w-3xl">
 			<CardContent>
-				<form
-					method="post"
-					action={props.record ? "/builds/record" : "/builds"}
-					class="flex flex-col gap-6"
-					id="build-form"
-				>
+				<form method="post" action="/builds" class="flex flex-col gap-6" id="build-form">
 					{Object.keys(props.errors).length > 0 ? (
 						<Alert variant="destructive" class="mb-0">
 							{t.common.fixErrors}
@@ -343,11 +346,52 @@ function NewBuildForm(props: {
 								<Alert variant="warning" class="mb-0">
 									<p>
 										{t.builds.noActiveAssembly}{" "}
-										<a href={`/assemblies/new?part=${props.product.id}`}>{t.assemblies.new}</a>
+										<a href={`/parts/${props.product.id}#how-its-made`}>{t.parts.howItsMade}</a>
 									</p>
 								</Alert>
 							) : (
 								<>
+									<fieldset class="m-0 flex min-w-0 flex-col gap-3 border-0 p-0">
+										<legend class="mb-2 text-sm font-medium">{t.builds.when}</legend>
+										<div class="grid gap-3 md:grid-cols-2">
+											<label
+												class={cn(
+													"flex cursor-pointer items-start gap-3 rounded-lg border p-4 has-[:checked]:border-primary has-[:checked]:bg-primary/5",
+													!canRecord && "cursor-not-allowed opacity-60",
+												)}
+											>
+												<input
+													type="radio"
+													name="when"
+													value="done"
+													checked={when === "done"}
+													disabled={!canRecord}
+													class="mt-1"
+												/>
+												<span class="flex flex-col gap-1">
+													<span class="font-medium">{t.builds.whenDone}</span>
+													<span class="text-sm text-muted-foreground">{t.builds.whenDoneHint}</span>
+												</span>
+											</label>
+											<label class="flex cursor-pointer items-start gap-3 rounded-lg border p-4 has-[:checked]:border-primary has-[:checked]:bg-primary/5">
+												<input type="radio" name="when" value="planned" checked={when === "planned"} class="mt-1" />
+												<span class="flex min-w-0 flex-1 flex-col gap-2">
+													<span class="font-medium">{t.builds.whenPlanned}</span>
+													<span class="text-sm text-muted-foreground">{t.builds.whenPlannedHint}</span>
+													<input
+														id="f-planned_for"
+														data-slot="input"
+														type="date"
+														name="planned_for"
+														value={props.values.planned_for ?? ""}
+														aria-label={t.builds.plannedFor}
+														aria-invalid={props.errors.planned_for ? "true" : undefined}
+													/>
+													<FieldError id="e-planned_for">{props.errors.planned_for}</FieldError>
+												</span>
+											</label>
+										</div>
+									</fieldset>
 									<div class="grid gap-4 md:grid-cols-2">
 										<SelectField
 											name="assembly_id"
@@ -367,9 +411,6 @@ function NewBuildForm(props: {
 											required={props.product.trackSerial}
 											{...p}
 										/>
-										{props.record ? null : (
-											<TextField name="planned_for" label={t.builds.plannedFor} type="date" {...p} />
-										)}
 									</div>
 									<TextArea name="notes" label={t.common.notes} {...p} />
 								</>
@@ -378,11 +419,7 @@ function NewBuildForm(props: {
 					</FieldGroup>
 					{ready ? (
 						<div class="flex flex-wrap items-center gap-2">
-							{props.record ? (
-								<Button icon={icons.check}>{t.builds.recordSubmit}</Button>
-							) : (
-								<Button icon={icons.plus}>{t.common.create}</Button>
-							)}
+							<Button icon={icons.check}>{t.common.save}</Button>
 							<Button href="/builds" variant="outline">
 								{t.common.cancel}
 							</Button>
@@ -391,6 +428,31 @@ function NewBuildForm(props: {
 				</form>
 			</CardContent>
 		</Card>
+	);
+}
+
+/** The new build page: the form, and why a build already made could not be recorded in one step (D152). */
+function NewBuildPage(props: {
+	values: FormValues;
+	errors: FormErrors;
+	problems?: string[];
+	data: Awaited<ReturnType<typeof newBuildData>>;
+}) {
+	const { t } = useApp();
+	return (
+		<>
+			<PageHeader title={t.builds.new} subtitle={t.builds.newIntro} />
+			{props.problems?.length ? (
+				<Alert variant="destructive" title={t.builds.recordRefused}>
+					<ul class="m-0 flex list-disc flex-col gap-1 pl-4">
+						{props.problems.map((p) => (
+							<li>{p}</li>
+						))}
+					</ul>
+				</Alert>
+			) : null}
+			<NewBuildForm values={props.values} errors={props.errors} {...props.data} />
+		</>
 	);
 }
 
@@ -403,26 +465,36 @@ async function newBuildData(c: Context<AppEnv>, partId: number | null) {
 	return { products, ...(await buildableProduct(c.var.db, partId)) };
 }
 
+/** The form's first values: quantity 1 and the std variant (else the first active one), unless the query says. */
+function newBuildValues(q: Record<string, string>, partId: number | null, options: AssemblyOption[]): FormValues {
+	const std = options.find((b) => b.code === "std") ?? options[0];
+	return {
+		qty: "1",
+		...q,
+		part_id: partId ? String(partId) : "",
+		assembly_id:
+			q.assembly_id && options.some((b) => String(b.id) === q.assembly_id) ? q.assembly_id : std ? String(std.id) : "",
+	};
+}
+
 buildRoutes.get("/new", requirePermission("builds.plan"), async (c) => {
-	const t = c.var.t;
 	const q = c.req.query();
 	const partId = /^\d+$/.test(q.part_id ?? q.part ?? "") ? Number(q.part_id ?? q.part) : null;
 	const data = await newBuildData(c, partId);
 	const values = newBuildValues(q, partId, data.assemblyOptions);
-	return page(
-		c,
-		t.builds.new,
-		<>
-			<PageHeader title={t.builds.new} subtitle={t.builds.newIntro} />
-			<NewBuildForm values={values} errors={{}} {...data} />
-		</>,
-	);
+	values.when = whenOf(q.when, can(c.var, "builds.complete"));
+	return page(c, c.var.t.builds.new, <NewBuildPage values={values} errors={{}} data={data} />);
 });
 
+// One form for a new build (D155): already made (recorded now) or to make (planned).
 buildRoutes.post("/", requirePermission("builds.plan"), async (c) => {
+	const body = await c.req.parseBody();
+	if (body.when === "done") {
+		if (!can(c.var, "builds.complete")) return forbidden(c);
+		return recordBuild(c, body);
+	}
 	const t = c.var.t;
 	const db = c.var.db;
-	const body = await c.req.parseBody();
 	const v = validate(buildInput, body);
 	const errors: FieldErrors = v.ok ? {} : { ...v.errors };
 	const partId = v.ok ? v.data.part_id : null;
@@ -433,10 +505,11 @@ buildRoutes.post("/", requirePermission("builds.plan"), async (c) => {
 		return page(
 			c,
 			t.builds.new,
-			<>
-				<PageHeader title={t.builds.new} subtitle={t.builds.newIntro} />
-				<NewBuildForm values={body as FormValues} errors={translateErrors(c, errors)} {...data} />
-			</>,
+			<NewBuildPage
+				values={{ ...(body as FormValues), when: "planned" }}
+				errors={translateErrors(c, errors)}
+				data={data}
+			/>,
 			422,
 		);
 	}
@@ -470,61 +543,11 @@ buildRoutes.post("/", requirePermission("builds.plan"), async (c) => {
 });
 
 // ---------------------------------------------------------------------------
-// Record a finished build in one step (D152)
+// Record a finished build in one step (D152): planned and completed in one change set, which needs both rights.
 
-/** The form's first values: quantity 1 and the std variant (else the first active one), unless the query says. */
-function newBuildValues(q: Record<string, string>, partId: number | null, options: AssemblyOption[]): FormValues {
-	const std = options.find((b) => b.code === "std") ?? options[0];
-	return {
-		qty: "1",
-		...q,
-		part_id: partId ? String(partId) : "",
-		assembly_id:
-			q.assembly_id && options.some((b) => String(b.id) === q.assembly_id) ? q.assembly_id : std ? String(std.id) : "",
-	};
-}
-
-function RecordPage(props: {
-	values: FormValues;
-	errors: FormErrors;
-	problems?: string[];
-	data: Awaited<ReturnType<typeof newBuildData>>;
-}) {
-	const { t } = useApp();
-	return (
-		<>
-			<PageHeader title={t.builds.record} subtitle={t.builds.recordIntro} />
-			{props.problems?.length ? (
-				<Alert variant="destructive" title={t.builds.recordRefused}>
-					<ul class="m-0 flex list-disc flex-col gap-1 pl-4">
-						{props.problems.map((p) => (
-							<li>{p}</li>
-						))}
-					</ul>
-				</Alert>
-			) : null}
-			<NewBuildForm values={props.values} errors={props.errors} {...props.data} record />
-		</>
-	);
-}
-
-buildRoutes.get("/record", requirePermission("builds.complete"), async (c) => {
-	const q = c.req.query();
-	const partId = /^\d+$/.test(q.part_id ?? q.part ?? "") ? Number(q.part_id ?? q.part) : null;
-	const data = await newBuildData(c, partId);
-	return page(
-		c,
-		c.var.t.builds.record,
-		<RecordPage values={newBuildValues(q, partId, data.assemblyOptions)} errors={{}} data={data} />,
-	);
-});
-
-// Plans and completes in one change set: it needs both rights (both operator today).
-buildRoutes.post("/record", requirePermission("builds.complete"), async (c) => {
-	if (!can(c.var, "builds.plan")) return forbidden(c);
+async function recordBuild(c: Context<AppEnv>, body: Record<string, unknown>) {
 	const t = c.var.t;
 	const db = c.var.db;
-	const body = await c.req.parseBody();
 	const v = validate(buildInput, { ...body, planned_for: "" });
 	const errors: FieldErrors = v.ok ? {} : { ...v.errors };
 	const data = await newBuildData(c, v.ok ? v.data.part_id : null);
@@ -533,8 +556,13 @@ buildRoutes.post("/record", requirePermission("builds.complete"), async (c) => {
 	const refuse = (problems: string[] = []) =>
 		page(
 			c,
-			t.builds.record,
-			<RecordPage values={body as FormValues} errors={translateErrors(c, errors)} problems={problems} data={data} />,
+			t.builds.new,
+			<NewBuildPage
+				values={{ ...(body as FormValues), when: "done" }}
+				errors={translateErrors(c, errors)}
+				problems={problems}
+				data={data}
+			/>,
 			422,
 		);
 	if (!d || Object.keys(errors).length > 0 || !data.product) return refuse();
@@ -579,6 +607,18 @@ buildRoutes.post("/record", requirePermission("builds.complete"), async (c) => {
 			if (attempt > 0 || !isConstraintError(err, "UNIQUE")) throw err;
 		}
 	}
+}
+
+// The former record page is the new build form, already made (D155).
+buildRoutes.get("/record", requirePermission("builds.complete"), (c) => {
+	const q = new URLSearchParams(c.req.query());
+	q.set("when", "done");
+	return c.redirect(`/builds/new?${q}`, 302);
+});
+
+buildRoutes.post("/record", requirePermission("builds.complete"), async (c) => {
+	if (!can(c.var, "builds.plan")) return forbidden(c);
+	return recordBuild(c, await c.req.parseBody());
 });
 
 // ---------------------------------------------------------------------------

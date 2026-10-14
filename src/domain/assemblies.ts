@@ -15,7 +15,16 @@ import { likePattern } from "../lib/sql";
 import { MILLI } from "../lib/units";
 import { type FieldErrors, field, REF_PATTERN } from "../lib/validation";
 import type { Db } from "../types";
-import { type AssemblyGraph, buildGraph, CostCalculator, defaultAssembly } from "./assembly-graph";
+import {
+	type AssemblyGraph,
+	buildGraph,
+	type Cost,
+	CostCalculator,
+	defaultAssembly,
+	type GraphAssembly,
+	type GraphMachineType,
+	type GraphPart,
+} from "./assembly-graph";
 import { priceRecordStatement } from "./prices";
 
 export const assemblyInput = z.object({
@@ -585,6 +594,45 @@ export function isValidCode(code: string): boolean {
 	return REF_PATTERN.test(code);
 }
 
+/**
+ * How a made part is made, as its page shows it (D154): the assembly builds use (its default active one, else its newest
+ * draft) with its lines resolved, its machine step, and its cost per unit; the other active variants are listed by name.
+ */
+export type PartRecipe = {
+	assembly: GraphAssembly;
+	lines: { part: GraphPart; qtyMilli: number; notes: string }[];
+	machine: GraphMachineType | null;
+	unitCost: Cost;
+	otherVariants: { id: number; code: string; revision: string }[];
+};
+
+/** The assembly shown as a part's recipe: its default active one, else its newest draft (D154). */
+export function partRecipe(graph: AssemblyGraph, calc: CostCalculator, partId: number): PartRecipe | null {
+	const own = [...graph.assemblies.values()].filter((b) => b.parentPartId === partId);
+	const shown =
+		defaultAssembly(graph, partId) ??
+		own.filter((b) => b.status === "draft").sort((a, b) => b.id - a.id)[0] ??
+		undefined;
+	if (!shown) return null;
+	const lines = shown.lines.flatMap((l) => {
+		const part = graph.parts.get(l.componentPartId);
+		return part ? [{ part, qtyMilli: l.qtyMilli, notes: l.notes }] : [];
+	});
+	return {
+		assembly: shown,
+		lines,
+		machine:
+			shown.machineTypeId !== null && shown.machineMinutes > 0
+				? (graph.machineTypes.get(shown.machineTypeId) ?? null)
+				: null,
+		unitCost: calc.assembly(shown.id),
+		otherVariants: own
+			.filter((b) => b.status === "active" && b.id !== shown.id)
+			.sort((a, b) => a.code.localeCompare(b.code))
+			.map((b) => ({ id: b.id, code: b.code, revision: b.revision })),
+	};
+}
+
 /** Assemblies of a part with their unit cost, and the part's rolled-up cost (from its default assembly). */
 export async function partAssemblySummary(db: Db, partId: number) {
 	const [list, graph] = await Promise.all([
@@ -599,7 +647,9 @@ export async function partAssemblySummary(db: Db, partId: number) {
 	return {
 		assemblies: list.map((b) => ({ ...b, cost: calc.assembly(b.id) })),
 		rollup: defaultAssembly(graph, partId) ? calc.part(partId) : null,
+		recipe: partRecipe(graph, calc, partId),
 		refs: new Map([...graph.parts.values()].map((p) => [p.id, p.ref])),
+		machines: new Map([...graph.machineTypes.values()].map((m) => [m.id, m.name])),
 	};
 }
 

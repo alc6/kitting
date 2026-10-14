@@ -2,7 +2,16 @@ import { asc, desc, eq } from "drizzle-orm";
 import type { Context } from "hono";
 import { Hono } from "hono";
 import { PART_KINDS, type Part, type PartKind, parts, stockMoves, suppliers } from "../db/schema";
-import { partAssemblySummary, type WhereUsedRow, whereUsed } from "../domain/assemblies";
+import {
+	assemblyLabel,
+	createAssemblyStatements,
+	DEFAULT_CODE,
+	DEFAULT_REVISION,
+	findAssembly,
+	partAssemblySummary,
+	type WhereUsedRow,
+	whereUsed,
+} from "../domain/assemblies";
 import { type Cost, centsOf } from "../domain/assembly-graph";
 import { listBuilds } from "../domain/builds";
 import { type AverageCost, averageUnitCents } from "../domain/costing";
@@ -55,6 +64,7 @@ import { StepChart } from "../views/chart";
 import { useApp } from "../views/context";
 import { RecordTabs } from "../views/history";
 import { Icon, type IconNode, icons } from "../views/icons";
+import { Duration } from "../views/machines";
 import { idParam, notFound, nowIso, page, redirectOk, saveChanges, translateErrors } from "../views/render";
 import {
 	Alert,
@@ -529,6 +539,7 @@ function PartDetail(props: {
 						/>
 					) : null}
 				</div>
+				{p.kind === "make" || p.kind === "kit" ? <HowItsMade part={p} summary={props.assemblySummary} /> : null}
 				<div class="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
 					{props.imagesEnabled || p.imageKey ? (
 						<ImageCard part={p} enabled={props.imagesEnabled} />
@@ -587,10 +598,12 @@ function PartDetail(props: {
 						/>
 					) : null}
 				</div>
-				{stocked || props.offers.length > 0 ? (
+				{p.kind === "buy" || props.offers.length > 0 ? (
 					<OffersCard part={p} offers={props.offers} lastPaid={props.lastPaid} />
 				) : null}
-				{p.kind === "make" || p.kind === "kit" ? <PartAssemblies part={p} summary={props.assemblySummary} /> : null}
+				{(p.kind === "make" || p.kind === "kit") && props.assemblySummary.assemblies.length > 1 ? (
+					<PartAssemblies part={p} summary={props.assemblySummary} />
+				) : null}
 				{p.kind === "make" ? (
 					<Card>
 						<CardHeader>
@@ -1223,26 +1236,170 @@ function PriceHistoryCard(props: {
 	);
 }
 
+/**
+ * How a made part is made (D154): the recipe builds use (lines and machine time per run, cost per unit), with the
+ * actions that follow from it: record or plan a build, edit the recipe, or set one up in one click when there is none.
+ * The part's other variants and revisions are listed below when it has more than one.
+ */
+function HowItsMade(props: { part: Part; summary: Awaited<ReturnType<typeof partAssemblySummary>> }) {
+	const view = useApp();
+	const { t, seeCosts } = view;
+	const { part, summary } = props;
+	const { recipe } = summary;
+	const active = recipe?.assembly.status === "active";
+	const canPlan = part.kind === "make" && active && can(view, "builds.plan");
+	const canRecord = canPlan && can(view, "builds.complete");
+	return (
+		<Card id="how-its-made" class="gap-4">
+			<CardHeader>
+				<CardTitle icon={icons.factory}>{t.parts.howItsMade}</CardTitle>
+				<CardDescription>
+					{recipe ? (
+						<span class="inline-flex flex-wrap items-center gap-x-3 gap-y-1">
+							<a href={`/assemblies/${recipe.assembly.id}`}>
+								{recipe.assembly.code} · {recipe.assembly.revision}
+							</a>
+							{active ? null : <StatusBadge status={recipe.assembly.status} />}
+							<span>
+								{t.assemblies.makes} <Qty milli={recipe.assembly.batchMilli} unit={part.unit} /> {t.assemblies.perRun}
+							</span>
+							{recipe.machine ? (
+								<span class="inline-flex items-center gap-1">
+									<Icon icon={icons.timer} class="size-3.5" />
+									{recipe.machine.name} · <Duration minutesMilli={recipe.assembly.machineMinutes * MILLI} />{" "}
+									{t.assemblies.perRun}
+								</span>
+							) : null}
+							{seeCosts ? (
+								<span>
+									<CostView cost={recipe.unitCost} refs={summary.refs} machines={summary.machines} /> {t.parts.perUnit}
+								</span>
+							) : null}
+						</span>
+					) : (
+						t.parts.noRecipe
+					)}
+				</CardDescription>
+				<CardAction class="flex flex-wrap justify-end gap-2">
+					{canRecord ? (
+						<Button href={`/builds/new?part=${part.id}&when=done`} size="sm" icon={icons.check}>
+							{t.parts.recordBuild}
+						</Button>
+					) : null}
+					{canPlan ? (
+						<Button href={`/builds/new?part=${part.id}&when=planned`} variant="outline" size="sm" icon={icons.calendar}>
+							{t.parts.planBuild}
+						</Button>
+					) : null}
+					{recipe && recipe.lines.length > 0 ? (
+						<Button href={`/assemblies/${recipe.assembly.id}/diagram`} variant="outline" size="sm" icon={icons.diagram}>
+							{t.parts.openDiagram}
+						</Button>
+					) : null}
+					{recipe && can(view, "assemblies.edit") ? (
+						<Button
+							href={`/assemblies/${recipe.assembly.id}`}
+							variant={active ? "outline" : "default"}
+							size="sm"
+							icon={icons.pencil}
+						>
+							{t.common.edit}
+						</Button>
+					) : null}
+				</CardAction>
+			</CardHeader>
+			{recipe ? (
+				<>
+					{active ? null : (
+						<CardContent>
+							<p class="text-sm text-muted-foreground">{t.parts.recipeDraft}</p>
+						</CardContent>
+					)}
+					{recipe.lines.length > 0 || recipe.machine ? (
+						<CardContent class="px-2">
+							<Table>
+								<TableHeader>
+									<TableRow>
+										<TableHead>{t.parts.usesPerRun}</TableHead>
+										<TableHead>{t.parts.kind}</TableHead>
+										<TableHead class="text-right">{t.assemblies.qty}</TableHead>
+									</TableRow>
+								</TableHeader>
+								<TableBody>
+									{recipe.lines.map((l) => (
+										<TableRow>
+											<TableCell>
+												<div class="flex flex-wrap items-center gap-x-2">
+													<a href={`/parts/${l.part.id}`}>{l.part.ref}</a>
+													<span class="text-muted-foreground">{l.part.name}</span>
+												</div>
+												{l.notes ? <div class="text-xs text-muted-foreground">{l.notes}</div> : null}
+											</TableCell>
+											<TableCell>
+												<KindBadge kind={l.part.kind} />
+											</TableCell>
+											<TableCell class="text-right">
+												<Qty milli={l.qtyMilli} unit={l.part.unit} />
+											</TableCell>
+										</TableRow>
+									))}
+									{recipe.machine ? (
+										<TableRow>
+											<TableCell>
+												<span class="inline-flex items-center gap-2">
+													<Icon icon={icons.timer} class="size-4 text-muted-foreground" />
+													<a href={`/machines/types/${recipe.machine.id}`}>{recipe.machine.name}</a>
+												</span>
+											</TableCell>
+											<TableCell>
+												<Badge variant="outline">{t.machines.time}</Badge>
+											</TableCell>
+											<TableCell class="text-right">
+												<Duration minutesMilli={recipe.assembly.machineMinutes * MILLI} />
+											</TableCell>
+										</TableRow>
+									) : null}
+								</TableBody>
+							</Table>
+						</CardContent>
+					) : null}
+					{recipe.otherVariants.length > 0 ? (
+						<CardContent>
+							<p class="text-sm text-muted-foreground">
+								{t.parts.otherVariants}{" "}
+								{recipe.otherVariants.map((v, i) => (
+									<>
+										{i > 0 ? ", " : ""}
+										<a href={`/assemblies/${v.id}`}>
+											{v.code} ({v.revision})
+										</a>
+									</>
+								))}
+							</p>
+						</CardContent>
+					) : null}
+				</>
+			) : can(view, "assemblies.edit") ? (
+				<CardContent>
+					<form method="post" action={`/parts/${part.id}/recipe`}>
+						<Button icon={icons.plus}>{t.parts.setUpRecipe}</Button>
+					</form>
+				</CardContent>
+			) : null}
+		</Card>
+	);
+}
+
+/** Every assembly of the part (variants and revisions), when it has more than one (D154). */
 function PartAssemblies(props: { part: Part; summary: Awaited<ReturnType<typeof partAssemblySummary>> }) {
 	const view = useApp();
 	const { t, seeCosts } = view;
 	const { summary } = props;
-	const only = summary.assemblies.length === 1 ? summary.assemblies[0] : undefined;
 	return (
 		<Card>
 			<CardHeader>
 				<CardTitle>{t.parts.assemblies}</CardTitle>
-				{seeCosts && summary.rollup ? (
-					<CardDescription>
-						{t.assemblies.totalCost}: <CostView cost={summary.rollup} refs={summary.refs} long />
-					</CardDescription>
-				) : null}
 				<CardAction>
-					{only ? (
-						<Button href={`/assemblies/${only.id}/diagram`} variant="outline" size="sm" icon={icons.diagram}>
-							{t.parts.openDiagram}
-						</Button>
-					) : null}
 					{can(view, "assemblies.edit") ? (
 						<Button href={`/assemblies/new?part=${props.part.id}`} variant="outline" size="sm" icon={icons.plus}>
 							{t.assemblies.new}
@@ -1251,51 +1408,47 @@ function PartAssemblies(props: { part: Part; summary: Awaited<ReturnType<typeof 
 				</CardAction>
 			</CardHeader>
 			<CardContent class="px-2">
-				{summary.assemblies.length === 0 ? (
-					<CardEmpty icon={icons.listTree}>{t.assemblies.noAssemblies}</CardEmpty>
-				) : (
-					<Table>
-						<TableHeader>
+				<Table>
+					<TableHeader>
+						<TableRow>
+							<TableHead>{t.assemblies.code}</TableHead>
+							<TableHead>{t.assemblies.revision}</TableHead>
+							<TableHead>{t.assemblies.status}</TableHead>
+							{seeCosts ? <TableHead class="text-right">{t.assemblies.totalCost}</TableHead> : null}
+							<TableHead class="w-px">
+								<span class="sr-only">{t.common.actions}</span>
+							</TableHead>
+						</TableRow>
+					</TableHeader>
+					<TableBody>
+						{summary.assemblies.map((b) => (
 							<TableRow>
-								<TableHead>{t.assemblies.code}</TableHead>
-								<TableHead>{t.assemblies.revision}</TableHead>
-								<TableHead>{t.assemblies.status}</TableHead>
-								{seeCosts ? <TableHead class="text-right">{t.assemblies.totalCost}</TableHead> : null}
-								<TableHead class="w-px">
-									<span class="sr-only">{t.common.actions}</span>
-								</TableHead>
+								<TableCell class="font-medium">
+									<a href={`/assemblies/${b.id}`}>{b.code}</a>
+								</TableCell>
+								<TableCell>{b.revision}</TableCell>
+								<TableCell>
+									<StatusBadge status={b.status} />
+								</TableCell>
+								{seeCosts ? (
+									<TableCell class="text-right">
+										<CostView cost={b.cost} refs={summary.refs} machines={summary.machines} />
+									</TableCell>
+								) : null}
+								<TableCell class="py-1 text-right">
+									<Button
+										href={`/assemblies/${b.id}/diagram`}
+										variant="ghost"
+										size="icon-sm"
+										icon={icons.diagram}
+										aria-label={`${t.parts.openDiagram}: ${b.code} ${b.revision}`}
+										title={t.parts.openDiagram}
+									/>
+								</TableCell>
 							</TableRow>
-						</TableHeader>
-						<TableBody>
-							{summary.assemblies.map((b) => (
-								<TableRow>
-									<TableCell class="font-medium">
-										<a href={`/assemblies/${b.id}`}>{b.code}</a>
-									</TableCell>
-									<TableCell>{b.revision}</TableCell>
-									<TableCell>
-										<StatusBadge status={b.status} />
-									</TableCell>
-									{seeCosts ? (
-										<TableCell class="text-right">
-											<CostView cost={b.cost} refs={summary.refs} />
-										</TableCell>
-									) : null}
-									<TableCell class="py-1 text-right">
-										<Button
-											href={`/assemblies/${b.id}/diagram`}
-											variant="ghost"
-											size="icon-sm"
-											icon={icons.diagram}
-											aria-label={`${t.parts.openDiagram}: ${b.code} ${b.revision}`}
-											title={t.parts.openDiagram}
-										/>
-									</TableCell>
-								</TableRow>
-							))}
-						</TableBody>
-					</Table>
-				)}
+						))}
+					</TableBody>
+				</Table>
 			</CardContent>
 		</Card>
 	);
@@ -1561,6 +1714,28 @@ partRoutes.post("/:id", requirePermission("parts.edit"), async (c) => {
 });
 
 // ---------------------------------------------------------------------------
+// How it's made: the first recipe of a made part in one click, std Rev1 as a draft (D154). A part that already has one
+// goes to it instead, so a double submit never creates two.
+
+partRoutes.post("/:id/recipe", requirePermission("assemblies.edit"), async (c) => {
+	const id = idParam(c);
+	const part = id ? await getPart(c.var.db, id) : undefined;
+	if (!part) return notFound(c);
+	if (part.kind !== "make" && part.kind !== "kit") return c.redirect(`/parts/${part.id}`, 303);
+	const summary = await partAssemblySummary(c.var.db, part.id);
+	if (summary.recipe) return c.redirect(`/assemblies/${summary.recipe.assembly.id}`, 303);
+	const head = { parentPartId: part.id, code: DEFAULT_CODE, revision: DEFAULT_REVISION, notes: "" };
+	const existing = await findAssembly(c.var.db, part.id, DEFAULT_CODE, DEFAULT_REVISION);
+	if (existing) return c.redirect(`/assemblies/${existing.id}`, 303);
+	await saveChanges(
+		c,
+		fmt(c.var.t.history.summaries.assemblyCreate, { assembly: assemblyLabel(part.ref, head) }),
+		createAssemblyStatements(c.var.db, head, null, c.var.user, nowIso()),
+	);
+	const created = await findAssembly(c.var.db, part.id, DEFAULT_CODE, DEFAULT_REVISION);
+	return c.redirect(`/assemblies/${created?.id}`, 303);
+});
+
 // Standard cost shortcuts (logged in the price history with a note saying where the value came from).
 
 partRoutes.post("/:id/cost/average", requirePermission("prices.edit"), async (c) => {

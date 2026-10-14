@@ -164,7 +164,7 @@ describe("parts", () => {
 			copy_from: "",
 		});
 		const assemblyId = (await one<{ id: number }>("SELECT id FROM assemblies")).id;
-		expect(await (await request(`/parts/${id}`)).text()).toContain(`href="/assemblies/${assemblyId}/diagram"`);
+		expect(await (await request(`/parts/${id}`)).text()).toContain(`href="/assemblies/${assemblyId}"`);
 		const res = await postForm(`/parts/${id}`, partForm({ ref: "ASSY", kind: "buy" }));
 		expect(res.status).toBe(422);
 		expect(await res.text()).toContain("This part has assemblies: it must stay a make or kit part.");

@@ -1,4 +1,5 @@
-// Recording a finished build in one step (D152): planned and completed now, in one change set.
+// Recording a finished build in one step (D152): planned and completed now, in one change set, from the one new build
+// form (D155) with "already made".
 import { describe, expect, it } from "vitest";
 import { importCsv, loadDemo, NOT_ADMIN, one, partId, postForm, request, rows, setRole } from "./helpers";
 
@@ -10,8 +11,9 @@ async function record(ref: string, form: Record<string, string> = {}, overrides 
 		ref,
 	);
 	return postForm(
-		"/builds/record",
+		"/builds",
 		{
+			when: "done",
 			part_id: String(await partId(ref)),
 			assembly_id: String(assembly.id),
 			qty: "1",
@@ -32,10 +34,12 @@ const lastChangeSet = () =>
 describe("record a finished build", () => {
 	it("plans and completes a print run in one change set, with its machine time", async () => {
 		await loadDemo();
-		const page = await (await request("/builds/record")).text();
-		expect(page).toContain("Record a finished build");
-		expect(page).not.toContain('name="planned_for"');
-		expect(await (await request("/builds")).text()).toContain('href="/builds/record"');
+		const page = await (await request(`/builds/new?part=${await partId("LAMP-CLIP")}`)).text();
+		expect(page).toContain("Already made: record it now");
+		expect(page, "already made by default").toMatch(/name="when" value="done" checked/);
+		expect(await (await request("/builds")).text()).toContain('href="/builds/new"');
+		// The former record page is the same form, already made.
+		expect((await request("/builds/record?part=7")).headers.get("Location")).toBe("/builds/new?part=7&when=done");
 		const res = await record("LAMP-CLIP", { qty: "2", qty_in: "batches", notes: "Friday plates" });
 		expect(res.status, await res.clone().text()).toBe(303);
 		const id = Number(/\/builds\/(\d+)\?ok=recorded/.exec(res.headers.get("Location") ?? "")?.[1]);
@@ -113,6 +117,23 @@ describe("record a finished build", () => {
 		expect((await request("/builds/record", {}, NOT_ADMIN)).status).toBe(403);
 		expect((await record("LAMP-CLIP", {}, NOT_ADMIN)).status).toBe(403);
 		await setRole("operator");
+		// The former route still records.
+		const legacy = await postForm(
+			"/builds/record",
+			{
+				part_id: String(await partId("LAMP-CLIP")),
+				assembly_id: String(
+					(
+						await one<{ id: number }>(
+							"SELECT b.id FROM assemblies b JOIN parts p ON p.id = b.parent_part_id WHERE p.ref = 'LAMP-CLIP' AND b.status = 'active'",
+						)
+					).id,
+				),
+				qty: "1",
+			},
+			NOT_ADMIN,
+		);
+		expect(legacy.status).toBe(303);
 		expect((await request("/builds", {}, NOT_ADMIN)).status).toBe(200);
 		expect((await record("LAMP-CLIP", {}, NOT_ADMIN)).status).toBe(303);
 	});
