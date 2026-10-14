@@ -811,7 +811,8 @@ Short log of choices made where the brief left room. Newest at the bottom of eac
     default to one batch (the slicer's figures, `?qty=` still overrides); "per parent" quantities and where-used show
     "/ 24" when the parent makes batches. Over MCP, `get_assembly`, `explode_assembly` and `get_part` return `batch`, and
     tree lines `parent_batch` when it is not 1; `get_assembly` keeps its default quantity of 1.
-- **D146. Production settings belong to the revision.** *(Edit rule superseded by D153: they are edited with the lines.)* Changing the batch changes what every line means, so it is
+- **D146. Production settings belong to the revision.** *(Edit rule superseded by D153: they are edited with the lines.
+  Amended by D166: a new revision also keeps the variant's own selling price, a new variant does not.)* Changing the batch changes what every line means, so it is
   edited in place only on a draft: the Production card of the assembly page (`POST /assemblies/:id/production`,
   `assemblies.edit`; the statement repeats `status = 'draft'`), read-only on an active or archived assembly with a hint
   to make a new revision. This is stricter than the lines of an active assembly, which stay editable (D23). New
@@ -954,3 +955,19 @@ change (no migration).
   **Completed** or **Planned** / *Terminée* ou *Planifiée*; the Builds page lists **Production requirements** /
   *Besoins de fabrication* (Required, Available, Required by; Plan build, Record), next to **Purchase requirements**;
   a machine type asks for the **Number of machines**. Keys and behaviour are unchanged.
+- **D166. A new revision keeps the variant's selling price; a new variant does not** (amends D146). A variant's own
+  price (`assemblies.sale_price_cents`, D93) is stored on each revision, and Margins lists active variants only, so a
+  new revision that started without it silently dropped the product from Margins once activated. The price belongs to
+  the variant (part and code), the lines and production settings to the revision: every new revision of a variant now
+  starts with its source's price (`keptSalePrice`, passed to `createAssemblyStatements`): the assembly page's New
+  revision, `new_assembly_revision`, and the draft revisions `set_assembly_lines` and `set_assembly_production` create
+  from an active assembly. The new assembly form and `create_assembly` apply the same rule to their source: the same
+  code under a new revision keeps the price; another code (Copy as new variant) or another part's assembly starts
+  without one, because a different variant is a different sellable item: the part's price applies (Margins lists it at
+  that price) until someone gives it its own. `assemblies.csv` follows its "without the column, prices are kept": a new
+  revision takes the price of its variant's active revision, else of its newest; with the column, the file decides
+  (empty: none). The price is written in the change set that creates the revision, with a `price_history` row (kind
+  `sale`, the new assembly, source `form` or `import`) as for any new assembly with a price; undoing the creation
+  removes both (the row cascades). MCP assembly results carry the variant's `sale_price`. Known limit: the margin
+  history of a revision replays only its own price rows, so before the revision existed it shows the part's price, and
+  a price change on the day it was created.
