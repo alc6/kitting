@@ -80,8 +80,10 @@ worked conversations in [references/examples.md](references/examples.md).
    `short`. Mention `cost_incomplete` / `missing_costs` if present.
 3. Confirm, then `plan_build` (one call per build; a serial-tracked product is built one unit at a time with its
    own `serial`, so ask for each serial).
-4. `get_shortages`: what to buy for all open builds, grouped by supplier, rounded to MOQ and pack size (it counts
-   what is already on order). Show it with lead times; flag `missing_assemblies`.
+4. `get_shortages`: first `to_make` (sub-assemblies and printed parts the builds need, deepest first, in whole runs,
+   with machine time: offer to `plan_build` them, or `record_build` once made), then what to buy for all open builds,
+   grouped by supplier, rounded to MOQ and pack size (it counts what is already on order and what planned builds
+   will make). Show it with lead times; flag `missing_assemblies`.
 5. Confirm, then `create_draft_pos` (all suppliers, or `suppliers` to limit; `order_from` to use another
    supplier that has an offer). Review with `get_purchase_order`; adjust with `update_draft_po` (quantity `"0"`
    removes a line).

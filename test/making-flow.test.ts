@@ -17,6 +17,7 @@ import {
 	TESTER,
 	testDb,
 } from "./helpers";
+import { callTool, connect, resetKv } from "./mcp-helpers";
 
 async function planBuild(ref: string, opts: { serial?: string; qty?: string } = {}) {
 	const res = await postForm("/builds", {
@@ -122,6 +123,30 @@ describe("what to make for the open builds", () => {
 		expect(form).toMatch(/name="when" value="planned" checked/);
 		// Purchasing points to it.
 		expect(await (await request("/purchasing")).text()).toContain("And 1 made part(s) to make for these builds");
+	});
+
+	it("tells an assistant what to make, over MCP", async () => {
+		await resetKv();
+		await loadDemo();
+		await clipPack("30");
+		await planBuild("CLIP-PACK");
+		const token = await connect(["purchasing:read"]);
+		const short = await callTool(token, "get_shortages", {});
+		expect(short.data.to_make).toEqual([
+			{
+				ref: "LAMP-CLIP",
+				name: "Cable clip (3D printed)",
+				unit: "pcs",
+				short: "30",
+				on_hand: "0",
+				planned: "0",
+				qty: "48",
+				runs: 2,
+				assembly: "std Rev1",
+				machine_time: { type: "FDM printer", minutes: "380" },
+				builds: ["B-0001"],
+			},
+		]);
 	});
 
 	it("puts deeper parts first", async () => {

@@ -48,6 +48,7 @@ const RESULT_FIELDS = [
 	"missing_costs",
 	"missing_assemblies",
 	"missing_assembly",
+	"to_make",
 	"open_builds",
 	"on_hand",
 	"on_order",

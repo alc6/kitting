@@ -287,6 +287,7 @@ describe("read tools", () => {
 		const token = await connect(["purchasing:read"]);
 		const short = await callTool(token, "get_shortages", {});
 		expect(short.data.open_builds).toBe(2);
+		expect(short.data.to_make, "nothing to make: the lamp's sub-assemblies are in stock").toEqual([]);
 		const lines = (short.data.suppliers as { lines: { ref: string }[] }[]).flatMap((g) => g.lines);
 		expect(lines).toContainEqual(
 			// Rounded up to the preferred offer's pack size (25).

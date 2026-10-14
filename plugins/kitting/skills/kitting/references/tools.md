@@ -119,10 +119,10 @@ One build. Done: the as-built record. Open: the pick list from current stock.
 ## Reading: `purchasing:read`
 
 ### `get_shortages`
-What to buy for all planned and in-progress builds: need minus on hand minus on order, rounded up to the preferred supplier's MOQ and pack size, grouped by supplier.
+What to make, then what to buy, for all planned and in-progress builds. To make: made parts the builds need beyond stock and the builds already planned for them, deepest first, in whole runs. To buy: need minus on hand minus on order, rounded up to the preferred supplier's MOQ and pack size, grouped by supplier.
 - **Scope:** `purchasing:read` · **Permission:** none
 - **Inputs:** none.
-- **Returns:** `open_builds`, `suppliers[]` (`supplier`, `total`, `lines[]` with `ref`, `unit`, `need`, `on_hand`, `on_order`, `net`, `order`, `unit_price`, `supplier_ref`, `moq`, `pack_size`, `lead_days`, `builds`), `missing_assemblies[]` (make or kit parts to build that have no active assembly), `machine_time[]` (`type`, `minutes` needed, `active_machines` in service, `builds`).
+- **Returns:** `open_builds`, `to_make[]` (`ref`, `unit`, `short`, `on_hand`, `planned` by open builds of it, `qty` to make rounded up to whole runs, `runs`, `assembly`, `machine_time` with `type` and `minutes`, `builds`), `suppliers[]` (`supplier`, `total`, `lines[]` with `ref`, `unit`, `need`, `on_hand`, `on_order`, `net`, `order`, `unit_price`, `supplier_ref`, `moq`, `pack_size`, `lead_days`, `builds`), `missing_assemblies[]` (make or kit parts to build that have no active assembly), `machine_time[]` (`type`, `minutes` needed, what is to make counted in whole runs, `active_machines` in service, `builds`).
 - **Example:** `get_shortages({})`
 
 ### `list_purchase_orders`

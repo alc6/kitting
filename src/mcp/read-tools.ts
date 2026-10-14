@@ -514,13 +514,26 @@ const getShortages = tool({
 	name: "get_shortages",
 	title: "Shortages",
 	description:
-		"What to buy for all planned and in-progress builds: per purchased part, need − on hand − on order, rounded up to the preferred supplier's MOQ and pack size, grouped by supplier. Also lists make or kit parts that must be built but have no active assembly, and the machine time the builds need per machine type, with the number of machines in service.",
+		"What to make and what to buy for all planned and in-progress builds. to_make: made parts (sub-assemblies, printed parts) the builds need beyond stock and the builds already planned for them, deepest first (make them first), rounded up to whole runs, with their machine time. suppliers: per purchased part, need − on hand − on order, rounded up to the preferred supplier's MOQ and pack size, grouped by supplier. Also lists make or kit parts that must be built but have no active assembly, and the machine time the builds need per machine type (what is to make counted in whole runs), with the number of machines in service.",
 	rule: { scope: "purchasing:read" },
 	input: z.object({}),
 	run: async (_a, { db }) => {
 		const s = await computeShortages(db);
 		return {
 			openBuilds: s.buildCount,
+			toMake: s.toMake.map((l) => ({
+				ref: l.part.ref,
+				name: l.part.name,
+				unit: l.part.unit,
+				shortMilli: l.shortMilli,
+				onHandMilli: l.onHandMilli,
+				plannedMilli: l.plannedMilli,
+				qtyMilli: l.toMakeMilli,
+				runs: l.runs,
+				assembly: `${l.assembly.code} ${l.assembly.revision}`,
+				machineTime: l.machine ? { type: l.machine.machineType.name, minutesMilli: l.machine.minutesMilli } : undefined,
+				builds: l.builds,
+			})),
 			suppliers: s.groups.map((g) => ({
 				supplier: g.supplierName || null,
 				totalCents: g.totalCents,

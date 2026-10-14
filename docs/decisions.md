@@ -929,7 +929,9 @@ change (no migration).
   with it: the output of the open builds counts as available before exploding (planning 5 arms on their own used to
   leave the lamp builds building 5 more, so their tubes were counted twice), and the machine load counts the time of
   what is to make in whole runs rather than the exact quantity inside the parent. The build page's pick list is
-  unchanged: it sees real stock only, never planned output. `get_shortages` over MCP is unchanged.
+  unchanged: it sees real stock only, never planned output. Over MCP, `get_shortages` returns the list first as
+  `to_make` (quantities, runs, assembly, machine time, builds), and the skill's planning workflow offers to plan or
+  record those before ordering.
 - **D157. A machine type and the machines owned, in one form.** Most workshops own one printer of a kind; creating
   the type, then the machine, was two forms for one thing. The new type form asks how many the workshop owns (1 by
   default, 0 to 20) and creates them in service in the same change set: one takes the type's name, several are
