@@ -1,10 +1,11 @@
 // Margin history of one sellable item, derived (never stored, D98):
 // - planned: replayed from the price history, one point per day on which the standard cost of a component
-//   of its roll-up or its selling price changed. The assembly structure is today's (as for valuation, D91);
+//   of its roll-up or its selling price changed. The assembly structure is today's (as for valuation, D91); before
+//   a revision's own price history starts, its selling price is its variant's, from the revision active then (D167);
 // - actual: one point per completed build, its output at weighted average cost against the selling price
 //   valid on the day it was completed (there is no sales record).
-import { and, asc, eq } from "drizzle-orm";
-import { assemblies, builds, parts, priceHistory } from "../db/schema";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { type AssemblyStatus, assemblies, builds, changeLog, changeSets, parts, priceHistory } from "../db/schema";
 import type { Db } from "../types";
 import { loadGraph } from "./assemblies";
 import { type AssemblyGraph, CostCalculator, centsOf, defaultAssembly } from "./assembly-graph";
@@ -21,6 +22,18 @@ export type MarginTarget = { partId: number; assemblyId: number | null };
 export type StandardRow = { partId: number; priceCents: number | null; validFrom: string };
 /** Selling price rows of the target part, sorted by date, id (`assemblyId` set for a variant's own price). */
 export type SaleRow = { assemblyId: number | null; priceCents: number | null; validFrom: string };
+
+/**
+ * A revision of the target's variant (part and code) became its active one that day (D167); `date` is "" for a
+ * revision older than the change history.
+ */
+export type Activation = { assemblyId: number; date: string };
+/** A change of one assembly row in the change history, oldest first: its status before and after (null: none). */
+export type StatusChange = { assemblyId: number; date: string; from: string | null; to: string | null };
+/** The target's variant across its revisions: when each became the active one, and their own selling prices today. */
+export type Variant = { activations: Activation[]; salePrices: Map<number, number | null> };
+
+const NO_VARIANT: Variant = { activations: [], salePrices: new Map() };
 
 export type CostChange = { partId: number; fromCents: number | null; toCents: number | null };
 
@@ -119,6 +132,59 @@ export function salePriceAt(
 	return (assemblyId === null ? null : level(assemblyId, current.assembly)) ?? level(null, current.part);
 }
 
+/**
+ * When the revisions of a variant became its active one, from the change history of their rows. A revision older
+ * than the history (its first logged change is not its insert, or it has none) counts as active before everything
+ * logged unless it was a draft then: oldest first, the one active when the history started last. A revision inserted
+ * since counts only from its activations, so a draft never activated (even archived since) never counts.
+ */
+export function variantActivations(
+	revisions: { id: number; status: AssemblyStatus }[],
+	changes: StatusChange[],
+): Activation[] {
+	const first = new Map<number, StatusChange>();
+	for (const c of changes) if (!first.has(c.assemblyId)) first.set(c.assemblyId, c);
+	// Its status when the history started: null for a revision inserted since.
+	const before = (b: { id: number; status: string }) => {
+		const c = first.get(b.id);
+		return c ? c.from : b.status;
+	};
+	const older = revisions
+		.filter((b) => before(b) !== null && before(b) !== "draft")
+		.sort((a, b) => Number(before(a) === "active") - Number(before(b) === "active") || a.id - b.id);
+	return [
+		...older.map((b) => ({ assemblyId: b.id, date: "" })),
+		...changes
+			.filter((c) => c.to === "active" && c.from !== "active")
+			.map((c) => ({ assemblyId: c.assemblyId, date: c.date })),
+	];
+}
+
+/** The variant's active revision on a day: the last one activated by then; before any, the first one activated. */
+export function activeRevisionAt(activations: Activation[], date: string): number | null {
+	let active: number | null = null;
+	for (const a of activations) if (a.date <= date) active = a.assemblyId;
+	return active ?? activations[0]?.assemblyId ?? null;
+}
+
+/**
+ * Selling price of a revision on a day, following its variant (D167): from its first own price row on, as
+ * `salePriceAt`; before it, the price of the variant's revision active that day, at that revision's level (so a new
+ * revision that kept the price shows no change). Without activations, as `salePriceAt`.
+ */
+export function revisionSalePriceAt(
+	rows: SaleRow[],
+	assemblyId: number,
+	date: string,
+	current: { part: number | null; assembly: number | null },
+	variant: Variant,
+): number | null {
+	const started = rows.some((r) => r.assemblyId === assemblyId && r.validFrom <= date);
+	const source = started ? assemblyId : (activeRevisionAt(variant.activations, date) ?? assemblyId);
+	const assembly = source === assemblyId ? current.assembly : (variant.salePrices.get(source) ?? null);
+	return salePriceAt(rows, source, date, { part: current.part, assembly });
+}
+
 /** Planned margin over time (oldest first). Pure: the caller loads the graph and the history. */
 export function plannedMarginSeries(
 	graph: AssemblyGraph,
@@ -127,6 +193,7 @@ export function plannedMarginSeries(
 	saleRows: SaleRow[],
 	currentSale: { part: number | null; assembly: number | null },
 	rateRows: RateRow[] = [],
+	variant: Variant = NO_VARIANT,
 ): PlannedPoint[] {
 	const { parts: inputs, machines } = rollupInputs(graph, target);
 	const relevant = standardRows.filter((r) => inputs.has(r.partId));
@@ -134,14 +201,21 @@ export function plannedMarginSeries(
 	const rates = rateRows
 		.filter((r) => machines.has(r.machineTypeId))
 		.map((r) => ({ partId: r.machineTypeId, priceCents: r.rateCents, validFrom: r.validFrom }));
-	const sales = saleRows.filter((r) => r.assemblyId === null || r.assemblyId === target.assemblyId);
-	const dates = [
-		...new Set([
-			...relevant.map((r) => r.validFrom),
-			...rates.map((r) => r.validFrom),
-			...sales.map((r) => r.validFrom),
-		]),
-	].sort();
+	// The part's prices, the target's own, and those of the revisions once active in its variant (D167).
+	const activations = target.assemblyId === null ? [] : variant.activations;
+	const lineage = new Set(activations.map((a) => a.assemblyId));
+	const sales = saleRows.filter(
+		(r) => r.assemblyId === null || r.assemblyId === target.assemblyId || lineage.has(r.assemblyId),
+	);
+	const days = new Set([
+		...relevant.map((r) => r.validFrom),
+		...rates.map((r) => r.validFrom),
+		...sales.map((r) => r.validFrom),
+	]);
+	// An activation can change the price on a day without a price row; one before the history starts cannot.
+	const start = [...days].sort()[0];
+	for (const a of activations) if (start !== undefined && a.date > start) days.add(a.date);
+	const dates = [...days].sort();
 	const current = [...inputs].map((id) => ({ id, costCents: graph.parts.get(id)?.costCents ?? null }));
 	const currentRates = [...machines].map((id) => ({ id, costCents: graph.machineTypes.get(id)?.rateCents ?? null }));
 
@@ -167,7 +241,10 @@ export function plannedMarginSeries(
 		const calc = new CostCalculator(dated);
 		const cost = target.assemblyId === null ? calc.part(target.partId) : calc.assembly(target.assemblyId);
 		const costCents = centsOf(cost.millicents);
-		const priceCents = salePriceAt(sales, target.assemblyId, date, currentSale);
+		const priceCents =
+			target.assemblyId === null
+				? salePriceAt(sales, null, date, currentSale)
+				: revisionSalePriceAt(sales, target.assemblyId, date, currentSale, variant);
 		const last = points.at(-1);
 		const costChanges: CostChange[] = [];
 		if (previous) {
@@ -207,6 +284,26 @@ export function plannedMarginSeries(
 	return points;
 }
 
+/** Status changes of the revisions of a variant in the change history (D167), oldest first. */
+async function statusChanges(db: Db, partId: number, code: string): Promise<StatusChange[]> {
+	const revisions = db
+		.select({ id: assemblies.id })
+		.from(assemblies)
+		.where(and(eq(assemblies.parentPartId, partId), eq(assemblies.code, code)));
+	const rows = await db
+		.select({
+			assemblyId: changeLog.rowId,
+			at: changeSets.at,
+			from: sql<string | null>`json_extract(${changeLog.oldRow}, '$.status')`,
+			to: sql<string | null>`json_extract(${changeLog.newRow}, '$.status')`,
+		})
+		.from(changeLog)
+		.innerJoin(changeSets, eq(changeSets.id, changeLog.changeSetId))
+		.where(and(eq(changeLog.tableName, "assemblies"), inArray(changeLog.rowId, revisions)))
+		.orderBy(asc(changeLog.id));
+	return rows.map((r) => ({ assemblyId: r.assemblyId, date: r.at.slice(0, 10), from: r.from, to: r.to }));
+}
+
 /** Loads everything the margin history of a sellable item needs; null when the part or assembly does not exist. */
 export async function marginHistory(db: Db, target: MarginTarget) {
 	const [part] = await db
@@ -234,7 +331,8 @@ export async function marginHistory(db: Db, target: MarginTarget) {
 	const assembly = target.assemblyId === null ? null : partAssemblies.find((b) => b.id === target.assemblyId);
 	if (assembly === undefined) return null;
 
-	const [graph, standardRows, saleRows, done, rateRows] = await Promise.all([
+	const revisions = assembly ? partAssemblies.filter((b) => b.code === assembly.code) : [];
+	const [graph, standardRows, saleRows, done, rateRows, changes] = await Promise.all([
 		loadGraph(db),
 		db
 			.select({ partId: priceHistory.partId, priceCents: priceHistory.priceCents, validFrom: priceHistory.validFrom })
@@ -262,6 +360,7 @@ export async function marginHistory(db: Db, target: MarginTarget) {
 			.where(and(eq(builds.partId, part.id), eq(builds.status, "done")))
 			.orderBy(asc(builds.doneAt), asc(builds.id)),
 		machineRateRows(db),
+		assembly ? statusChanges(db, part.id, assembly.code) : [],
 	]);
 
 	const planned = plannedMarginSeries(
@@ -271,6 +370,10 @@ export async function marginHistory(db: Db, target: MarginTarget) {
 		saleRows,
 		{ part: part.salePriceCents, assembly: assembly?.salePriceCents ?? null },
 		rateRows,
+		{
+			activations: variantActivations(revisions, changes),
+			salePrices: new Map(revisions.map((b) => [b.id, b.salePriceCents])),
+		},
 	);
 
 	// Builds of this variant, any revision (as on the margins page); of any assembly for a part without one.

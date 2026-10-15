@@ -5,11 +5,14 @@ import { buildGraph, type GraphPart } from "../src/domain/assembly-graph";
 import { runChangeSet } from "../src/domain/history";
 import { planImport } from "../src/domain/import";
 import {
+	type Activation,
+	activeRevisionAt,
 	costInputs,
 	plannedMarginSeries,
 	type SaleRow,
 	type StandardRow,
 	salePriceAt,
+	variantActivations,
 } from "../src/domain/margin-history";
 import {
 	assemblyId,
@@ -189,6 +192,148 @@ describe("selling price on a day", () => {
 	});
 });
 
+describe("selling price across the revisions of a variant (D167)", () => {
+	// STD is the revision whose history is shown; REV1 and REV2 are other revisions of the same variant.
+	const REV1 = 7;
+	const REV2 = 8;
+	const sale = (assemblyId: number | null, validFrom: string, priceCents: number | null): SaleRow => ({
+		assemblyId,
+		priceCents,
+		validFrom,
+	});
+	const at = (assemblyId: number, date: string): Activation => ({ assemblyId, date });
+
+	/** Planned prices of STD, its part sold 89.00 since 2026-01-05, costs unchanged: [date, price] per point. */
+	function prices(sales: SaleRow[], activations: Activation[]) {
+		const graph = tenComponents(Array(10).fill(200));
+		const rows = Array.from({ length: 10 }, (_, i) => standard(i + 1, 200, "2026-01-05"));
+		const all = [sale(null, "2026-01-05", 8900), ...sales].sort((a, b) => a.validFrom.localeCompare(b.validFrom));
+		const variant = { activations, salePrices: new Map<number, number | null>() };
+		return plannedMarginSeries(
+			graph,
+			{ partId: PRODUCT, assemblyId: STD },
+			rows,
+			all,
+			{ part: 8900, assembly: null },
+			[],
+			variant,
+		).map((p) => [p.date, p.priceCents]);
+	}
+
+	it("shows no change on the day a new revision kept the variant's price", () => {
+		// REV1 sells 94.00 from 2026-02-01; STD is created from it on 2026-05-01 with that price, activated 2026-05-10.
+		const sales = [sale(REV1, "2026-02-01", 9400), sale(STD, "2026-05-01", 9400)];
+		expect(prices(sales, [at(REV1, "2026-01-05"), at(STD, "2026-05-10")])).toEqual([
+			["2026-01-05", 8900],
+			["2026-02-01", 9400],
+		]);
+		// Without the change history, only its own rows count (D98): the part's price until it was created.
+		expect(prices(sales, [])).toEqual([
+			["2026-01-05", 8900],
+			["2026-05-01", 9400],
+		]);
+		// Builds (actual points) are priced by their own revision, which has its row from the day it exists.
+		expect(salePriceAt(sales, STD, "2026-05-01", { part: 8900, assembly: 9400 })).toBe(9400);
+	});
+
+	it("takes the price of the revision active each day, a draft's only from its activation", () => {
+		const sales = [
+			sale(REV1, "2026-01-05", 9400),
+			sale(REV2, "2026-03-01", 9400), // REV2 created as a draft
+			sale(REV2, "2026-03-10", 9900), // repriced while still a draft
+			sale(REV1, "2026-03-15", 9600), // the active one repriced meanwhile
+			sale(STD, "2026-04-01", 9900), // STD created from REV2
+		];
+		const activations = [at(REV1, "2026-01-05"), at(REV2, "2026-03-20"), at(STD, "2026-04-05")];
+		expect(prices(sales, activations)).toEqual([
+			["2026-01-05", 9400],
+			["2026-03-15", 9600],
+			["2026-03-20", 9900],
+		]);
+	});
+
+	it("never takes the price of a draft that was never active", () => {
+		const changes = [
+			{ assemblyId: REV1, date: "2026-01-05", from: null, to: "active" },
+			{ assemblyId: REV2, date: "2026-03-01", from: null, to: "draft" },
+			{ assemblyId: REV2, date: "2026-03-10", from: "draft", to: "draft" },
+			{ assemblyId: REV2, date: "2026-03-12", from: "draft", to: "archived" }, // abandoned
+			{ assemblyId: STD, date: "2026-04-01", from: null, to: "draft" },
+			{ assemblyId: REV1, date: "2026-04-05", from: "active", to: "archived" },
+			{ assemblyId: STD, date: "2026-04-05", from: "draft", to: "active" },
+		];
+		const revisions = [
+			{ id: REV1, status: "archived" as const },
+			{ id: REV2, status: "archived" as const },
+			{ id: STD, status: "active" as const },
+		];
+		const activations = variantActivations(revisions, changes);
+		expect(activations).toEqual([at(REV1, "2026-01-05"), at(STD, "2026-04-05")]);
+		const sales = [
+			sale(REV1, "2026-01-05", 9400),
+			sale(REV2, "2026-03-01", 9400),
+			sale(REV2, "2026-03-10", 9900),
+			sale(STD, "2026-04-01", 9400),
+		];
+		expect(prices(sales, activations)).toEqual([["2026-01-05", 9400]]);
+	});
+
+	it("follows an older revision activated again", () => {
+		const sales = [sale(REV1, "2026-01-05", 9400), sale(REV2, "2026-01-20", 9900), sale(STD, "2026-04-01", 9400)];
+		const activations = [at(REV1, "2026-01-05"), at(REV2, "2026-02-01"), at(REV1, "2026-03-01"), at(STD, "2026-04-05")];
+		expect(prices(sales, activations)).toEqual([
+			["2026-01-05", 9400],
+			["2026-02-01", 9900],
+			["2026-03-01", 9400],
+		]);
+	});
+
+	it("shows the part's price while an active revision had no price of its own", () => {
+		// STD was created without a price (before D166) and activated on 2026-02-10; priced on 2026-03-01.
+		const sales = [sale(REV1, "2026-01-05", 9400), sale(STD, "2026-03-01", 9400)];
+		expect(prices(sales, [at(REV1, "2026-01-05"), at(STD, "2026-02-10")])).toEqual([
+			["2026-01-05", 9400],
+			["2026-02-10", 8900],
+			["2026-03-01", 9400],
+		]);
+	});
+
+	it("goes back to the part's price, not an earlier revision's, once its own price is cleared", () => {
+		const sales = [sale(REV1, "2026-01-05", 9400), sale(STD, "2026-03-01", 9400), sale(STD, "2026-04-01", null)];
+		expect(prices(sales, [at(REV1, "2026-01-05"), at(STD, "2026-03-05")])).toEqual([
+			["2026-01-05", 9400],
+			["2026-04-01", 8900],
+		]);
+	});
+
+	it("counts revisions older than the change history as active before it, drafts never", () => {
+		const revisions = [
+			{ id: 2, status: "archived" as const }, // active when the history started, archived since
+			{ id: 4, status: "archived" as const },
+			{ id: 3, status: "archived" as const },
+			{ id: 5, status: "draft" as const },
+			{ id: 6, status: "archived" as const },
+			{ id: 7, status: "archived" as const }, // a draft when the history started, archived since
+			{ id: 9, status: "active" as const },
+		];
+		const changes = [
+			{ assemblyId: 6, date: "2026-05-01", from: null, to: "draft" },
+			{ assemblyId: 6, date: "2026-05-02", from: "draft", to: "archived" },
+			{ assemblyId: 7, date: "2026-05-03", from: "draft", to: "archived" },
+			{ assemblyId: 2, date: "2026-06-01", from: "active", to: "archived" },
+			{ assemblyId: 9, date: "2026-06-01", from: "draft", to: "active" },
+			{ assemblyId: 9, date: "2026-06-02", from: "active", to: "active" }, // an edit, not an activation
+		];
+		const activations = variantActivations(revisions, changes);
+		expect(activations).toEqual([at(3, ""), at(4, ""), at(2, ""), at(9, "2026-06-01")]);
+		expect(activeRevisionAt(activations, "2026-01-01")).toBe(2);
+		expect(activeRevisionAt(activations, "2026-06-01")).toBe(9);
+		// Before the first activation, the first revision activated; nothing known, none.
+		expect(activeRevisionAt([at(9, "2026-06-01")], "2026-01-01")).toBe(9);
+		expect(activeRevisionAt([], "2026-01-01")).toBeNull();
+	});
+});
+
 describe("margin history page", () => {
 	/** KIT-10 is built from C01…C10 at 2.00 and sold 50.00 since 2026-01-05; C03 costs 4.00 since 2026-03-01. */
 	async function tenComponentProduct() {
@@ -264,6 +409,24 @@ describe("margin history page", () => {
 		expect((await request(`/margins/parts/${lamp}`)).status).toBe(200);
 		expect((await request("/margins/assemblies/999999")).status).toBe(404);
 		expect((await request("/margins/parts/999999")).status).toBe(404);
+	});
+
+	it("follows the variant's price across a new revision, with no change the day it was created (D167)", async () => {
+		await loadDemo({ stock: false });
+		// LAMP-DESK warm Rev1 sells 94.00, the part 89.00. The import dated them today: move them back.
+		await env.DB.prepare("UPDATE price_history SET valid_from = '2026-01-05'").run();
+		const rev1 = await assemblyId("LAMP-DESK", "warm");
+		expect((await postForm(`/assemblies/${rev1}/revision`, {})).status).toBe(303);
+		const rev2 = await assemblyId("LAMP-DESK", "warm", "Rev2");
+		expect((await postForm(`/assemblies/${rev2}/activate`, {})).status).toBe(303);
+
+		const page = await (await request(`/margins/assemblies/${rev2}`)).text();
+		const table = page.slice(page.indexOf("Planned margin changes"));
+		const rowsOf = table.slice(0, table.indexOf("</tbody>"));
+		expect(rowsOf).toContain("2026-01-05");
+		expect(rowsOf).toContain("€94.00");
+		expect(rowsOf).not.toContain("€89.00");
+		expect(rowsOf).not.toContain(new Date().toISOString().slice(0, 10));
 	});
 });
 
