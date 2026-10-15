@@ -81,7 +81,6 @@ import {
 	CardHeader,
 	CardTitle,
 	CheckboxField,
-	CollapsibleCard,
 	DecimalField,
 	DetailList,
 	Dialog,
@@ -94,8 +93,10 @@ import {
 	Flash,
 	type FormErrors,
 	type FormValues,
+	InlineEdit,
 	KindBadge,
 	Money,
+	MoreMenu,
 	PageHeader,
 	PostButton,
 	Qty,
@@ -468,31 +469,26 @@ function PartDetail(props: {
 								{t.parts.adjustStock}
 							</Button>
 						) : null}
-						{canArchive ? (
-							p.archived ? (
-								<PostButton
-									action={`/parts/${p.id}/unarchive`}
-									label={t.common.unarchive}
-									icon={icons.archiveRestore}
-								/>
-							) : (
-								<PostButton
-									action={`/parts/${p.id}/archive`}
-									label={t.common.archive}
-									confirm={t.common.confirmArchive}
-									icon={icons.archive}
-								/>
-							)
-						) : null}
-						{canDelete ? (
-							<PostButton
-								action={`/parts/${p.id}/delete`}
-								label={t.common.delete}
-								confirm={t.common.confirmDelete}
-								variant="destructive"
-								icon={icons.trash}
-							/>
-						) : null}
+						<MoreMenu
+							items={[
+								canArchive &&
+									(p.archived
+										? { label: t.common.unarchive, icon: icons.archiveRestore, action: `/parts/${p.id}/unarchive` }
+										: {
+												label: t.common.archive,
+												icon: icons.archive,
+												action: `/parts/${p.id}/archive`,
+												confirm: t.common.confirmArchive,
+											}),
+								canDelete && {
+									label: t.common.delete,
+									icon: icons.trash,
+									action: `/parts/${p.id}/delete`,
+									confirm: t.common.confirmDelete,
+									destructive: true,
+								},
+							]}
+						/>
 					</>
 				}
 			/>
@@ -1102,39 +1098,55 @@ function PriceChart(props: { history: HistoryRow[]; paid: PaidRow[]; today: stri
 
 type PastPriceFormProps = { values: FormValues; errors: FormErrors; suppliers: SupplierOption[] };
 
-/** Adds a price the part had before Kitting (D142): dated in the past, never the current price. */
-function PastPriceForm(props: { part: Part; form: PastPriceFormProps }) {
+/**
+ * The header of the price history card. With the right to add a price (D142) it is also the "Add a past price" button,
+ * which opens the form in place under the title (open when refused, with its errors inline); a price the part had
+ * before Kitting is dated in the past, never the current price.
+ */
+function PriceHistoryHeader(props: { part: Part; pastPrice?: PastPriceFormProps | undefined }) {
 	const { t } = useApp();
-	const { part, form } = props;
+	const { part, pastPrice: form } = props;
+	const title = (
+		<div class="flex flex-col gap-1.5">
+			<CardTitle icon={icons.history}>{t.parts.priceHistory}</CardTitle>
+			<CardDescription>{t.parts.priceHistoryHint}</CardDescription>
+		</div>
+	);
+	if (!form) return <CardHeader>{title}</CardHeader>;
 	const p = { values: form.values, errors: form.errors };
 	return (
-		<CardContent>
-			<CollapsibleCard title={t.parts.addPastPrice} icon={icons.plus} open={Object.keys(form.errors).length > 0}>
-				<form method="post" action={`/parts/${part.id}/prices/past#price-history`} class="flex flex-col gap-6">
-					<p class="text-sm text-muted-foreground">{t.parts.pastPriceHint}</p>
-					<ErrorBanner show={Object.keys(form.errors).length > 0} />
-					<FieldGroup>
-						<div class="grid gap-4 md:grid-cols-3">
-							<TextField name="date" label={t.parts.pastPriceDate} type="date" required {...p} />
-							<DecimalField name="price" label={t.parts.price} required {...p} />
-							<SelectField
-								name="supplier_id"
-								label={t.parts.pastPriceSupplier}
-								options={[
-									{ value: "", label: t.parts.pastPriceStandard },
-									...(isStocked(part.kind) ? form.suppliers.map((s) => ({ value: String(s.id), label: s.name })) : []),
-								]}
-								{...p}
-							/>
-						</div>
-						<TextField name="note" label={t.common.notes} {...p} />
-					</FieldGroup>
-					<div>
-						<Button icon={icons.plus}>{t.parts.pastPriceSubmit}</Button>
+		<InlineEdit
+			summary={title}
+			label={t.parts.addPastPrice}
+			icon={icons.plus}
+			open={Object.keys(form.errors).length > 0}
+			summaryClass="items-start px-6"
+			bodyClass="px-6"
+		>
+			<form method="post" action={`/parts/${part.id}/prices/past#price-history`} class="flex flex-col gap-6">
+				<p class="text-sm text-muted-foreground">{t.parts.pastPriceHint}</p>
+				<ErrorBanner show={Object.keys(form.errors).length > 0} />
+				<FieldGroup>
+					<div class="grid gap-4 md:grid-cols-3">
+						<TextField name="date" label={t.parts.pastPriceDate} type="date" required {...p} />
+						<DecimalField name="price" label={t.parts.price} required {...p} />
+						<SelectField
+							name="supplier_id"
+							label={t.parts.pastPriceSupplier}
+							options={[
+								{ value: "", label: t.parts.pastPriceStandard },
+								...(isStocked(part.kind) ? form.suppliers.map((s) => ({ value: String(s.id), label: s.name })) : []),
+							]}
+							{...p}
+						/>
 					</div>
-				</form>
-			</CollapsibleCard>
-		</CardContent>
+					<TextField name="note" label={t.common.notes} {...p} />
+				</FieldGroup>
+				<div>
+					<Button icon={icons.plus}>{t.parts.pastPriceSubmit}</Button>
+				</div>
+			</form>
+		</InlineEdit>
 	);
 }
 
@@ -1155,10 +1167,7 @@ function PriceHistoryCard(props: {
 		history.some((h) => h.kind === "standard" && h.priceCents !== null) || paid.some((r) => r.unitCostCents !== null);
 	return (
 		<Card id="price-history" class="scroll-mt-20">
-			<CardHeader>
-				<CardTitle icon={icons.history}>{t.parts.priceHistory}</CardTitle>
-				<CardDescription>{t.parts.priceHistoryHint}</CardDescription>
-			</CardHeader>
+			<PriceHistoryHeader part={props.part} pastPrice={props.pastPrice} />
 			{history.length === 0 && paid.length === 0 ? (
 				<CardContent class="px-2">
 					<CardEmpty icon={icons.chartColumn}>{t.parts.noPriceHistory}</CardEmpty>
@@ -1278,7 +1287,6 @@ function PriceHistoryCard(props: {
 					</CardContent>
 				</>
 			)}
-			{props.pastPrice ? <PastPriceForm part={props.part} form={props.pastPrice} /> : null}
 		</Card>
 	);
 }

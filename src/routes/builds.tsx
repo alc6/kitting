@@ -83,6 +83,7 @@ import {
 	KindBadge,
 	LinkButton,
 	Money,
+	MoreMenu,
 	PageHeader,
 	PostButton,
 	Qty,
@@ -837,12 +838,16 @@ function BuildHeader(props: { data: BuildData }) {
 						{build.status === "planned" ? (
 							<PostButton action={`/builds/${build.id}/start`} label={t.builds.start} icon={icons.play} />
 						) : null}
-						<PostButton
-							action={`/builds/${build.id}/cancel`}
-							label={t.builds.cancel}
-							confirm={t.builds.confirmCancel}
-							variant="destructive"
-							icon={icons.ban}
+						<MoreMenu
+							items={[
+								{
+									label: t.builds.cancel,
+									icon: icons.ban,
+									action: `/builds/${build.id}/cancel`,
+									confirm: t.builds.confirmCancel,
+									destructive: true,
+								},
+							]}
 						/>
 					</>
 				) : null

@@ -384,6 +384,135 @@ export function DialogFooter(props: { dialog: string; children: Child }) {
 }
 
 // ---------------------------------------------------------------------------
+// MoreMenu
+
+/** One entry of a MoreMenu: a link (`href`) or a POST form (`action`, with an optional `confirm` prompt). */
+export type MenuItem = {
+	label: string;
+	icon?: IconNode;
+	href?: string;
+	action?: string;
+	confirm?: string;
+	/** Archive, delete, cancel: shown in the destructive colour, after a separator. */
+	destructive?: boolean;
+};
+
+const MENU_ITEM =
+	"flex w-full cursor-default items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm font-normal whitespace-nowrap text-foreground no-underline outline-none select-none hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground coarse:min-h-12 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 [&_svg:not([class*='text-'])]:text-muted-foreground";
+const MENU_ITEM_DESTRUCTIVE =
+	"text-destructive hover:bg-destructive/10 hover:text-destructive focus-visible:bg-destructive/10 focus-visible:text-destructive dark:hover:bg-destructive/20 [&_svg:not([class*='text-'])]:text-destructive";
+
+/**
+ * The "⋯" button of a page header and its menu (shadcn DropdownMenu look, on the Popover API like Dialog: no
+ * JavaScript, Esc or a click outside closes it, the menu is anchored to its button by CSS). It is a plain popover of
+ * links and buttons, reached with Tab: no ARIA menu roles, which would promise arrow-key navigation it does not have). It holds what is not an
+ * everyday action: archive, delete, retire, cancel. Falsy entries are skipped, and without any entry nothing is
+ * rendered, so a role that may use none of them sees no button. Entries are links or POST forms (`data-confirm`
+ * still asks first); destructive ones come last, in the destructive colour.
+ */
+export function MoreMenu(props: { id?: string; items: (MenuItem | false | null | undefined)[] }) {
+	const { t } = useApp();
+	const id = props.id ?? "more-menu";
+	const items = props.items.filter((i): i is MenuItem => Boolean(i));
+	if (items.length === 0) return null;
+	const ordered = [...items.filter((i) => !i.destructive), ...items.filter((i) => i.destructive)];
+	return (
+		<>
+			<Button
+				type="button"
+				variant="outline"
+				size="icon"
+				icon={icons.ellipsis}
+				popovertarget={id}
+				aria-label={t.common.moreActions}
+				title={t.common.moreActions}
+			/>
+			<div
+				id={id}
+				popover="auto"
+				data-slot="dropdown-menu-content"
+				class="m-0 mt-1 min-w-44 overflow-visible rounded-md border bg-popover p-1 text-popover-foreground shadow-md [position-area:bottom_span-left] [position-try-fallbacks:flip-block]"
+			>
+				{ordered.map((item, i) => {
+					const cls = cn(MENU_ITEM, item.destructive && MENU_ITEM_DESTRUCTIVE);
+					const body = (
+						<>
+							{item.icon ? <Icon icon={item.icon} /> : null}
+							{item.label}
+						</>
+					);
+					const separator = item.destructive && i > 0 && !ordered[i - 1]?.destructive;
+					return (
+						<>
+							{separator ? <hr data-slot="dropdown-menu-separator" class="-mx-1 my-1 h-px border-0 bg-border" /> : null}
+							{item.href !== undefined ? (
+								<a href={item.href} data-slot="dropdown-menu-item" class={cls}>
+									{body}
+								</a>
+							) : (
+								<form method="post" action={item.action} data-confirm={item.confirm} class="contents">
+									<button type="submit" data-slot="dropdown-menu-item" class={cls}>
+										{body}
+									</button>
+								</form>
+							)}
+						</>
+					);
+				})}
+			</div>
+		</>
+	);
+}
+
+// ---------------------------------------------------------------------------
+// InlineEdit
+
+/**
+ * A form shown only on demand, in place (native <details>, so no JavaScript): `summary` is always visible, the Edit
+ * button on its right reveals `children` under it, and `open` starts it open (a refused form, with its errors inline).
+ * Unlike a Dialog it is fine for forms that render their errors next to their fields. The whole summary line toggles;
+ * the button is its visual cue, and says "Close" while the form is open.
+ */
+export function InlineEdit(props: {
+	summary: Child;
+	label?: Child;
+	icon?: IconNode;
+	open?: boolean;
+	class?: string;
+	summaryClass?: string;
+	bodyClass?: string;
+	children: Child;
+}) {
+	const { t } = useApp();
+	return (
+		<details open={props.open} data-slot="inline-edit" class={cn("group/edit", props.class)}>
+			<summary
+				class={cn(
+					"group/summary flex min-h-(--control-h) list-none items-center justify-between gap-x-4 gap-y-2 outline-none [&::-webkit-details-marker]:hidden",
+					props.summaryClass,
+				)}
+			>
+				<div class="min-w-0 flex-1">{props.summary}</div>
+				<span
+					data-slot="button"
+					class={buttonClass(
+						"outline",
+						"sm",
+						"cursor-pointer group-focus-visible/summary:border-ring group-focus-visible/summary:ring-[3px] group-focus-visible/summary:ring-ring/50",
+					)}
+				>
+					<Icon icon={props.icon ?? icons.pencil} class="group-open/edit:hidden" data-icon="inline-start" />
+					<Icon icon={icons.x} class="hidden group-open/edit:block" data-icon="inline-start" />
+					<span class="group-open/edit:hidden">{props.label ?? t.common.edit}</span>
+					<span class="hidden group-open/edit:inline">{t.common.close}</span>
+				</span>
+			</summary>
+			<div class={cn("pt-4", props.bodyClass)}>{props.children}</div>
+		</details>
+	);
+}
+
+// ---------------------------------------------------------------------------
 // Table
 
 export function Table(props: Slot) {

@@ -40,8 +40,8 @@ import {
 	CardTitle,
 	type FormErrors,
 	type FormValues,
+	MoreMenu,
 	PageHeader,
-	PostButton,
 	SelectField,
 	TextField,
 } from "../views/ui";
@@ -207,12 +207,16 @@ function editPage(
 				title={fmt(t.files.editTitle, { name: f.name })}
 				subtitle={<a href={`${ownerPage(ownerOf(found))}#files`}>{fmt(t.files.backTo, { owner })}</a>}
 				actions={
-					<PostButton
-						action={`/files/${f.id}/remove`}
-						label={t.files.remove}
-						confirm={t.files.confirmRemove}
-						variant="destructive"
-						icon={icons.trash}
+					<MoreMenu
+						items={[
+							{
+								label: t.files.remove,
+								icon: icons.trash,
+								action: `/files/${f.id}/remove`,
+								confirm: t.files.confirmRemove,
+								destructive: true,
+							},
+						]}
 					/>
 				}
 			/>

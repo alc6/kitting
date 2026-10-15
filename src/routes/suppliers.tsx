@@ -39,8 +39,8 @@ import {
 	type FormErrors,
 	type FormValues,
 	Money,
+	MoreMenu,
 	PageHeader,
-	PostButton,
 	Qty,
 	SearchBar,
 	Table,
@@ -127,6 +127,10 @@ function SupplierForm(props: {
 	errors: FormErrors;
 	submit: string;
 	title?: string;
+	/** Where Cancel leads: the supplier's page, or the list for a new one. */
+	cancel?: string;
+	/** Focus the name field (a new supplier only: an edit starts on the page the user came from). */
+	autofocus?: boolean;
 }) {
 	const { t } = useApp();
 	const p = { values: props.values, errors: props.errors };
@@ -142,7 +146,7 @@ function SupplierForm(props: {
 				<CardContent>
 					<form method="post" action={props.action} class="flex flex-col gap-6">
 						<FieldGroup>
-							<TextField name="name" label={t.suppliers.name} required autofocus {...p} />
+							<TextField name="name" label={t.suppliers.name} required autofocus={props.autofocus} {...p} />
 							<div class="grid gap-4 md:grid-cols-2">
 								<TextField name="email" label={t.suppliers.email} type="email" {...p} />
 								<TextField name="phone" label={t.suppliers.phone} type="tel" {...p} />
@@ -151,7 +155,7 @@ function SupplierForm(props: {
 						</FieldGroup>
 						<div class="flex flex-wrap items-center gap-2">
 							<Button>{props.submit}</Button>
-							<Button variant="outline" href="/suppliers">
+							<Button variant="outline" href={props.cancel ?? "/suppliers"}>
 								{t.common.cancel}
 							</Button>
 						</div>
@@ -162,7 +166,7 @@ function SupplierForm(props: {
 	);
 }
 
-/** Read-only contact details, for roles that may not edit suppliers. */
+/** Contact details and notes of a supplier. */
 function SupplierDetails(props: { supplier: Supplier }) {
 	const { t } = useApp();
 	const s = props.supplier;
@@ -172,7 +176,10 @@ function SupplierDetails(props: { supplier: Supplier }) {
 				<DetailList
 					items={[
 						{ label: t.suppliers.email, value: s.email ? <a href={`mailto:${s.email}`}>{s.email}</a> : t.common.none },
-						{ label: t.suppliers.phone, value: s.phone || t.common.none },
+						{
+							label: t.suppliers.phone,
+							value: s.phone ? <a href={`tel:${s.phone.replace(/[^+0-9]/g, "")}`}>{s.phone}</a> : t.common.none,
+						},
 						...(s.notes ? [{ label: t.common.notes, value: <span class="whitespace-pre-wrap">{s.notes}</span> }] : []),
 					]}
 				/>
@@ -275,7 +282,7 @@ supplierRoutes.get("/new", requirePermission("suppliers.edit"), (c) => {
 		t.suppliers.new,
 		<>
 			<PageHeader title={t.suppliers.new} />
-			<SupplierForm action="/suppliers" values={{}} errors={{}} submit={t.common.create} />
+			<SupplierForm action="/suppliers" values={{}} errors={{}} submit={t.common.create} autofocus />
 		</>,
 	);
 });
@@ -297,6 +304,7 @@ supplierRoutes.post("/", requirePermission("suppliers.edit"), async (c) => {
 					values={body as FormValues}
 					errors={translateErrors(c, errors)}
 					submit={t.common.create}
+					autofocus
 				/>
 			</>,
 			422,
@@ -322,34 +330,55 @@ supplierRoutes.get("/:id", async (c) => {
 				title={supplier.name}
 				subtitle={fmt(t.common.updatedBy, { by: supplier.updatedBy, at: supplier.updatedAt.slice(0, 10) })}
 				actions={
-					can(c.var, "suppliers.delete") ? (
-						<PostButton
-							action={`/suppliers/${supplier.id}/delete`}
-							label={t.common.delete}
-							confirm={t.common.confirmDelete}
-							variant="destructive"
-							icon={icons.trash}
+					<>
+						{can(c.var, "suppliers.edit") ? (
+							<Button href={`/suppliers/${supplier.id}/edit`} variant="outline" icon={icons.pencil}>
+								{t.common.edit}
+							</Button>
+						) : null}
+						<MoreMenu
+							items={[
+								can(c.var, "suppliers.delete") && {
+									label: t.common.delete,
+									icon: icons.trash,
+									action: `/suppliers/${supplier.id}/delete`,
+									confirm: t.common.confirmDelete,
+									destructive: true,
+								},
+							]}
 						/>
-					) : null
+					</>
 				}
 			/>
 			<RecordTabs base={`/suppliers/${supplier.id}`} active="overview" />
 			<Flash ok={c.req.query("ok")} />
 			{c.req.query("err") === "in_use" ? <Alert variant="destructive">{t.errors.in_use}</Alert> : null}
 			<div class="flex flex-col gap-4">
-				{can(c.var, "suppliers.edit") ? (
-					<SupplierForm
-						action={`/suppliers/${supplier.id}`}
-						values={supplierToForm(supplier)}
-						errors={{}}
-						submit={t.common.save}
-						title={t.suppliers.edit}
-					/>
-				) : (
-					<SupplierDetails supplier={supplier} />
-				)}
+				<SupplierDetails supplier={supplier} />
 				<SupplierOffers offers={offers} />
 			</div>
+		</>,
+	);
+});
+
+supplierRoutes.get("/:id/edit", requirePermission("suppliers.edit"), async (c) => {
+	const t = c.var.t;
+	const id = idParam(c);
+	const supplier = id ? await getSupplier(c.var.db, id) : undefined;
+	if (!supplier) return notFound(c);
+	return page(
+		c,
+		t.suppliers.edit,
+		<>
+			<PageHeader title={supplier.name} />
+			<SupplierForm
+				action={`/suppliers/${supplier.id}`}
+				values={supplierToForm(supplier)}
+				errors={{}}
+				submit={t.common.save}
+				title={t.suppliers.edit}
+				cancel={`/suppliers/${supplier.id}`}
+			/>
 		</>,
 	);
 });
@@ -389,6 +418,7 @@ supplierRoutes.post("/:id", requirePermission("suppliers.edit"), async (c) => {
 					errors={translateErrors(c, errors)}
 					submit={t.common.save}
 					title={t.suppliers.edit}
+					cancel={`/suppliers/${supplier.id}`}
 				/>
 			</>,
 			422,

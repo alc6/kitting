@@ -1136,3 +1136,42 @@ A survey of every page (before/after mockups approved by the user, P0–P13) led
   stock moves). Every `SearchBar` is live (htmx on input and change), so its Search button is only needed without
   JavaScript: it is marked `data-live-submit`, and `app.js` hides it with the `hidden` attribute only when htmx has
   loaded (if the library is blocked, the button stays and the bar still submits).
+
+- **D176. Page headers keep the everyday actions; the rest goes in a "More actions" menu.** A red Delete next to Edit on
+  every detail page made a destructive click as easy as the common one. `MoreMenu` (`src/views/ui.tsx`) is a "⋯" icon
+  button (`aria-label` "More actions") and a shadcn DropdownMenu-style list on the same Popover API as `Dialog`: no
+  script, Esc or an outside click closes it, and CSS anchor positioning (`position-area`, the invoker is the implicit
+  anchor) places it under its button, with a small `app.js` fallback that computes the place for a browser without it.
+  Entries are links or POST forms (`data-confirm` still asks first); non-destructive ones come first, then a
+  separator and the destructive ones in the destructive colour. It is a plain popover of links and buttons reached with Tab, so it carries no ARIA
+  menu roles (they would promise arrow-key navigation it does not have). Falsy entries are skipped and no entry renders
+  nothing at all, so a role that may do none of them sees no button: the `can()` checks stay where the entries are
+  built, and the routes keep their `requirePermission`. What moved: Archive/Unarchive and Delete (parts,
+  assemblies), Delete (suppliers, purchase orders), Close and Cancel (purchase orders), Cancel build, Retire (machines),
+  Remove (the file page). Staying in the header: Edit, Adjust stock, New revision, Copy as new variant, Activate,
+  Start, Receive, Mark sent. Cancel build, Cancel PO, Delete and Remove are destructive; Archive, Close and Retire are
+  not (they can be undone from the page or the history).
+- **D177. Forms needed now and then fold open in place, not in a dialog, when they show errors inline.** `InlineEdit`
+  (`src/views/ui.tsx`) is a native `<details>` whose `<summary>` stays visible and carries an Edit button (its label
+  says "Close" while open): the form works as a plain form without JavaScript, and `open` starts it open when the page
+  comes back from a refused post, with the errors next to the fields (the rule of D168). Used for the production
+  settings of an assembly (the summary is one line: "Batch 1 pcs · Machine none · Machine time —"; the long help text
+  stays in the form), the selling price of a variant (the summary is the price with its "own price" badge, or "product's
+  price"), and "Add a past price" of a part, which became the price history card's header button. The posts, the
+  validation and the redirects are unchanged. An htmx swap of the lines card closes the production form again, which is
+  harmless because the line forms never need it.
+- **D178. Supplier and machine pages are read views, like parts; editing has its own route.** They opened straight
+  into the edit form with the name focused, so a visit to read a phone number put the keyboard in a form. Now
+  `/suppliers/:id` shows the contact details (email and phone as `mailto:`/`tel:` links) and notes,
+  `/machines/:id` its type, status and notes; the header has Edit for who may (`suppliers.edit`, `machines.edit`) leading
+  to `/suppliers/:id/edit` and `/machines/:id/edit` (the same forms, saved by the same posts, Cancel returning to
+  the page, no autofocus: only the "new" forms focus the name). A refused edit re-renders the edit form with its errors.
+  A role that may not edit sees the same page without the button. Machine types keep their form on the page (their rate
+  history lives below it).
+- **D179. Import is one list in import order; a type's form opens in a dialog.** Eight importer cards made a page of
+  nearly 3,000 px for a task done one type at a time. The page is now a numbered list (the order a dependent type
+  needs) with, per row, the type, a one-line summary, Template, Export and "Import…". "Import…" opens that type's form
+  (column list with required marks, file or pasted CSV, Preview) in a `Dialog`: unlike a form with inline errors
+  (D168), this one never shows errors, because Preview posts to its own page where the file's problems are listed, so
+  a dialog is safe, with or without JavaScript. The full help text of the type moved from the card to the dialog's
+  description. Preview, confirm and the Backup card are unchanged.
