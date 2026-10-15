@@ -40,6 +40,7 @@ export const en = {
 	common: {
 		search: "Search",
 		searchPlaceholder: "Search…",
+		dates: "Dates",
 		save: "Save",
 		cancel: "Cancel",
 		close: "Close",

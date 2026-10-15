@@ -1116,3 +1116,23 @@ A survey of every page (before/after mockups approved by the user, P0–P13) led
   repeated inside the dialog because the page alert sits under the backdrop, and without JavaScript the page alert is
   still there. A form whose errors are rendered inline next to its fields never goes in a dialog: without JavaScript
   they would stay hidden (those forms fold in place instead).
+- **D169. Quiet secondary elements.** `CardEmpty` (nothing to show inside a card) is one muted line with a small icon:
+  no dashed box, no icon tile, so a page of mostly empty cards (a new part: files, prices, builds, where used) stays
+  calm. The full `EmptyState` stays where the empty list is the page's result: an empty Parts, Builds or PO list, a
+  filtered stock list, the change log, margins, and the pages that explain a first step (title, hint, button).
+  `CardEmpty large` keeps the old look for a titled card that is the main list (stock tabs, change log, margins);
+  `BuildsTable` and `PoTable`, embedded in the dashboard and the part page, fall back to the quiet one (their pages
+  guard the main lists before reaching them). The "Adjust" button repeated on each On hand row is an icon-only ghost
+  button (`icon-sm`, so 48px on touch) with the same link, `aria-label` and `title`.
+- **D170. Controls share the button radius.** Inputs, selects, textareas and the file input looked square beside the
+  rounded buttons because Tailwind's preflight resets `border-radius` on them with an element selector, which beats
+  the zero-specificity `:where()` block of the base layer. The radius now has its own `:is()` rule in `app.css`
+  (classes in the utilities layer still win), and `::file-selector-button` is a small rounded secondary control
+  (preflight resets it too, so the `file:` utilities never applied). The top search box follows, and its placeholder
+  is just "Search" (it was cut off); the descriptive text moved to its `aria-label`.
+- **D171. Filter bars stay on one line, and drop the redundant button with JavaScript.** Two dated inputs become one
+  `DateRange` ("Dates", from - to, in a `fieldset` whose legend names it for screen readers); `SearchBar compact`
+  gives a bar with a range narrower selects and search so that it fits at 1280px with the sidebar open (change log,
+  stock moves). Every `SearchBar` is live (htmx on input and change), so its Search button is only needed without
+  JavaScript: it is marked `data-live-submit`, and `app.js` hides it with the `hidden` attribute only when htmx has
+  loaded (if the library is blocked, the button stays and the bar still submits).

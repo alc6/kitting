@@ -66,6 +66,7 @@ import {
 	Card,
 	CardContent,
 	CardDescription,
+	CardEmpty,
 	CardFooter,
 	CardHeader,
 	CardTitle,
@@ -119,10 +120,19 @@ export function BuildStatusBadge(props: { status: BuildStatus }) {
 	return <span class={`status status-${props.status}`}>{t.builds.statuses[props.status]}</span>;
 }
 
-/** Bare table of builds (no card), also embedded by the dashboard and the part page. */
-export function BuildsTable(props: { rows: BuildRow[] }) {
+/**
+ * Bare table of builds, also embedded by the dashboard and the part page, where it sits in a secondary card:
+ * its empty state is the quiet one (`emptyClass` aligns it with the padding of the card).
+ */
+export function BuildsTable(props: { rows: BuildRow[]; emptyClass?: string }) {
 	const { t } = useApp();
-	if (props.rows.length === 0) return <EmptyState icon={icons.hammer} description={t.builds.noBuilds} />;
+	if (props.rows.length === 0) {
+		return (
+			<CardEmpty icon={icons.hammer} class={props.emptyClass ?? "px-0 py-1"}>
+				{t.builds.noBuilds}
+			</CardEmpty>
+		);
+	}
 	return (
 		<Table>
 			<TableHeader>

@@ -39,6 +39,7 @@ export const fr: Dict = {
 	common: {
 		search: "Rechercher",
 		searchPlaceholder: "Rechercher…",
+		dates: "Dates",
 		save: "Enregistrer",
 		cancel: "Annuler",
 		close: "Fermer",

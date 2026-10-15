@@ -333,7 +333,7 @@ marginRoutes.get("/", async (c) => {
 					</Button>
 				}
 			>
-				{shown.length === 0 ? <CardEmpty icon={icons.filter} /> : <MarginsTable rows={shown} />}
+				{shown.length === 0 ? <CardEmpty icon={icons.filter} large /> : <MarginsTable rows={shown} />}
 				<div class="flex flex-col gap-1 border-t px-4 py-3 text-xs text-muted-foreground">
 					<p>{t.margins.legend}</p>
 					{shown.some((r) => r.plannedIncomplete || (r.doneBuilds > 0 && r.actualIncomplete)) ? (

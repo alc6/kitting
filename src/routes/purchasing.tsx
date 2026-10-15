@@ -63,11 +63,11 @@ import {
 	CardAction,
 	CardContent,
 	CardDescription,
+	CardEmpty,
 	CardFooter,
 	CardHeader,
 	CardTitle,
 	CollapsibleCard,
-	Empty,
 	EmptyState,
 	ErrorBanner,
 	FieldGroup,
@@ -448,7 +448,13 @@ purchasingRoutes.get("/po", async (c) => {
 /** The PO list as a bare table (or an empty state); callers put it in a card. */
 export function PoTable(props: { rows: Awaited<ReturnType<typeof listPos>>; today: string }) {
 	const { t, seeCosts } = useApp();
-	if (props.rows.length === 0) return <Empty>{t.purchasing.noPos}</Empty>;
+	if (props.rows.length === 0) {
+		return (
+			<CardEmpty icon={icons.receipt} class="px-0 py-1">
+				{t.purchasing.noPos}
+			</CardEmpty>
+		);
+	}
 	return (
 		<Table>
 			<TableHeader>
@@ -666,7 +672,9 @@ function DraftLines(props: {
 				</CardHeader>
 				<CardContent class="px-2">
 					{props.lines.length === 0 ? (
-						<EmptyState icon={icons.list} description={t.purchasing.noLines} class="mx-4" />
+						<CardEmpty icon={icons.list} class="px-4">
+							{t.purchasing.noLines}
+						</CardEmpty>
 					) : (
 						<Table>
 							<TableHeader>

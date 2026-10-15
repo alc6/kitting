@@ -34,6 +34,7 @@ import {
 	Card,
 	CardContent,
 	CardEmpty,
+	DateRange,
 	FieldGroup,
 	Flash,
 	type FormErrors,
@@ -153,7 +154,7 @@ stockRoutes.get("/", async (c) => {
 			<div id="results">
 				<TableCard title={fmt(t.common.results, { n: rows.length })}>
 					{rows.length === 0 ? (
-						<CardEmpty />
+						<CardEmpty large />
 					) : (
 						<Table>
 							<TableHeader class="bg-muted/50">
@@ -197,12 +198,12 @@ stockRoutes.get("/", async (c) => {
 												<TableCell class="w-0 text-right">
 													<Button
 														href={`/stock/adjust?part=${p.id}`}
-														variant="outline"
-														size="sm"
+														variant="ghost"
+														size="icon-sm"
 														icon={icons.arrowUpDown}
-													>
-														{t.stock.adjust}
-													</Button>
+														aria-label={t.stock.adjust}
+														title={t.stock.adjust}
+													/>
 												</TableCell>
 											) : null}
 										</TableRow>
@@ -349,7 +350,7 @@ async function renderCount(c: Context<AppEnv>, values: FormValues, errors: Field
 				<div id="results">
 					<TableCard>
 						{rows.length === 0 ? (
-							<CardEmpty />
+							<CardEmpty large />
 						) : (
 							<Table>
 								<TableHeader class="bg-muted/50">
@@ -485,8 +486,8 @@ stockRoutes.get("/moves", async (c) => {
 		t.stock.tabs.moves,
 		<>
 			<StockHeader tab="moves" />
-			<SearchBar action="/stock/moves" q={q}>
-				<select name="reason" aria-label={t.stock.reason} class="w-auto flex-[0_1_220px]">
+			<SearchBar action="/stock/moves" q={q} compact>
+				<select name="reason" aria-label={t.stock.reason}>
 					<option value="">{t.stock.reasonAll}</option>
 					{MOVE_REASONS.map((r) => (
 						<option value={r} selected={r === reason}>
@@ -494,14 +495,7 @@ stockRoutes.get("/moves", async (c) => {
 						</option>
 					))}
 				</select>
-				<label class="inline-flex items-center gap-2 text-sm font-medium">
-					<span class="text-muted-foreground">{t.stock.from}</span>
-					<input type="date" name="from" value={from ?? ""} class="w-auto" />
-				</label>
-				<label class="inline-flex items-center gap-2 text-sm font-medium">
-					<span class="text-muted-foreground">{t.stock.to}</span>
-					<input type="date" name="to" value={to ?? ""} class="w-auto" />
-				</label>
+				<DateRange from={from} to={to} fromLabel={t.stock.from} toLabel={t.stock.to} />
 			</SearchBar>
 			<div id="results">
 				<TableCard
@@ -509,7 +503,7 @@ stockRoutes.get("/moves", async (c) => {
 					action={<CsvButton href={`/stock/moves?${query}`} />}
 				>
 					{rows.length === 0 ? (
-						<CardEmpty />
+						<CardEmpty large />
 					) : (
 						<Table>
 							<TableHeader class="bg-muted/50">
@@ -711,7 +705,7 @@ stockRoutes.get("/valuation", requirePermission("costs.view"), async (c) => {
 				action={<CsvButton href={`/stock/valuation?${new URLSearchParams({ at: at ?? "", format: "csv" })}`} />}
 			>
 				{v.rows.length === 0 ? (
-					<CardEmpty />
+					<CardEmpty large />
 				) : (
 					<Table>
 						<TableHeader class="bg-muted/50">

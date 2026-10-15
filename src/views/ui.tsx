@@ -275,15 +275,30 @@ export function TableCard(props: { title?: Child; action?: Child; class?: string
 	);
 }
 
-/** An empty state inside a card (the card already draws the border). */
-export function CardEmpty(props: { icon?: IconNode; children?: Child }) {
+/**
+ * Nothing to show inside a card (D169): one muted line with a small icon, no box and no tile, for the secondary
+ * cards of a page (files, where used, prices paid...). `large` keeps the full EmptyState for a card that is the
+ * main result of the page (an empty stock list); the card already draws the border.
+ */
+export function CardEmpty(props: { icon?: IconNode; children?: Child; large?: boolean; class?: string }) {
 	const { t } = useApp();
+	const text = props.children ?? t.common.noResults;
+	if (props.large) {
+		return (
+			<EmptyState icon={props.icon} description={text} class={cn("rounded-none border-0 p-4 md:p-6", props.class)} />
+		);
+	}
 	return (
-		<EmptyState
-			icon={props.icon}
-			description={props.children ?? t.common.noResults}
-			class="rounded-none border-0 p-4 md:p-6"
-		/>
+		<p
+			data-slot="card-empty"
+			class={cn(
+				"m-0 flex items-center gap-2 px-6 py-4 text-sm text-muted-foreground [&_svg:not([class*='size-'])]:size-4",
+				props.class,
+			)}
+		>
+			<Icon icon={props.icon ?? icons.inbox} class="shrink-0" />
+			<span>{text}</span>
+		</p>
 	);
 }
 
@@ -711,13 +726,17 @@ export function ErrorBanner(props: { show: boolean; message?: string }) {
 /**
  * Live search: a plain GET form that also works without JavaScript. With htmx it
  * refreshes only #results (selected from the full page response) as you type.
+ * `compact` keeps a bar with a DateRange on one line (D170).
  */
-export function SearchBar(props: { action: string; q: string; children?: Child }) {
+export function SearchBar(props: { action: string; q: string; compact?: boolean; children?: Child }) {
 	const { t } = useApp();
 	return (
 		<search>
 			<form
-				class="searchbar mb-4 flex flex-wrap items-center gap-2 [&>select]:w-auto [&>select]:flex-[0_1_220px]"
+				class={cn(
+					"searchbar mb-4 flex flex-wrap items-center gap-2 [&>select]:w-auto [&>select]:flex-[0_1_220px]",
+					props.compact && "[&>select]:flex-[0_1_130px]",
+				)}
 				method="get"
 				action={props.action}
 				hx-get={props.action}
@@ -727,7 +746,7 @@ export function SearchBar(props: { action: string; q: string; children?: Child }
 				hx-swap="outerHTML"
 				hx-push-url="true"
 			>
-				<div class="relative flex-[1_1_260px]">
+				<div class={cn("relative", props.compact ? "flex-[1_1_120px]" : "flex-[1_1_260px]")}>
 					<Icon
 						icon={icons.search}
 						class="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground"
@@ -742,9 +761,33 @@ export function SearchBar(props: { action: string; q: string; children?: Child }
 					/>
 				</div>
 				{props.children}
-				<Button variant="outline">{t.common.search}</Button>
+				{/* Needed without JavaScript only: app.js hides it, the form submits itself as you type (D171). */}
+				<Button variant="outline" data-live-submit="">
+					{t.common.search}
+				</Button>
 			</form>
 		</search>
+	);
+}
+
+/**
+ * A date range for a filter bar (D170): one "Dates" label and "from - to" on one line, the inputs named `from` and
+ * `to`. Each input keeps its own accessible name.
+ */
+export function DateRange(props: { from?: string | null; to?: string | null; fromLabel: string; toLabel: string }) {
+	const { t } = useApp();
+	return (
+		<fieldset class="m-0 flex min-w-0 shrink-0 items-center gap-2 border-0 p-0">
+			<legend class="sr-only">{t.common.dates}</legend>
+			<span aria-hidden="true" class="text-sm font-medium text-muted-foreground">
+				{t.common.dates}
+			</span>
+			<input type="date" name="from" value={props.from ?? ""} aria-label={props.fromLabel} class="w-auto px-2" />
+			<span aria-hidden="true" class="text-muted-foreground">
+				&ndash;
+			</span>
+			<input type="date" name="to" value={props.to ?? ""} aria-label={props.toLabel} class="w-auto px-2" />
+		</fieldset>
 	);
 }
 

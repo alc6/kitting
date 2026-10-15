@@ -220,6 +220,12 @@
 		if (dialog instanceof HTMLElement && typeof dialog.showPopover === "function") dialog.showPopover();
 	}
 
+	// <button data-live-submit>: the submit button of a live filter bar (htmx refreshes the results as you type or
+	// change a filter), so it is redundant once htmx is there. Without JavaScript it stays and submits the form.
+	if (window.htmx) {
+		for (const button of document.querySelectorAll("[data-live-submit]")) button.hidden = true;
+	}
+
 	// <form data-upload-form data-busy="Uploading…">: a large file takes a while on the workshop's Wi-Fi, so the
 	// button says so and cannot send it twice.
 	const busyButtons = [];

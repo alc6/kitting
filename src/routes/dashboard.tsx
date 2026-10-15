@@ -20,6 +20,7 @@ import {
 	CardAction,
 	CardContent,
 	CardDescription,
+	CardEmpty,
 	CardHeader,
 	CardTitle,
 	EmptyState,
@@ -202,7 +203,9 @@ dashboardRoutes.get("/", async (c) => {
 							</Alert>
 						))}
 						{shortageLines.length === 0 ? (
-							<EmptyState icon={icons.circleCheck} description={t.dashboard.noShortages} class="md:p-6" />
+							<CardEmpty icon={icons.circleCheck} class="px-0 py-1">
+								{t.dashboard.noShortages}
+							</CardEmpty>
 						) : (
 							<Table>
 								<TableHeader>
@@ -256,7 +259,9 @@ dashboardRoutes.get("/", async (c) => {
 
 				<Section title={t.dashboard.alerts} href="/stock" total={alerts.length}>
 					{alerts.length === 0 ? (
-						<EmptyState icon={icons.circleCheck} description={t.dashboard.noAlerts} class="md:p-6" />
+						<CardEmpty icon={icons.circleCheck} class="px-0 py-1">
+							{t.dashboard.noAlerts}
+						</CardEmpty>
 					) : (
 						<ul class="m-0 flex list-none flex-col divide-y p-0">
 							{alerts.slice(0, LIMIT).map(({ p, label, negative }) => (

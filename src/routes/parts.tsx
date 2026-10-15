@@ -631,7 +631,7 @@ function PartDetail(props: {
 							) : null}
 						</CardHeader>
 						<CardContent class="px-2">
-							<BuildsTable rows={props.builds} />
+							<BuildsTable rows={props.builds} emptyClass="px-4 py-1" />
 						</CardContent>
 					</Card>
 				) : null}
@@ -1517,7 +1517,9 @@ function WhereUsed(props: { rows: WhereUsedRow[] }) {
 			</CardHeader>
 			<CardContent class="px-2">
 				{props.rows.length === 0 ? (
-					<CardEmpty icon={icons.layers}>{t.common.noResults}</CardEmpty>
+					<CardEmpty icon={icons.layers} class="px-4">
+						{t.common.noResults}
+					</CardEmpty>
 				) : (
 					<Table>
 						<TableHeader>
