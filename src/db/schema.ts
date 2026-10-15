@@ -308,6 +308,26 @@ export const poLines = sqliteTable(
 	],
 );
 
+// Parcels a supplier sent for a PO (D168): who carries them and how to follow them. Kitting stores what the
+// supplier gives (a tracking number, maybe a link) and never calls a carrier.
+export const poShipments = sqliteTable(
+	"po_shipments",
+	{
+		id: integer("id").primaryKey({ autoIncrement: true }),
+		poId: integer("po_id")
+			.notNull()
+			.references(() => purchaseOrders.id, { onDelete: "cascade" }),
+		carrier: text("carrier").notNull(),
+		trackingNumber: text("tracking_number").notNull(),
+		trackingUrl: text("tracking_url").notNull().default(""),
+		shippedAt: text("shipped_at"),
+		notes: text("notes").notNull().default(""),
+		...audit(),
+	},
+	// One shipment per tracking number on a PO, ignoring case (an undo or a restore cannot bring back "pc1" next to "PC1").
+	(t) => [uniqueIndex("po_shipments_tracking_unique").on(t.poId, sql`lower(${t.trackingNumber})`)],
+);
+
 export const builds = sqliteTable(
 	"builds",
 	{
@@ -578,6 +598,7 @@ export const HISTORY_TABLES: SQLiteTable[] = [
 	partSuppliers,
 	purchaseOrders,
 	poLines,
+	poShipments,
 	builds,
 	users,
 	settings,
@@ -612,6 +633,7 @@ export type AssemblyLine = typeof assemblyLines.$inferSelect;
 export type StockMove = typeof stockMoves.$inferSelect;
 export type PurchaseOrder = typeof purchaseOrders.$inferSelect;
 export type PoLine = typeof poLines.$inferSelect;
+export type PoShipment = typeof poShipments.$inferSelect;
 export type Build = typeof builds.$inferSelect;
 export type BuildLine = typeof buildLines.$inferSelect;
 export type PartSupplier = typeof partSuppliers.$inferSelect;

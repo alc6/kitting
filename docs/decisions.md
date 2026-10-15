@@ -1104,6 +1104,41 @@ D167 makes the margin history follow it across revisions.
     missed); merging the rows of every once-active revision (a draft's repricing would show before its activation, and
     would hide a later change of the active one).
 
+## Shipments
+
+Once a PO is sent, the team asks where the goods are. The supplier's shipping notice (carrier, tracking number, often
+a tracking link) arrived in one person's mailbox and was passed on by chat. D168 keeps it on the PO.
+
+- **D168. Shipments are rows of their PO, entered by hand; Kitting never calls a carrier.** A new tracked table,
+  `po_shipments` (migration 0009): the PO, `carrier`, `tracking_number`, `tracking_url`, `shipped_at`, `notes`.
+  - *A list on the PO, not columns, not a module.* POs already arrive in several deliveries (`partial`), and a
+    supplier that ships in two parcels gives two tracking numbers: three columns on `purchase_orders` would keep
+    only the last. A Shipments area of its own (with its own pages, statuses, and parcels spanning several POs) would
+    pay off for outgoing shipments, and Kitting has no sales orders. A parcel that carries two POs is entered on
+    both.
+  - *Where.* A Shipments card on the PO page, between the lines and the receive form, on sent, partly received
+    and received POs (`SHIPPING_PO_STATUSES`; a draft has not reached the supplier, and a cancelled PO keeps what it
+    had, read-only). Every role sees it; planners add, edit (`?shipment=<id>` fills the form, a plain link) and remove
+    rows with `purchasing.order`, as they edit the PO itself. No new action: the buyer gets the notice, and operators
+    receive what arrives. The PO list (and the dashboard's open POs) has a Tracking column, only when some listed PO
+    has a shipment, with the last recorded one and how many more. Searching a tracking number (the PO list, the
+    global search) finds its PO.
+  - *One shipment per tracking number on a PO*, ignoring case (`shipmentRuleErrors`, and a unique index on `(po_id,
+    lower(tracking_number))`, so an undo or a restore cannot bring back `pc1` next to `PC1`: the undo reports a
+    duplicate). The form refuses a second one; `record_po_shipment` updates it instead (fields left out keep their
+    value, an identical call changes nothing), as an assistant has no row id to edit by. The shipment's notes field is
+    `shipment_notes` in the form, as the PO's own form on the same page has `notes`.
+  - *Links.* `tracking_url` is optional and only `http://` or `https://` (`field.url()`): the page renders it as a
+    link (new tab, `noopener noreferrer`), so `javascript:` and `data:` are refused. Building links from a carrier
+    and a number would need each carrier's URL pattern, real domains this public repository cannot carry; a list of
+    carriers with patterns, entered by an administrator, can come later. The carrier field suggests the names already
+    used (a `<datalist>`).
+  - *No carrier API, no delivery status.* Carrier APIs need accounts and keys per carrier, and the receipt already
+    says what arrived. A shipment has no status: the PO's tells whether the goods came.
+  - *History and MCP.* Shipments are in the PO's history (a child of the PO, as its lines), in backups, and undoable
+    with `purchasing.order`. `get_purchase_order` and the PO write tools return `shipments`; `record_po_shipment`
+    (`purchasing:write`, `purchasing.order`) adds or updates one. Removing one stays in the app.
+
 ## UI polish (October 2026)
 
 A survey of every page (before/after mockups approved by the user, P0–P13) led to the changes below.

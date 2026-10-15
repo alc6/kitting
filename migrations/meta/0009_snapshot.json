@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "66d4aefa-f1d3-49bd-8d22-417089090f63",
+  "id": "8375ffbd-5699-4270-bee5-7212dffab07a",
   "prevId": "f9d38a39-2030-49ea-a856-9d6f9fa0ad2e",
   "tables": {
     "assemblies": {
@@ -1719,13 +1719,6 @@
           "autoincrement": false,
           "default": 0
         },
-        "min_stock_milli": {
-          "name": "min_stock_milli",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
         "track_serial": {
           "name": "track_serial",
           "type": "integer",
@@ -1974,6 +1967,120 @@
           "value": "\"po_lines\".\"qty_milli\" > 0 AND \"po_lines\".\"received_qty_milli\" >= 0 AND \"po_lines\".\"unit_price_cents\" >= 0"
         }
       }
+    },
+    "po_shipments": {
+      "name": "po_shipments",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "po_id": {
+          "name": "po_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "carrier": {
+          "name": "carrier",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "tracking_number": {
+          "name": "tracking_number",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "tracking_url": {
+          "name": "tracking_url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "''"
+        },
+        "shipped_at": {
+          "name": "shipped_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "notes": {
+          "name": "notes",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "''"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
+        },
+        "created_by": {
+          "name": "created_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_by": {
+          "name": "updated_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "po_shipments_tracking_unique": {
+          "name": "po_shipments_tracking_unique",
+          "columns": [
+            "po_id",
+            "lower(\"tracking_number\")"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "po_shipments_po_id_purchase_orders_id_fk": {
+          "name": "po_shipments_po_id_purchase_orders_id_fk",
+          "tableFrom": "po_shipments",
+          "tableTo": "purchase_orders",
+          "columnsFrom": [
+            "po_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
     },
     "price_history": {
       "name": "price_history",
@@ -2676,6 +2783,14 @@
     "columns": {}
   },
   "internal": {
-    "indexes": {}
+    "indexes": {
+      "po_shipments_tracking_unique": {
+        "columns": {
+          "lower(\"tracking_number\")": {
+            "isExpression": true
+          }
+        }
+      }
+    }
   }
 }

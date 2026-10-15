@@ -27,6 +27,7 @@ const TABLES = [
 	"build_machine_times",
 	"builds",
 	"po_lines",
+	"po_shipments",
 	"purchase_orders",
 	"stock_moves",
 	"price_history",

@@ -1,15 +1,18 @@
-// purchasing:write tools (D127): draft POs from the shortages, edit drafts, send, receive, cancel and close, with
-// the purchasing pages' checks and statement builders. Receiving writes the stock ledger: it cannot be undone.
+// purchasing:write tools (D127): draft POs from the shortages, edit drafts, send, receive, cancel and close, record
+// shipments (D168), with the purchasing pages' checks and statement builders. Receiving writes the stock ledger: it
+// cannot be undone.
 import { z } from "zod";
 import { getOffer, poUnitPrice } from "../domain/offers";
 import {
 	addPoLineStatement,
+	addShipmentStatement,
 	cancelPoStatement,
 	closePoStatement,
 	computeShortages,
 	deletePoLineStatement,
 	draftPoStatements,
 	getPoLines,
+	getPoShipments,
 	nextPoNumbers,
 	planDraftOrders,
 	planReceipts,
@@ -18,8 +21,14 @@ import {
 	receiveQtyField,
 	receiveSerialsField,
 	sendPoStatement,
+	shipmentByTracking,
+	shipmentFormValues,
+	shipmentInput,
+	shipmentRuleErrors,
+	shipmentValues,
 	updatePoLineStatement,
 	updatePoStatement,
+	updateShipmentStatement,
 } from "../domain/purchasing";
 import { isStocked } from "../domain/stock";
 import { fmt } from "../i18n";
@@ -39,6 +48,7 @@ import {
 	poByNumber,
 	refuse,
 	saveChange,
+	shipmentViews,
 	ToolError,
 	type ToolSpec,
 	tool,
@@ -52,7 +62,7 @@ const poNumberInput = z.string().trim().min(1).max(32).describe('The PO number, 
 /** A purchase order with its lines, as the write tools return it. */
 async function poView(db: Db, number: string) {
 	const { po, supplier } = await poByNumber(db, number);
-	const lines = await getPoLines(db, po.id);
+	const [lines, shipments] = await Promise.all([getPoLines(db, po.id), getPoShipments(db, po.id)]);
 	return {
 		purchaseOrder: {
 			number: po.number,
@@ -71,6 +81,7 @@ async function poView(db: Db, number: string) {
 			unitPriceCents: l.line.unitPriceCents,
 		})),
 		totalCents: lines.reduce((s, l) => s + lineCostCents(l.line.qtyMilli, l.line.unitPriceCents), 0),
+		shipments: shipmentViews(shipments),
 	};
 }
 
@@ -356,6 +367,65 @@ const closePo = tool({
 	},
 });
 
+const recordPoShipment = tool({
+	name: "record_po_shipment",
+	title: "Record a PO shipment",
+	description:
+		"Records a parcel the supplier sent for a purchase order, as the Shipments card of its page does: carrier, tracking number, and optionally the carrier's tracking link, the date it was shipped and a note. Recording a tracking number already on the PO updates that shipment instead (fields left out keep their value). Only on sent, partly received and received POs. Kitting keeps these details for the team: it never contacts the carrier.",
+	rule: { scope: "purchasing:write", action: "purchasing.order" },
+	annotations: writes({ destructive: true, idempotent: true }),
+	input: z.object({
+		number: poNumberInput,
+		tracking_number: z.string().trim().min(1).max(100).describe("The carrier's tracking number."),
+		carrier: z
+			.string()
+			.trim()
+			.min(1)
+			.max(100)
+			.optional()
+			.describe('Who carries the parcel, e.g. "Parcel Co". Required for a new shipment.'),
+		tracking_url: z
+			.string()
+			.trim()
+			.max(2000)
+			.optional()
+			.describe(
+				"The carrier's tracking page for this parcel (https://…), when the supplier gave one. Empty removes it.",
+			),
+		shipped_at: date.nullable().optional().describe("When the supplier shipped it, YYYY-MM-DD; null clears it."),
+		notes: z.string().trim().max(2000).optional(),
+	}),
+	run: async (a, ctx) => {
+		const { po } = await poByNumber(ctx.db, a.number);
+		const shipments = await getPoShipments(ctx.db, po.id);
+		const existing = shipmentByTracking(shipments, a.tracking_number);
+		// The form as the Shipments card would post it: the shipment being updated, with the fields given.
+		const values: Record<string, string> = {
+			...(existing
+				? shipmentFormValues(existing)
+				: { carrier: "", tracking_url: "", shipped_at: "", shipment_notes: "" }),
+			tracking_number: existing?.trackingNumber ?? a.tracking_number,
+		};
+		for (const key of ["carrier", "tracking_url", "shipped_at"] as const)
+			if (a[key] !== undefined) values[key] = formValue(a[key]);
+		if (a.notes !== undefined) values.shipment_notes = a.notes;
+		const v = validate(shipmentInput, values);
+		if (!v.ok) refuse(v.errors, {}, { shipment_notes: "notes" });
+		const errors = shipmentRuleErrors(po, shipments, v.data.tracking_number, existing?.id);
+		if (Object.keys(errors).length) refuse(errors);
+		const s = shipmentValues(v.data);
+		if (existing && Object.entries(s).every(([k, val]) => existing[k as keyof typeof s] === val))
+			return { ...NOTHING_CHANGED, ...(await poView(ctx.db, po.number)) };
+		const summary = existing ? ctx.t.history.summaries.poShipmentEdit : ctx.t.history.summaries.poShipmentAdd;
+		const { change } = await saveChange(ctx, fmt(summary, { tracking: s.trackingNumber, number: po.number }), [
+			existing
+				? updateShipmentStatement(ctx.db, po.id, existing.id, s, ctx.user, now())
+				: addShipmentStatement(ctx.db, po.id, s, ctx.user, now()),
+		]);
+		return { ...change, ...(await poView(ctx.db, po.number)) };
+	},
+});
+
 export const PURCHASING_TOOLS: readonly ToolSpec[] = [
 	createDraftPos,
 	updateDraftPo,
@@ -363,4 +433,5 @@ export const PURCHASING_TOOLS: readonly ToolSpec[] = [
 	receivePo,
 	cancelPo,
 	closePo,
+	recordPoShipment,
 ];

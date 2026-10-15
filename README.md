@@ -24,7 +24,8 @@ maintain, and a small workshop fits in the free plans.
 - Stock kept as a ledger of movements, with adjustments, inventory counts and stock valuation.
 - Builds with a pick list and serial traceability: what went into serial #0042, and which build used a given
   component.
-- Purchasing: shortages for the planned builds, draft purchase orders per supplier, partial receipts.
+- Purchasing: shortages for the planned builds, draft purchase orders per supplier, partial receipts, and the
+  carrier and tracking number of each shipment for the team to follow.
 - Planned and actual margins, and how they changed over time.
 - A history of every change, most of which can be undone.
 - Four roles (viewer, operator, planner, administrator). Costs can be hidden from the shop floor.

@@ -261,6 +261,12 @@ const CASES: WriteCase[] = [
 		args: (s) => ({ number: s.sentPo }),
 		prepare: (s) => receiveViaForm(s.sentPo, "4"),
 	},
+	{
+		tool: "record_po_shipment",
+		scope: "purchasing:write",
+		min: "planner",
+		args: (s) => ({ number: s.sentPo, carrier: "Parcel Co", tracking_number: "PC123456789" }),
+	},
 ];
 
 const below = (role: Role): Role => (role === "admin" ? "planner" : role === "planner" ? "operator" : "viewer");
@@ -1169,6 +1175,72 @@ describe("purchasing tools", () => {
 		expect((await callTool(token, "close_po", { number: emptyNumber })).text).toContain(
 			"only sent and partly received POs can be closed",
 		);
+	});
+
+	it("records shipments on sent POs, updating one by its tracking number", async () => {
+		const s = await seed();
+		const token = await connect(["purchasing:read", "purchasing:write"]);
+		const draft = await callTool(token, "record_po_shipment", {
+			number: s.draftPo,
+			carrier: "Parcel Co",
+			tracking_number: "PC1",
+		});
+		expect(draft.text).toContain("Shipments are recorded on sent and received POs only.");
+		const noCarrier = await callTool(token, "record_po_shipment", { number: s.sentPo, tracking_number: "PC1" });
+		expect(noCarrier.text).toContain("carrier: Required.");
+		const badLink = await callTool(token, "record_po_shipment", {
+			number: s.sentPo,
+			carrier: "Parcel Co",
+			tracking_number: "PC1",
+			tracking_url: "javascript:alert(1)",
+		});
+		expect(badLink.text).toContain("tracking_url: Use a link starting with https:// or http://.");
+
+		const added = await write(token, "record_po_shipment", {
+			number: s.sentPo,
+			carrier: "Parcel Co",
+			tracking_number: "PC1",
+			shipped_at: "2026-10-14",
+		});
+		expect(added.data.shipments).toEqual([{ carrier: "Parcel Co", tracking_number: "PC1", shipped_at: "2026-10-14" }]);
+		expect(await one<{ summary: string }>("SELECT summary FROM change_sets ORDER BY id DESC LIMIT 1")).toEqual({
+			summary: `Add shipment PC1 to PO ${s.sentPo}`,
+		});
+
+		// Same tracking number (any case): updates that shipment, keeping the fields left out.
+		const updated = await write(token, "record_po_shipment", {
+			number: s.sentPo,
+			tracking_number: "pc1",
+			tracking_url: "https://track.example/PC1",
+		});
+		expect(updated.data.shipments).toEqual([
+			{
+				carrier: "Parcel Co",
+				tracking_number: "PC1",
+				tracking_url: "https://track.example/PC1",
+				shipped_at: "2026-10-14",
+			},
+		]);
+		const cleared = await write(token, "record_po_shipment", {
+			number: s.sentPo,
+			tracking_number: "PC1",
+			tracking_url: "",
+			shipped_at: null,
+			notes: "Two boxes",
+		});
+		expect(cleared.data.shipments).toEqual([
+			{ carrier: "Parcel Co", tracking_number: "PC1", shipped_at: null, notes: "Two boxes" },
+		]);
+		const again = await write(token, "record_po_shipment", {
+			number: s.sentPo,
+			tracking_number: "PC1",
+			carrier: "Parcel Co",
+		});
+		expect(again.data.change_set_id).toBeNull();
+
+		await write(token, "record_po_shipment", { number: s.sentPo, carrier: "Freight Ltd", tracking_number: "FL-2" });
+		const po = await callTool(token, "get_purchase_order", { number: s.sentPo });
+		expect((po.data.shipments as { tracking_number: string }[]).map((x) => x.tracking_number)).toEqual(["PC1", "FL-2"]);
 	});
 
 	it("lets operators receive (not order), with prices hidden when they may not see costs", async () => {
