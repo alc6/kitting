@@ -1,4 +1,4 @@
-// Part options (D168–D173): loading a part's options, editing them, and what uses their values. Records name values
+// Part options (D183–D188): loading a part's options, editing them, and what uses their values. Records name values
 // by id in a text key (src/domain/option-keys.ts), so the integrity a foreign key would give is checked here: a value
 // is deleted only while no record names it, and undo asks the same question (revert.ts).
 import { and, asc, eq, inArray, type SQL, sql } from "drizzle-orm";
@@ -54,7 +54,7 @@ export async function optionsOf(db: Db, partId: number): Promise<OptionDef[]> {
 }
 
 // ---------------------------------------------------------------------------
-// What uses a value (D169)
+// What uses a value (D184)
 
 /** Every column holding a key, with the part whose values it names. */
 export const OPTION_KEY_COLUMNS = [
@@ -100,9 +100,9 @@ export async function missingValueIds(db: Db, valueIds: number[]): Promise<Set<n
 }
 
 // ---------------------------------------------------------------------------
-// Editing a part's options (D168, D173), from the Options page and part_options.csv
+// Editing a part's options (D183, D188), from the Options page and part_options.csv
 
-/** Option and value names: short, and free of the text form's syntax (`=`, `|`, `*`, D177). */
+/** Option and value names: short, and free of the text form's syntax (`=`, `|`, `*`, D192). */
 export const optionName = () => field.required(40).refine((v) => !RESERVED_NAME.test(v), "option_name_invalid");
 
 /** Values typed one per line: trimmed, blank lines dropped. */
@@ -129,7 +129,7 @@ export function namesError(names: string[]): string | null {
 	return null;
 }
 
-/** Why a part cannot have options, or null: only stocked parts come in values (D168). */
+/** Why a part cannot have options, or null: only stocked parts come in values (D183). */
 export function optionsKindError(kind: string): string | null {
 	return kind === "buy" || kind === "make" ? null : "options_kind";
 }
@@ -151,7 +151,7 @@ const optionIdOf = (partId: number, name: string) =>
 
 /**
  * Adds an option to a part, its first value the default, in one batch. A part with stock or open records gets their
- * keys completed with that default (D173): each key with stock moves out and back in with the new value (adjust moves,
+ * keys completed with that default (D188): each key with stock moves out and back in with the new value (adjust moves,
  * so the change set is not revertible), and the open PO lines and builds of the part name it too. A new value's id is
  * larger than every existing one (AUTOINCREMENT), so appending it keeps a key in ascending order.
  */

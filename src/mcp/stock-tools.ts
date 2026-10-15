@@ -54,7 +54,7 @@ const adjustStock = tool({
 		const part = await findPart(ctx.db, a.ref);
 		const problems = adjustmentErrors(part, { ...v.data, part: a.ref });
 		if (!part || Object.keys(problems.errors).length) refuse(problems.errors, problems.vars, { part: "ref" });
-		// A part with options is counted in one value of each (D169): stock never sits on an incomplete key.
+		// A part with options is counted in one value of each (D184): stock never sits on an incomplete key.
 		const defs = await optionsOf(ctx.db, part.id);
 		const optionValues = resolveKey(defs, a.options, `${part.ref} options`, { require: true });
 		const { change } = await saveChange(ctx, fmt(ctx.t.history.summaries.stockAdjust, { ref: part.ref }), [

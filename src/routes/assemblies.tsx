@@ -564,7 +564,7 @@ function LinesEditor(props: {
 	/** The production bar's values and errors. */
 	production: { values: FormValues; errors: FormErrors };
 	options: { ref: string; name: string }[];
-	/** The options of each component part (D168), for the lines' rules (D171). */
+	/** The options of each component part (D183), for the lines' rules (D186). */
 	componentOptions: Map<number, OptionDef[]>;
 	values: FormValues;
 	errors: FormErrors;
@@ -808,7 +808,7 @@ function LinesEditor(props: {
 }
 
 /**
- * A line's rule for each option of its component (D171): follows the build, chosen when a build is planned, or always
+ * A line's rule for each option of its component (D186): follows the build, chosen when a build is planned, or always
  * one value. Edited in place (saved on change with htmx, or with the button).
  */
 function LineOptions(props: {
@@ -1567,7 +1567,7 @@ function QtyForm(props: {
 	/** Other view options to keep (empty values are left out). */
 	hidden?: Record<string, string>;
 	class?: string;
-	/** The product's options (D168): the values to explode it in, its defaults first. */
+	/** The product's options (D183): the values to explode it in, its defaults first. */
 	options?: OptionDef[];
 	values?: number[];
 }) {

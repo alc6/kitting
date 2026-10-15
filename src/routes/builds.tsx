@@ -221,7 +221,7 @@ function toMakeHref(l: ToMakeLine, when: "done" | "planned", locale: NumberLocal
 		qty: formatQtyInput(l.toMakeMilli, locale),
 		when,
 	});
-	// In the values to make (D176).
+	// In the values to make (D191).
 	const ids = idsOf(l.optionValues);
 	for (const o of l.part.options) {
 		const v = o.values.find((x) => ids.includes(x.id));
@@ -494,7 +494,7 @@ function NewBuildForm(props: {
 	const { t } = view;
 	const p = { values: props.values, errors: props.errors };
 	const base = "/builds/new";
-	// The values of the product's options, and of the options its lines leave to each build (D170, D172).
+	// The values of the product's options, and of the options its lines leave to each build (D185, D187).
 	const productOptions = (props.product && props.graph?.parts.get(props.product.id)?.options) || [];
 	const assemblyId = Number(props.values.assembly_id);
 	const chosen = props.graph && assemblyId ? chosenComponents(props.graph, assemblyId) : [];
@@ -652,7 +652,7 @@ function NewBuildForm(props: {
 }
 
 /**
- * The values of a build (D170, D172): one select per option of the product, then one per option its assembly lines
+ * The values of a build (D185, D187): one select per option of the product, then one per option its assembly lines
  * leave to each build (`pick:<part>:<option>`), defaults preselected.
  */
 function BuildValueFields(props: {
@@ -682,7 +682,7 @@ function BuildValueFields(props: {
 	);
 }
 
-/** The form values of a build's stored values (D170, D172). */
+/** The form values of a build's stored values (D185, D187). */
 function buildValueForm(
 	graph: AssemblyGraph,
 	build: { partId: number; assemblyId: number; optionValues: OptionKey },
@@ -704,7 +704,7 @@ function buildValueForm(
 
 /**
  * The values a form chose and what is wrong with them: a value left out of the product's options is a field error,
- * a value a component does not come in is a problem of the whole form (D170).
+ * a value a component does not come in is a problem of the whole form (D185).
  */
 function checkBuildValues(
 	graph: AssemblyGraph,
@@ -758,7 +758,7 @@ async function newBuildData(c: Context<AppEnv>, partId: number | null) {
 		.where(and(eq(parts.kind, "make"), eq(parts.archived, false)))
 		.orderBy(asc(parts.ref));
 	const product = await buildableProduct(c.var.db, partId);
-	// The graph gives the product's options and the options its lines leave to each build (D170, D172).
+	// The graph gives the product's options and the options its lines leave to each build (D185, D187).
 	const graph = product.product ? await loadGraph(c.var.db) : undefined;
 	return { products, ...product, graph };
 }
@@ -1139,7 +1139,7 @@ function SubAssemblies(props: { buildId: number; pick: PickList; values: Record<
 }
 
 function SerialInputs(props: {
-	/** The requirement's part and values (`stockKey`, D169). */
+	/** The requirement's part and values (`stockKey`, D184). */
 	stockKey: string;
 	partRef: string;
 	count: number;
@@ -1706,7 +1706,7 @@ buildRoutes.post("/:id", requirePermission("builds.plan"), async (c) => {
 		if (v.data.serial && (await buildSerialTaken(c.var.db, part.id, v.data.serial, build.id)))
 			errors.serial = "build_serial_taken";
 	}
-	// The values it makes and those chosen for it can change while it is open (D172).
+	// The values it makes and those chosen for it can change while it is open (D187).
 	const graph = await loadGraph(c.var.db);
 	const checked = checkBuildValues(graph, part, build.assemblyId, build.qtyMilli, body);
 	Object.assign(errors, checked.errors);

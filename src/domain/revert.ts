@@ -305,7 +305,7 @@ async function findConflicts(db: Db, setId: number, rows: Touched[]): Promise<Re
 
 const VALUES_TABLE = "part_option_values";
 
-/** The key column of a tracked table (D169), if it has one. */
+/** The key column of a tracked table (D184), if it has one. */
 const keyColumnOf = (table: string) => OPTION_KEY_COLUMNS.find((k) => k.table === table)?.column;
 
 /** Value ids the undo deletes (rows the change set created), and those it brings back (rows it deleted). */
@@ -327,7 +327,7 @@ function restoredKeys(rows: Touched[]): { row: Touched; ids: number[] }[] {
 }
 
 /**
- * The foreign key checks above, for option values named in text keys (D169): a value the undo deletes must not be
+ * The foreign key checks above, for option values named in text keys (D184): a value the undo deletes must not be
  * named by a record (as it is now, or as the undo restores it), and a record the undo restores must not name a
  * value that no longer exists.
  */

@@ -1,7 +1,7 @@
-// Part options over MCP (D178): `options` is an option name → value name record, `{"Colour": "white"}`, in the
+// Part options over MCP (D193): `options` is an option name → value name record, `{"Colour": "white"}`, in the
 // tools' inputs and results. The domain works with value ids and a text key (src/domain/option-keys.ts); this module
 // turns the record into ids with refusals the model can act on (the option or value that is wrong, the values that
-// exist), and back. Names match ignoring case and surrounding spaces, as everywhere (D170).
+// exist), and back. Names match ignoring case and surrounding spaces, as everywhere (D185).
 import { z } from "zod";
 import type { LineOptions } from "../domain/assemblies";
 import type { AssemblyGraph } from "../domain/assembly-graph";
@@ -35,7 +35,7 @@ export const optionsInput = (
 		.optional()
 		.describe(`Option name → value name of ${what}, e.g. {"Colour": "white"} (names are case-insensitive). ${rule}`);
 
-/** A recipe line's rule for some options of its component (D171). */
+/** A recipe line's rule for some options of its component (D186). */
 export const fixedInput = z
 	.record(z.string().max(100), z.string().max(100))
 	.optional()
@@ -134,7 +134,7 @@ export function selectByOptions<T>(
 
 /**
  * The values of a build to plan, from the tool's inputs, through the build form's own reading (`option:<id>`,
- * `pick:<part>:<option>`) and checks (D170, D172). Every option of the product, and every option a recipe line
+ * `pick:<part>:<option>`) and checks (D185, D187). Every option of the product, and every option a recipe line
  * leaves to the build, needs a value. Refused with the reasons otherwise.
  */
 export function readToolBuildValues(

@@ -156,7 +156,7 @@ export function createBuildStatement(
 		serial: string | null;
 		plannedFor: string | null;
 		notes: string;
-		/** The values of the product's options (D170). */
+		/** The values of the product's options (D185). */
 		optionValues?: OptionKey;
 	},
 	user: string,
@@ -201,7 +201,7 @@ export type BuildFilters = { q?: string; status?: string; partId?: number | null
 
 export async function listBuilds(db: Db, f: BuildFilters = {}) {
 	const rows = await queryBuilds(db, f);
-	// The values each build makes (D170), as text: "white · L".
+	// The values each build makes (D185), as text: "white · L".
 	const ids = [...new Set(rows.filter((r) => r.optionValues).map((r) => r.partId))];
 	const options = await loadOptions(db, ids);
 	return rows.map((r) => ({ ...r, values: keyValues(options.get(r.partId) ?? [], r.optionValues) }));
@@ -292,7 +292,7 @@ export async function buildsConsumingSerial(db: Db, partId: number, serial: stri
 }
 
 // ---------------------------------------------------------------------------
-// Option values of a build (D170, D172): the product's, and those chosen for the options its lines leave to the build.
+// Option values of a build (D185, D187): the product's, and those chosen for the options its lines leave to the build.
 
 const PICK_PREFIX = "pick:";
 /** Form field of a value chosen when planning: `pick:<partId>:<optionId>`. */
@@ -356,7 +356,7 @@ export function readBuildValues(
 }
 
 /**
- * What blocks a build in these values (D170): a value of the product's options left out, or a value the build asks
+ * What blocks a build in these values (D185): a value of the product's options left out, or a value the build asks
  * of a component that does not come in it (the cover has no "red"). Problems are i18n keys with their variables.
  */
 export function buildValueProblems(
@@ -373,7 +373,7 @@ export function buildValueProblems(
 	return problems;
 }
 
-/** Replaces the values chosen for a build (D172): one row per component part. `buildId` is SQL for a new build. */
+/** Replaces the values chosen for a build (D187): one row per component part. `buildId` is SQL for a new build. */
 export function buildChoicesStatements(
 	db: Db,
 	buildId: number | SQL,
@@ -438,7 +438,7 @@ const CHOICE_PREFIX = "choice:";
 const SERIAL_PREFIX = "serial:";
 
 export const choiceField = (path: string) => `${CHOICE_PREFIX}${path}`;
-/** Serial field of a unit of a requirement: `serial:<partId>:<i>`, with the values for a part with options (D169). */
+/** Serial field of a unit of a requirement: `serial:<partId>:<i>`, with the values for a part with options (D184). */
 export const serialField = (key: number | string, i: number) => `${SERIAL_PREFIX}${key}:${i}`;
 
 /** Reads "use stock" / "build now" choices from submitted form fields. */
@@ -503,7 +503,7 @@ export function buildPickList(
 		problems.push({ key: "option_value_missing", vars: { ref: m.part.ref, option: m.option, value: m.value } });
 	for (const r of explosion.requirements) {
 		if (r.missingAssembly) problems.push({ key: "missing_assembly_build", vars: { ref: r.part.ref } });
-		// A sub-assembly with options taken from stock must exist in its values (D174); "build now" makes it.
+		// A sub-assembly with options taken from stock must exist in its values (D189); "build now" makes it.
 		else if (
 			r.part.kind === "make" &&
 			r.part.options.length > 0 &&

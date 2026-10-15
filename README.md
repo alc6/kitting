@@ -22,6 +22,8 @@ maintain, and a small workshop fits in the free plans.
   manufacturing (assembly, batch size, machine time), and the Builds page lists the production requirements of the
   planned builds (sub-assemblies and printed parts, in whole batches) next to what Purchasing must buy.
 - Stock kept as a ledger of movements, with adjustments, inventory counts and stock valuation.
+- Part options, such as a colour: one part in recipes, its stock counted per value, and the values of a build followed
+  by its components and sub-assemblies.
 - Builds with a pick list and serial traceability: what went into serial #0042, and which build used a given
   component.
 - Purchasing: shortages for the planned builds, draft purchase orders per supplier, partial receipts, and the

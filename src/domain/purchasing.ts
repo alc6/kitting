@@ -48,7 +48,7 @@ export const RECEIVABLE_PO_STATUSES: PoStatus[] = ["draft", "sent", "partial"];
 export type ShortageOffer = OfferTerms & { supplierId: number; supplierName: string };
 
 export type ShortageLine = {
-	/** The part and option values short (`stockKey`): one line per values of a part with options (D176). */
+	/** The part and option values short (`stockKey`): one line per values of a part with options (D191). */
 	key: string;
 	optionValues: OptionKey;
 	/** The part with its preferred supplier's terms (empty terms without a preferred offer). */
@@ -98,7 +98,7 @@ export type MachineLoad = {
  */
 export type ToMakeLine = {
 	part: GraphPart;
-	/** The values to make it in (D176). */
+	/** The values to make it in (D191). */
 	optionValues: OptionKey;
 	/** The assembly a build of it would use (its default active one): its batch and machine time. */
 	assembly: { id: number; code: string; revision: string; batchMilli: number };
@@ -133,7 +133,7 @@ export type Shortages = {
 		qtyMilli: number;
 		builds: string[];
 	}[];
-	/** Values open builds ask of a component that does not come in them (D170): nothing is ordered for those. */
+	/** Values open builds ask of a component that does not come in them (D185): nothing is ordered for those. */
 	missingValues: { ref: string; name: string; option: string; value: string; builds: string[] }[];
 	/** Machine time of the open builds, per machine type (sub-assemblies taken from stock need none). */
 	machines: MachineLoad[];
@@ -172,7 +172,7 @@ function* subBuilds(node: ExplodedNode): Generator<ExplodedNode> {
  *    on its own is not built a second time inside its parent;
  * 2. for buy parts: net = need − on-hand − on order (make parts taken from stock are already covered);
  * 3. round up to MOQ and pack size; group by supplier.
- * Parts already below zero count as a need of their deficit. Everything is counted per part and option values (D176):
+ * Parts already below zero count as a need of their deficit. Everything is counted per part and option values (D191):
  * each build explodes in its values and with the values chosen for it.
  */
 export async function computeShortages(db: Db): Promise<Shortages> {
@@ -768,7 +768,7 @@ export async function getPo(db: Db, id: number) {
 	return rows[0];
 }
 
-/** The lines of a PO, with each part's options and the line's values as text (D176). */
+/** The lines of a PO, with each part's options and the line's values as text (D191). */
 export async function getPoLines(db: Db, poId: number) {
 	const rows = await queryPoLines(db, poId);
 	const options = await loadOptions(db, [...new Set(rows.map((r) => r.line.partId))]);
@@ -802,7 +802,7 @@ function queryPoLines(db: Db, poId: number) {
 export type Receipt = {
 	lineId: number;
 	partId: number;
-	/** The line's option values: what is received (D176). */
+	/** The line's option values: what is received (D191). */
 	optionValues: OptionKey;
 	qtyMilli: number;
 	unitPriceCents: number;

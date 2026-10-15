@@ -124,9 +124,9 @@ export const parts = sqliteTable(
 	],
 );
 
-// An option a part comes in (D168), e.g. "Colour", with its ordered values below. Stock, receipts and builds of the
+// An option a part comes in (D183), e.g. "Colour", with its ordered values below. Stock, receipts and builds of the
 // part are counted per value; the part stays one part in the catalogue and in recipes. Parts match each other's
-// options by name, ignoring case (D170).
+// options by name, ignoring case (D185).
 export const partOptions = sqliteTable(
 	"part_options",
 	{
@@ -142,7 +142,7 @@ export const partOptions = sqliteTable(
 );
 
 // A value of a part's option ("white"), one of them the default. Records name values by id in their `option_values`
-// key (D169), so a value is renamed freely but deleted only while nothing uses it (checked in src/domain/options.ts).
+// key (D184), so a value is renamed freely but deleted only while nothing uses it (checked in src/domain/options.ts).
 export const partOptionValues = sqliteTable(
 	"part_option_values",
 	{
@@ -264,7 +264,7 @@ export const assemblyLines = sqliteTable(
 		position: integer("position").notNull().default(0),
 		notes: text("notes").notNull().default(""),
 		...audit(),
-		// The line's rule for each option of its component (D171): the values it always takes (a key, D169), and the
+		// The line's rule for each option of its component (D186): the values it always takes (a key, D184), and the
 		// options chosen when a build is planned (option ids, comma-separated). Every other option follows the build.
 		fixedOptionValues: text("fixed_option_values"),
 		chosenOptionIds: text("chosen_option_ids"),
@@ -294,7 +294,7 @@ export const stockMoves = sqliteTable(
 		by: text("by").notNull(),
 		note: text("note").notNull().default(""),
 		...audit(),
-		// The option values of the moved units (D169): value ids in ascending order, comma-separated; NULL for a part
+		// The option values of the moved units (D184): value ids in ascending order, comma-separated; NULL for a part
 		// without options. On-hand is SUM(qty_milli) per part and key.
 		optionValues: text("option_values"),
 	},
@@ -344,7 +344,7 @@ export const poLines = sqliteTable(
 		receivedQtyMilli: integer("received_qty_milli").notNull().default(0),
 		notes: text("notes").notNull().default(""),
 		...audit(),
-		// The option values ordered (D169): its receipts are moves with this key.
+		// The option values ordered (D184): its receipts are moves with this key.
 		optionValues: text("option_values"),
 	},
 	(t) => [
@@ -392,7 +392,7 @@ export const builds = sqliteTable(
 		doneAt: text("done_at"),
 		notes: text("notes").notNull().default(""),
 		...audit(),
-		// The option values the build makes (D169): the key of its output move; follow lines take them (D170).
+		// The option values the build makes (D184): the key of its output move; follow lines take them (D185).
 		optionValues: text("option_values"),
 	},
 	(t) => [
@@ -423,13 +423,13 @@ export const buildLines = sqliteTable(
 		unitCostCents: integer("unit_cost_cents"),
 		notes: text("notes").notNull().default(""),
 		...audit(),
-		// The option values consumed (D169).
+		// The option values consumed (D184).
 		optionValues: text("option_values"),
 	},
 	(t) => [index("build_lines_build_idx").on(t.buildId), index("build_lines_part_serial_idx").on(t.partId, t.serial)],
 );
 
-// The values chosen when a build is planned for the options its recipe lines leave to it (D172): one row per
+// The values chosen when a build is planned for the options its recipe lines leave to it (D187): one row per
 // component part, its key holding only the chosen options' values. Edited while the build is open.
 export const buildOptionChoices = sqliteTable(
 	"build_option_choices",

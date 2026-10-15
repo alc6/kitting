@@ -1,4 +1,4 @@
-// Part options (D168–D177): options on a part, stock per value, builds whose values flow down the explosion,
+// Part options (D183–D192): options on a part, stock per value, builds whose values flow down the explosion,
 // purchasing per value, costs per part, undo.
 import { describe, expect, it } from "vitest";
 import { loadGraph } from "../src/domain/assemblies";

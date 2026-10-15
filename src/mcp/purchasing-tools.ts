@@ -90,7 +90,7 @@ async function poView(db: Db, number: string) {
 }
 
 /**
- * The line of a part on a PO, found by reference and, for a part ordered in several values, by options (D178). None:
+ * The line of a part on a PO, found by reference and, for a part ordered in several values, by options (D193). None:
  * undefined. Refused when the part is on several lines and the options do not say which.
  */
 function lineFor<T extends { ref: string; line: { optionValues: OptionKey }; options: OptionDef[] }>(
@@ -265,7 +265,7 @@ const updateDraftPo = tool({
 			} else if (qty === 0) problems.push(`${at}: not on ${po.number}.`);
 			else if (!isStocked(part.kind)) problems.push(`${at}: ${errorMessage("not_stocked", { kind: part.kind })}`);
 			else {
-				// A new line of a part with options needs a value of each (D176).
+				// A new line of a part with options needs a value of each (D191).
 				let optionValues: OptionKey;
 				try {
 					optionValues = completeKey(found.defs, found.ids, `${at} options`);

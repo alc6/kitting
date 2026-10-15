@@ -43,7 +43,7 @@ const assemblyRow = z.object({
 	component_ref: field.required(64),
 	qty: field.qty({ positive: true }),
 	notes: field.text(500),
-	/** A line's rule per option of its component (D171, D177): "Colour=black|Size=*". */
+	/** A line's rule per option of its component (D186, D192): "Colour=black|Size=*". */
 	options: field.text(500),
 });
 
@@ -168,7 +168,7 @@ export const assembliesImporter: Importer = {
 				continue;
 			}
 			if (!parent || !comp || parent.id === comp.id || (parent.kind !== "make" && parent.kind !== "kit")) continue;
-			// The line's rule per option (D171): fixed values, options chosen when planned; the rest follows the build.
+			// The line's rule per option (D186): fixed values, options chosen when planned; the rest follows the build.
 			let rule: LineOptions | undefined;
 			if (optionsInFile) {
 				const parsed = parseKeyText(comp.options, d.options, { chosen: true });

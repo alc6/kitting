@@ -371,7 +371,7 @@ export const en = {
 		noStockByValue: "No stock in any value.",
 		renameHint:
 			"Renaming keeps stock and history. Components follow by name: rename the same option on the parts that follow it.",
-		// Rules of an assembly line on a component with options (D171)
+		// Rules of an assembly line on a component with options (D186)
 		rule: "Option values",
 		follows: "Follows the build",
 		followsHint: "The build's value of the same option, else {value}",

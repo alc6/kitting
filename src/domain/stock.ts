@@ -1,5 +1,5 @@
 // Stock: the append-only ledger of moves. On-hand is always SUM(qty_milli) per part, and per part and option values
-// (its key, D169) for a part with options.
+// (its key, D184) for a part with options.
 import { and, asc, desc, eq, gte, lte, type SQL, sql } from "drizzle-orm";
 import { z } from "zod";
 import { MOVE_REASONS, type MoveReason, type Part, type PartKind, parts, stockMoves } from "../db/schema";
@@ -30,7 +30,7 @@ export type NewMove = {
 	qtyMilli: number;
 	serial: string | null;
 	unitCostCents: number | null;
-	/** The option values moved (D169); none for a part without options. */
+	/** The option values moved (D184); none for a part without options. */
 	optionValues?: OptionKey;
 };
 
@@ -111,7 +111,7 @@ export function countStatements(db: Db, moves: NewMove[], note: string, user: st
 // Inventory counts (shared by stock.csv and the count screen)
 
 export type CountLine = { line: number; qtyMilli: number; serial: string; unitCostCents: number | null };
-/** What was counted of a part, in some option values (D169) for a part with options. */
+/** What was counted of a part, in some option values (D184) for a part with options. */
 export type CountGroup = { part: Part; optionValues?: OptionKey; lines: CountLine[] };
 export type CountResult = {
 	part: Part;
@@ -212,7 +212,7 @@ export async function onHandAt(db: Db, date?: string | null): Promise<Map<number
 	return new Map(rows.map((r) => [r.partId, r.qty]));
 }
 
-/** On-hand per part and option values (D169), keyed by `stockKey`; optionally as of the end of a day. */
+/** On-hand per part and option values (D184), keyed by `stockKey`; optionally as of the end of a day. */
 export async function onHandByKey(db: Db, date?: string | null): Promise<Map<string, number>> {
 	const rows = await stockByKey(db, date);
 	return new Map(rows.map((r) => [stockKey(r.partId, r.optionValues), r.qty]));
@@ -265,7 +265,7 @@ export async function listMoves(db: Db, f: MoveFilters = {}) {
 
 export type ValuationRow = {
 	part: Pick<GraphPart, "id" | "ref" | "name" | "kind" | "unit" | "options">;
-	/** One row per option values a part with options has in stock (D175); costs stay per part. */
+	/** One row per option values a part with options has in stock (D190); costs stay per part. */
 	optionValues: OptionKey;
 	onHandMilli: number;
 	/** Standard method: unit cost in millicents (standard cost for buy parts, roll-up for make parts). */

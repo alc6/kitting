@@ -228,7 +228,7 @@ const TARGETS: Record<
 			{ table: "part_suppliers", column: "part_id" },
 			{ table: "files", column: "part_id" },
 			{ table: "part_options", column: "part_id" },
-			// A value names its option: those of the part's current options (D168).
+			// A value names its option: those of the part's current options (D183).
 			{ table: "part_option_values", column: "option_id", via: { table: "part_options", column: "part_id" } },
 		],
 	},
@@ -362,7 +362,7 @@ export const REFERENCE_COLUMNS: Record<string, string> = {
 	build_id: "builds",
 };
 
-/** Columns holding option keys (D169): value ids, or option ids for the options chosen per build. */
+/** Columns holding option keys (D184): value ids, or option ids for the options chosen per build. */
 export const KEY_COLUMNS: Record<string, "part_option_values" | "part_options"> = {
 	option_values: "part_option_values",
 	fixed_option_values: "part_option_values",

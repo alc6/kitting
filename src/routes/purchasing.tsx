@@ -146,7 +146,7 @@ function PartCell(props: {
 	ref: string;
 	name: string;
 	supplierRef?: string | null;
-	/** The option values ordered (D176), as text. */
+	/** The option values ordered (D191), as text. */
 	values?: string;
 }) {
 	return (
@@ -1616,7 +1616,7 @@ purchasingRoutes.post("/po/:id/lines", requirePermission("purchasing.order"), as
 			vars.kind = part.kind;
 		}
 	}
-	// A part with options is ordered in one value of each (D176).
+	// A part with options is ordered in one value of each (D191).
 	const partOptionDefs = part ? await optionsOf(db, part.id) : [];
 	const chosen = keyFromForm(partOptionDefs, body);
 	if (part && chosen.missing) {
@@ -1679,7 +1679,7 @@ purchasingRoutes.post("/po/:id/lines/:lineId", requirePermission("purchasing.ord
 	const price = parseCents(typeof body.price === "string" ? body.price : "");
 	if (qty === null || qty <= 0) return c.redirect(`/purchasing/po/${data.po.id}?err=invalid_quantity`, 303);
 	if (price === null || price < 0) return c.redirect(`/purchasing/po/${data.po.id}?err=invalid_money`, 303);
-	// Its values can change while it is a draft; a part with options keeps one value of each (D176).
+	// Its values can change while it is a draft; a part with options keeps one value of each (D191).
 	const partOptionDefs = await optionsOf(c.var.db, data.line.partId);
 	const chosen = keyFromForm(partOptionDefs, body);
 	const optionValues = partOptionDefs.length && !chosen.missing ? chosen.key : data.line.optionValues;

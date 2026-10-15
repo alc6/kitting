@@ -552,7 +552,7 @@ export function updateAssemblyLineQtyStatements(
 	];
 }
 
-/** A line's rule for each option of its component (D171): fixed value ids, chosen option ids; the rest follows. */
+/** A line's rule for each option of its component (D186): fixed value ids, chosen option ids; the rest follows. */
 export type LineOptions = { fixedValueIds: number[]; chosenOptionIds: number[] };
 
 /** The stored form of a line's option rule (null columns when every option follows). */

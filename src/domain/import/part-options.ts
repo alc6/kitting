@@ -52,10 +52,10 @@ type PartOps = {
 const joinNames = (names: string[]) => names.join(", ");
 
 /**
- * part_options.csv (D177): the options of a part and their values, one row per value in order. For each part named in
+ * part_options.csv (D192): the options of a part and their values, one row per value in order. For each part named in
  * the file, the file replaces its options: those not listed are removed (refused while a record names one of their
  * values), those listed (matched by name, ignoring case) keep their ids and are reordered, new ones are added, and an
- * option added to a part that has stock moves it onto its default value (D173; the change then cannot be undone).
+ * option added to a part that has stock moves it onto its default value (D188; the change then cannot be undone).
  * Values are matched the same way; renaming a value other than its case is a removal plus an addition.
  * `default` = yes marks the default value of an option; without one the current default stays if it is still listed,
  * else the first value is the default.
@@ -257,7 +257,7 @@ export const partOptionsImporter: Importer = {
 			ops.push(op);
 		}
 
-		// A value that records name cannot be removed (D169).
+		// A value that records name cannot be removed (D184).
 		for (const op of ops) {
 			const ids = [...op.removedValueIds, ...valueIdsOf(options, op.part.id, op.removedOptionIds)];
 			if (ids.length === 0) continue;
@@ -277,7 +277,7 @@ export const partOptionsImporter: Importer = {
 			}
 		}
 
-		// Adding an option to a part with stock moves it onto the default value: the change cannot be undone (D173).
+		// Adding an option to a part with stock moves it onto the default value: the change cannot be undone (D188).
 		const withRecords = addsOption.length ? await partsWithRecords(db, addsOption) : new Set<number>();
 
 		return {
@@ -321,7 +321,7 @@ async function storedPositions(db: Db) {
 	};
 }
 
-/** Parts (among these) with stock, open order lines or open builds: the ones D173 rewrites keys for. */
+/** Parts (among these) with stock, open order lines or open builds: the ones D188 rewrites keys for. */
 async function partsWithRecords(db: Db, partIds: number[]): Promise<Set<number>> {
 	const rows = await db.all<{ part_id: number }>(sql`
 		SELECT part_id FROM stock_moves GROUP BY part_id HAVING SUM(qty_milli) <> 0

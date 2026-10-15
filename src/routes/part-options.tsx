@@ -1,4 +1,4 @@
-// A part's options and their values (D168, D173): the edit page and its actions. Mounted under /parts.
+// A part's options and their values (D183, D188): the edit page and its actions. Mounted under /parts.
 import { and, eq, inArray, sql } from "drizzle-orm";
 import type { Context } from "hono";
 import { Hono } from "hono";
@@ -60,7 +60,7 @@ import {
 
 export const partOptionRoutes = new Hono<AppEnv>();
 
-/** Whether adding an option would move stock or rename open records (D173): the page warns, and it needs stock.adjust. */
+/** Whether adding an option would move stock or rename open records (D188): the page warns, and it needs stock.adjust. */
 async function hasOpenRecords(c: Context<AppEnv>, partId: number): Promise<boolean> {
 	const db = c.var.db;
 	const [stock, lines, open] = await Promise.all([
@@ -331,7 +331,7 @@ partOptionRoutes.post("/:id/options", requirePermission("parts.edit"), async (c)
 	const options = await optionsOf(c.var.db, part.id);
 	const values = v.ok ? valueLines(v.data.values) : [];
 	const errors = v.ok ? newOptionErrors(options, v.data.name, values) : v.errors;
-	// Moving existing stock onto the new values is a stock adjustment (D173).
+	// Moving existing stock onto the new values is a stock adjustment (D188).
 	if (Object.keys(errors).length === 0 && (await hasOpenRecords(c, part.id)) && !can(c.var, "stock.adjust"))
 		return c.text(t.errors.forbidden, 403);
 	if (!v.ok || Object.keys(errors).length > 0)

@@ -1,4 +1,4 @@
-// CSV and part options (D177): part_options.csv, and the options column of assemblies.csv.
+// CSV and part options (D192): part_options.csv, and the options column of assemblies.csv.
 import { describe, expect, it } from "vitest";
 import demoAssemblies from "../examples/full/assemblies.csv?raw";
 import demoMachineTypes from "../examples/full/machine_types.csv?raw";

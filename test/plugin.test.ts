@@ -107,7 +107,7 @@ const RESULT_FIELDS = [
 	"download_path",
 	"download_url",
 	"attached_to",
-	// Part options (D178).
+	// Part options (D193).
 	"stock_by_options",
 	"by_options",
 	"missing_values",

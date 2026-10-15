@@ -20,7 +20,7 @@ const stockRow = z.object({
  * stock.csv sets on-hand to a counted quantity: one `count` move for the difference.
  * Serial-tracked parts may list one row per serial (qty 1) while they have no stock yet;
  * each serial then gets its own +1 move so later builds can trace it.
- * A part with options is counted per values (D177): `options` names one value of each ("Colour=white|Size=L", or
+ * A part with options is counted per values (D192): `options` names one value of each ("Colour=white|Size=L", or
  * "white" for a single option), and each values is a row of its own.
  */
 export const stockImporter: Importer = {

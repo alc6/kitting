@@ -38,7 +38,7 @@ export const BACKUP_VERSION = 1;
 const TABLES: SQLiteTable[] = [
 	suppliers,
 	parts,
-	// A part's options and their values (D168), before the records that name them.
+	// A part's options and their values (D183), before the records that name them.
 	partOptions,
 	partOptionValues,
 	// Machine types before the assemblies that name them (D147).

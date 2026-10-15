@@ -1,4 +1,4 @@
-// Option values on pages (D168–D172): labels of a record's values, and the selects that choose them.
+// Option values on pages (D183–D187): labels of a record's values, and the selects that choose them.
 import { defaultValue, keyLabel, keyValues, type OptionDef, type OptionKey } from "../domain/option-keys";
 import { cn } from "../lib/cn";
 import { type FormErrors, type FormValues, SelectField } from "./ui";

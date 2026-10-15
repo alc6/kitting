@@ -111,7 +111,7 @@ dashboardRoutes.get("/", async (c) => {
 		c.var.seeCosts ? valuation(db) : null,
 		stockByKey(db),
 	]);
-	// A part with options is below zero when one of its values is (D169), whatever its total.
+	// A part with options is below zero when one of its values is (D184), whatever its total.
 	const negativeValue = new Set(keyed.filter((r) => r.optionValues !== null && r.qty < 0).map((r) => r.partId));
 	const canBuild = can(c.var, "builds.plan");
 	const today = nowIso().slice(0, 10);

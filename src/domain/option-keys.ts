@@ -1,4 +1,4 @@
-// Option keys (D169): which values of a part's options a record holds. Pure functions, no database.
+// Option keys (D184): which values of a part's options a record holds. Pure functions, no database.
 // A key lists value ids in ascending order, comma-separated ("12,31"); null is a part without options (or a record
 // from before its options). Value ids are global, so a key also says which options it covers.
 
@@ -32,7 +32,7 @@ export function splitStockKey(s: string): { partId: number; key: OptionKey } {
 	return i < 0 ? { partId: Number(s), key: null } : { partId: Number(s.slice(0, i)), key: s.slice(i + 1) || null };
 }
 
-/** Options and values match across parts by name, ignoring case and surrounding spaces (D170). */
+/** Options and values match across parts by name, ignoring case and surrounding spaces (D185). */
 export const sameName = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
 export const nameKey = (s: string) => s.trim().toLowerCase();
 
@@ -92,13 +92,13 @@ export function keyValues(options: OptionDef[], key: OptionKey | undefined): str
 		.join(" · ");
 }
 
-/** Option name → value name, the form MCP tools return and take (D178). */
+/** Option name → value name, the form MCP tools return and take (D193). */
 export function keyRecord(options: OptionDef[], key: OptionKey | undefined): Record<string, string> {
 	return Object.fromEntries(keyPairs(options, key).map((p) => [p.option, p.value]));
 }
 
 // ---------------------------------------------------------------------------
-// Text form, for CSV files (D177): "Colour=white|Size=L"; "white" alone when the part has one option. "*" is a value
+// Text form, for CSV files (D192): "Colour=white|Size=L"; "white" alone when the part has one option. "*" is a value
 // chosen per build in a recipe line (assemblies.csv).
 
 export const OPTIONS_SEPARATOR = "|";

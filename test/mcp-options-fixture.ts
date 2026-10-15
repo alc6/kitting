@@ -1,4 +1,4 @@
-// Part options over MCP (D178): the night light fixture of test/options.test.ts, for the MCP tests. Options are
+// Part options over MCP (D193): the night light fixture of test/options.test.ts, for the MCP tests. Options are
 // defined through the part pages (a change set each), the rest is seeded.
 import { expect } from "vitest";
 import { insertPart, insertSupplier, one, postForm, returnedId, seedSql, stmt } from "./helpers";

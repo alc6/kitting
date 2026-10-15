@@ -144,7 +144,7 @@ const getPartTool = tool({
 				notes: part.notes,
 				minStockMilli: part.minStockMilli,
 				onHandMilli: onHand,
-				// Options (D168): the values of each, in order, and the default; the stock counted per values.
+				// Options (D183): the values of each, in order, and the default; the stock counted per values.
 				options: defs.length
 					? defs.map((o) => ({ name: o.name, values: o.values.map((v) => v.name), default: defaultValue(o)?.name }))
 					: undefined,
@@ -195,7 +195,7 @@ const getPartTool = tool({
 	},
 });
 
-/** A line's option rules (fixed values, options chosen when planned) and the values it resolves to (D170, D171). */
+/** A line's option rules (fixed values, options chosen when planned) and the values it resolves to (D185, D186). */
 function lineOptions(n: ExplodedNode, line: GraphLine | undefined) {
 	if (n.part.options.length === 0) return {};
 	return {
@@ -390,7 +390,7 @@ const stockOnHand = tool({
 	}),
 	run: async (a, { db }) => {
 		const rows = (await listParts(db, { q: a.query ?? "" })).filter((p) => isStocked(p.kind));
-		// Parts with options are counted per values (D169): the stock of each, and a negative one is below zero too.
+		// Parts with options are counted per values (D184): the stock of each, and a negative one is below zero too.
 		const [options, stock] = await Promise.all([loadOptions(db), stockByKey(db)]);
 		const stockOf = (partId: number) => stock.filter((r) => r.partId === partId);
 		const kept = rows.filter((p) => {
@@ -527,7 +527,7 @@ const getBuildTool = tool({
 			unit: part.unit,
 			qtyMilli: build.qtyMilli,
 			serial: build.serial,
-			// The values it makes and the values chosen for the components its recipe leaves to the build (D170, D172).
+			// The values it makes and the values chosen for the components its recipe leaves to the build (D185, D187).
 			options: optionsView(graph.parts.get(part.id)?.options ?? [], build.optionValues),
 			choices: choicesView(graph.parts, picks),
 			assembly: { assemblyId: assembly.id, code: assembly.code, revision: assembly.revision },
@@ -615,7 +615,7 @@ const getShortages = tool({
 	input: z.object({}),
 	run: async (_a, { db }) => {
 		const s = await computeShortages(db);
-		// A missing assembly names its part by reference only (D176): its options come from the catalogue.
+		// A missing assembly names its part by reference only (D191): its options come from the catalogue.
 		const optionsOfRef = new Map<string, OptionDef[]>();
 		if (s.missingAssemblies.some((m) => m.optionValues))
 			for (const p of (await loadGraph(db)).parts.values()) optionsOfRef.set(p.ref, p.options);

@@ -148,7 +148,7 @@ stockRoutes.get("/", async (c) => {
 		stockByKey(c.var.db),
 	]);
 	const all = listed.filter((p) => isStocked(p.kind));
-	// A part with options is counted per values (D169): its rows below it, and the filters look at each.
+	// A part with options is counted per values (D184): its rows below it, and the filters look at each.
 	const byValues = new Map<number, { optionValues: OptionKey; qty: number }[]>();
 	for (const r of keyed) {
 		if (r.optionValues === null || !options.has(r.partId)) continue;
@@ -199,7 +199,7 @@ stockRoutes.get("/", async (c) => {
 							</TableHeader>
 							<TableBody>
 								{rows.flatMap((p) => {
-									// The minimum stock is per part (D173): it compares the total.
+									// The minimum stock is per part (D187): it compares the total.
 									const low = belowMinimum(p);
 									const partOptions = options.get(p.id) ?? [];
 									const values = (byValues.get(p.id) ?? [])
@@ -266,7 +266,7 @@ stockRoutes.get("/", async (c) => {
 // ---------------------------------------------------------------------------
 // Adjustments
 
-/** The selects of a part's options on the adjustment form (D169), refreshed when the part changes. */
+/** The selects of a part's options on the adjustment form (D184), refreshed when the part changes. */
 function AdjustOptions(props: { options: OptionDef[]; values: FormValues; errors: FormErrors }) {
 	return (
 		<div
@@ -382,7 +382,7 @@ stockRoutes.post("/adjust", requirePermission("stock.adjust"), async (c) => {
 		const problems = adjustmentErrors(part, v.data);
 		Object.assign(errors, problems.errors);
 		vars = problems.vars;
-		// A part with options is adjusted in one value of each (D169): the selects appear once the part is known.
+		// A part with options is adjusted in one value of each (D184): the selects appear once the part is known.
 		partOptionDefs = part ? await optionsOf(db, part.id) : [];
 		const chosen = keyFromForm(partOptionDefs, body);
 		optionValues = chosen.key;
@@ -440,7 +440,7 @@ async function renderCount(c: Context<AppEnv>, values: FormValues, errors: Field
 		loadOptions(c.var.db),
 		onHandByKey(c.var.db),
 	]);
-	// One line per part, and per combination of values for a part with options (D169).
+	// One line per part, and per combination of values for a part with options (D184).
 	const rows = listed
 		.filter((p) => isStocked(p.kind))
 		.flatMap((p) => {

@@ -1269,3 +1269,100 @@ A survey of every page (before/after mockups approved by the user, P0–P13) led
   lands on `/stock` (where its move is listed); `GET /parts/:id/offers` goes to `/prices`; standard cost shortcuts, edits,
   file and image redirects stay on the overview, where they show (`#files`, `#how-its-made`, `#image` still resolve).
   Flash messages and errors are shown above whichever tab the redirect lands on.
+
+## Part options
+
+A workshop builds a product whose 3D-printed front cover comes in several colours. A recipe line named one part, and
+a stocked made part did not know which colour went into it, so every colour had to become a separate part at every
+stocked level (cover, module, product), multiplied by every other variant: not maintainable. D183–D193 let a part come
+in values that are counted apart in stock, while it stays one part in the catalogue and in recipes.
+
+- **D183. Options are declared on a part; several per part; only stocked parts.** `part_options` (name, position) and
+  `part_option_values` (name, position, `is_default`, one default per option by a partial unique index), migration 0011,
+  new tables only, both tracked (`parts.edit`, the part's History tab). A part may have several options (Colour, Size):
+  a record then holds one value of each. Only buy and make parts have options, like offers (D97): kits are phantoms and
+  pass values through, fees are never stocked; a part with options cannot become a kit or a fee
+  (`kind_has_options`). The word is *option* / *Option*, its *values* / *valeurs*: *variant* stays the assembly code
+  (`std`, `warm`), so the build page shows Variant and Options side by side. Options are edited at `/parts/:id/options`
+  (a card on the part page shows them with the stock per value): add an option (one value per line, the first is the
+  default), rename it or its values, reorder, change the default, add values, remove an unused value or delete an
+  unused option. Names may not contain `=`, `|` or `*` (the CSV syntax, D192). A shared catalogue of options was
+  considered and left out: per-part options are what the workshop described, each part lists only the values it comes
+  in, and parts match by name (D185).
+- **D184. Records name values in a text key; integrity is checked by the app.** Every record that is "in some values"
+  has a nullable `option_values` column (`stock_moves`, `build_lines`, `po_lines`, `builds`, `build_option_choices`,
+  and `fixed_option_values` on `assembly_lines`): the value ids in ascending order, comma-separated (`"12,31"`), NULL
+  for a part without options. Value ids are global, so the key also says which options it covers; renaming never touches
+  it. On-hand is `SUM(qty_milli)` per part and key (`onHandByKey`, `stockByKey`); maps use `stockKey()` = `"7"` or
+  `"7:12,31"`. One integer foreign key per record was the alternative for one option per part; several options needed a
+  composite key, so a foreign key could not guard it. The checks a foreign key would make are in
+  `src/domain/options.ts`: `OPTION_KEY_COLUMNS` lists every key column, `valuesInUse()` refuses removing a value or
+  deleting an option a record names, and undo (`revert.ts`, `keyConflicts`) refuses deleting a value still named
+  (`in_use`) or restoring a record whose value is gone (`parent_missing`), first in TypeScript, then as guards at the
+  end of the batch. Matching a key in SQL casts the id (`keyNames`): D1 binds JavaScript numbers as reals, and
+  `',' || 2.0 || ','` would never match.
+- **D185. Values follow the build by option name.** A build stores the values of its product (`builds.option_values`,
+  defaults pre-selected on the form). The explosion (`explode()`, pure) carries a context, option name → value name,
+  from the root down every level, kits and sub-assemblies built now included. For each option of a component, a line's
+  fixed value wins; else an option the line leaves to the build takes the value chosen when planning (D187, else the
+  default); else it follows: the value of the same option name in the context, matched by value name (both trimmed,
+  ignoring case), else the component's default when no ancestor has that option. A component's values then override the
+  context for its own children. A follow that finds no such value (the cover has no "red") stands in with the default
+  only to name the problem: planning and completion refuse it (`option_value_missing`), and the shortages list it apart
+  and order nothing for it. Matching by name means renaming "Colour" on one part breaks the chain for that part: the
+  editor and the pick list always show the resolved values.
+- **D186. A recipe line's rule per option: follows, fixed, or chosen when planned.** `assembly_lines.fixed_option_values`
+  (a key) and `chosen_option_ids` (option ids); every option named in neither follows the build. Follow is stored as the
+  absence of a rule on purpose: when a parent gains an option later, its lines start following it, which is what
+  "follows the build" means. The editor shows a select per option on each line of a component with options (Follows the
+  build / Chosen when planned / Always <value>), saved on change; new revisions copy the rules with the lines.
+- **D187. Values chosen per build are made when planning, and stored.** Without them the shortages could only assume
+  defaults. `build_option_choices` (build, component part, key of the chosen options' values; tracked, `builds.plan`)
+  holds one row per component part whose lines leave options to the build, wherever it sits in the structure. The new
+  build form and the edit card of an open build ask for them (`pick:<part>:<option>`), defaults pre-selected; completion
+  and recording use the stored values. Keyed by part rather than by line path: a path changes when lines are replaced,
+  and one choice per component per build is what the shop floor makes. D60's "use stock / build now" stays a form field.
+- **D188. Adding an option to a part that has stock or open records completes their keys with its default.** In the
+  same change set: for each key with stock, an `adjust` move out of the old key and one into the new key (ref_type
+  `part_options`, a note naming the option), and the open PO lines (not fully received) and open builds of the part get
+  the default appended. A new value's id is larger than every existing one (AUTOINCREMENT), so appending keeps a key in
+  order. Stock therefore never sits on an incomplete key, at the price of a non-revertible change (it moved stock; the
+  form warns, and it also needs `stock.adjust`). No new move reason: `MOVE_REASONS` has a CHECK that a rebuild would be
+  needed to change.
+- **D189. Availability is per value; a sub-assembly taken from stock must exist in its value.** "Use stock" takes only
+  what exists in the resolved key; the rest is built now. Forcing a made part with options from stock beyond its stock
+  in that key is refused at completion (`option_stock_short`): the point of the feature is that a black module never
+  stands in for a white one. Bought parts with options may still go below zero per value, flagged, as D61: filament
+  and similar stock is approximate, and the ledger records what happened.
+- **D190. Prices stay per part.** Standard cost, offers (price, MOQ, pack size, supplier reference), the price
+  history, roll-ups, the weighted average replay and margins are unchanged: `CostCalculator` and `replayAverageCosts`
+  stay keyed by part, and a build's cost does not depend on its values. Valuation shows one row per key with stock, at
+  the part's unit cost; the weighted average value is shared out by quantity, the rounding on the last row, so the rows
+  add up to the part's value. A per-value price or supplier reference is in "After v1".
+- **D191. Purchasing per value.** `computeShortages` counts need, on hand, on order (`onOrderMap`), planned output
+  and what to make per part and key; each build explodes in its values with its choices. A shortage line is a part in
+  one values, rounded to the offer's MOQ and pack size on its own (suppliers sell per colour), and its "order from"
+  choice is keyed by `stockKey`. PO lines carry the key (the add and edit forms ask for it, refreshed with htmx when the
+  part changes, or shown by a refused submit), receipts copy it to their moves, and the PO page and its CSV name it.
+  Production requirements are per key too, and their links prefill the values. The minimum stock of a part (D173) stays one
+  figure per part and compares the total; a part negative in one value counts as below zero on the stock page, the
+  dashboard and `stock_on_hand`.
+- **D192. CSV: `part_options.csv` and an `options` text column.** A key is written `Colour=white|Size=L`; a bare
+  `white` is accepted for a part with one option. `part_options.csv` (`ref,option,value,default`, one row per value in
+  order) replaces the options of each part it names (a value in use cannot be removed), after `parts.csv` in the import
+  order; adding an option to a stocked part follows D188. `assemblies.csv` gains `options` per line (`Colour=black`
+  fixed, `Size=*` chosen when planned; options not named follow). `stock.csv` gains `options` (required for a part with
+  options) and exports one row per key with stock. The moves, valuation, PO and exploded list exports end with an
+  `options` column, so existing column positions stay. In `part_options.csv`, renaming a value is a removal and an
+  addition (refused while the value is in use: rename it on the page), and without the `options` column a replaced
+  `assemblies.csv` line keeps the rule of the same component's line it replaces, matched by occurrence.
+- **D193. MCP: `options` as option name → value name.** Tools take and return `options: {"Colour": "white"}`
+  (`toWire()` keeps the option names as they are). Read tools show options, defaults, stock per key, line rules and
+  resolved values; `adjust_stock`, `count_stock`, `plan_build`, `record_build` (`options`, `choices`),
+  `create_draft_pos`, `update_draft_po`, `receive_po` (lines matched by reference and options) and `set_assembly_lines`
+  (`fixed`, `choose`) take them. Where `options` picks a record (a PO line, a serial's requirement, an `order_from`
+  line), a partial set matches as a subset and an ambiguous match is refused naming the candidates. A
+  `set_assembly_lines` line sent without `fixed` and `choose` keeps the rules of the same component's line it replaces,
+  as `assemblies.csv` does without its `options` column; `"fixed": {}, "choose": []` resets them. `stock_on_hand`'s
+  `below_zero` also catches a part below zero in one value. Defining options over MCP is left for later
+  (docs/plan.md).

@@ -24,7 +24,7 @@ export type GraphPart = {
 	costCents: number | null;
 	trackSerial: boolean;
 	archived: boolean;
-	/** The part's options and their values, in order (D168); empty for most parts. */
+	/** The part's options and their values, in order (D183); empty for most parts. */
 	options: OptionDef[];
 };
 
@@ -34,9 +34,9 @@ export type GraphLine = {
 	qtyMilli: number;
 	position: number;
 	notes: string;
-	/** The values this line always takes, of some options of its component (D171). */
+	/** The values this line always takes, of some options of its component (D186). */
 	fixedValueIds: number[];
-	/** The options of its component chosen when a build is planned (D172); every other option follows the build. */
+	/** The options of its component chosen when a build is planned (D187); every other option follows the build. */
 	chosenOptionIds: number[];
 };
 
@@ -128,7 +128,7 @@ export type NodeMode =
 	| "split" // make part partly from stock, rest built
 	| "missing_assembly"; // make/kit part that must be built but has no active assembly
 
-/** A value a "follow" line asks for and its component does not come in (D170): the cover has no "red". */
+/** A value a "follow" line asks for and its component does not come in (D185): the cover has no "red". */
 export type MissingValue = { option: string; value: string };
 
 export type ExplodedNode = {
@@ -148,7 +148,7 @@ export type ExplodedNode = {
 	toBuildMilli: number;
 	assemblyId: number | null;
 	notes: string;
-	/** The values of the part's options here (D170), null without options. */
+	/** The values of the part's options here (D185), null without options. */
 	optionValues: OptionKey;
 	/** Values the build asks for that the part does not come in: its default stands in, and the build is blocked. */
 	missingValues: MissingValue[];
@@ -157,12 +157,12 @@ export type ExplodedNode = {
 
 export type Requirement = {
 	part: GraphPart;
-	/** The values of the part's options (D169): the same part in two keys is two requirements. */
+	/** The values of the part's options (D184): the same part in two keys is two requirements. */
 	optionValues: OptionKey;
 	qtyMilli: number;
 	/** True for make/kit parts that must be built but have no active assembly. */
 	missingAssembly: boolean;
-	/** A value the build asks for that the part lacks (D170): such a requirement cannot be picked. */
+	/** A value the build asks for that the part lacks (D185): such a requirement cannot be picked. */
 	missingValue: MissingValue | null;
 };
 
@@ -172,7 +172,7 @@ export type MachineNeed = { machineType: GraphMachineType; minutesMilli: number 
 export type Explosion = {
 	assembly: GraphAssembly;
 	qtyMilli: number;
-	/** The values of the root part's options (D170). */
+	/** The values of the root part's options (D185). */
 	optionValues: OptionKey;
 	tree: ExplodedNode[];
 	/** Parts consumed from stock: buy parts, make parts taken from stock, unresolved make parts. */
@@ -196,9 +196,9 @@ export type ExplodeOptions = {
 	available?: Map<string, number>;
 	/** Overrides by node path. */
 	choices?: Map<string, MakeChoice>;
-	/** The values of the root part's options (ids): the build's (D170); its defaults when omitted or incomplete. */
+	/** The values of the root part's options (ids): the build's (D185); its defaults when omitted or incomplete. */
 	values?: number[];
-	/** Values chosen when the build was planned, per component part, for the options its lines leave to it (D172). */
+	/** Values chosen when the build was planned, per component part, for the options its lines leave to it (D187). */
 	picks?: Map<number, number[]>;
 };
 
@@ -229,7 +229,7 @@ export class AssemblyCycleError extends Error {
 	}
 }
 
-/** The option values a build passes down (D170): option name (lower case) → value name. */
+/** The option values a build passes down (D185): option name (lower case) → value name. */
 export type OptionContext = Map<string, string>;
 
 /** The values of the root part's options: those given, else each option's default. */
@@ -252,7 +252,7 @@ export function contextFor(parent: OptionContext, part: GraphPart, ids: number[]
 }
 
 /**
- * The values of a component's options on a line (D170–D172): per option, the line's fixed value, else the value chosen
+ * The values of a component's options on a line (D185–D187): per option, the line's fixed value, else the value chosen
  * when the build was planned (else the default) for an option the line leaves to the build, else it follows: the value
  * of the same option name in the context, matched by name, else the default when no ancestor has that option. A value
  * the context asks for that the component lacks is returned in `missing`, its default standing in.
@@ -288,7 +288,7 @@ export function resolveValues(
  * - `make` lines are taken from `stock` up to what is available in their values (shared across the whole
  *   explosion), the remainder explodes; `choices` can force "stock" or "build" per line.
  * - `fee` lines are listed separately: cost only.
- * - Option values flow down from the root's (D170): every node carries its resolved values.
+ * - Option values flow down from the root's (D185): every node carries its resolved values.
  */
 export function explode(
 	graph: AssemblyGraph,
@@ -432,7 +432,7 @@ export function explode(
 	};
 }
 
-/** Every value a build asks for that a component lacks (D170), with where it is. */
+/** Every value a build asks for that a component lacks (D185), with where it is. */
 export function missingValues(explosion: Explosion): (MissingValue & { part: GraphPart; path: string })[] {
 	return [...walkTree(explosion.tree)].flatMap((n) =>
 		n.missingValues.map((m) => ({ ...m, part: n.part, path: n.path })),

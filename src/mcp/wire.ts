@@ -10,7 +10,7 @@ import { formatCentsInput, formatQtyInput } from "../lib/units";
 const snake = (key: string) => key.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
 
 /**
- * Keys whose value is an option name → value name record (D178): `options: {"Colour": "white"}`, and a line's
+ * Keys whose value is an option name → value name record (D193): `options: {"Colour": "white"}`, and a line's
  * `fixed: {"Colour": "white"}`. The names are the workshop's own words, so they are copied as they are (snake-casing
  * would turn `Colour` into `_colour`). Arrays under the same key (a part's option definitions) still convert.
  */

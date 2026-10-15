@@ -54,7 +54,7 @@ import { choicesInput, choicesView, optionsInput, optionsView, readToolBuildValu
 
 const now = () => new Date().toISOString();
 
-/** `serial:<partId>:<i>`, or `serial:<partId>:<values>:<i>` for a part in some option values (D169). */
+/** `serial:<partId>:<i>`, or `serial:<partId>:<values>:<i>` for a part in some option values (D184). */
 const SERIAL_FIELD = /^serial:(\d+)(?::(\d+(?:,\d+)*))?:(\d+)$/;
 
 /** "LED-5W (Colour: white)": a requirement's part and values. */
@@ -118,7 +118,7 @@ async function checkBuildToPlan(
 	const d = { ...v.data, qty: unitsToBuild(v.data, assemblyOptions) };
 	const errors = await buildPlanErrors(ctx.db, d, product, assemblyOptions);
 	if (Object.keys(errors).length || !product || !assembly) refuse(errors, {}, names);
-	// The values of the product and of the components its recipe leaves to the build (D170, D172).
+	// The values of the product and of the components its recipe leaves to the build (D185, D187).
 	const graph = await loadGraph(ctx.db);
 	const values = readToolBuildValues(graph, product, assembly.id, d.qty, a);
 	return { product, assembly, d, graph, values };
@@ -255,7 +255,7 @@ const completeBuild = tool({
 				);
 			for (const path of paths) form[choiceField(path)] = choice.mode;
 		}
-		// Serials go in the pick list's fields, named by the requirement's part and values (D169): a first pass
+		// Serials go in the pick list's fields, named by the requirement's part and values (D184): a first pass
 		// without serials tells which requirements the build has, then each entry is matched to one by ref and options.
 		const first = exploding(() => buildPickList(graph, onHand, { ...build, picks }, part, form, false));
 		const problems: string[] = [];

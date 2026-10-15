@@ -1332,7 +1332,7 @@ describe("recent changes over MCP", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Part options (D178)
+// Part options (D193)
 
 describe("tools with part options", () => {
 	/** On-hand of a part in one value of its Colour (the key is the value id), or in total. */

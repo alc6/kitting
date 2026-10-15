@@ -220,7 +220,7 @@ export function partRuleErrors(
 	if (d.minStockMilli != null && (d.kind === "kit" || d.kind === "fee")) errors.min_stock = "min_stock_kind";
 	if (ctx.hasMoves && (d.kind === "kit" || d.kind === "fee")) errors.kind = "kind_has_stock";
 	if (ctx.hasAssemblies && d.kind !== "make" && d.kind !== "kit") errors.kind = "kind_has_assemblies";
-	// Only stocked parts come in values (D168).
+	// Only stocked parts come in values (D183).
 	if (ctx.hasOptions && d.kind !== "buy" && d.kind !== "make") errors.kind = "kind_has_options";
 	return errors;
 }

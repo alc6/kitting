@@ -302,7 +302,7 @@ async function linesView(db: Db, assemblyId: number) {
 		ref: l.ref,
 		qtyMilli: l.qtyMilli,
 		notes: l.notes || undefined,
-		// What the line does with its component's options (D171): the rest follows the build.
+		// What the line does with its component's options (D186): the rest follows the build.
 		...rulesView(options.get(l.partId) ?? [], idsOf(l.fixedOptionValues), idsOf(l.chosenOptionIds)),
 	}));
 }
@@ -400,7 +400,7 @@ const setAssemblyLines = tool({
 		const lines: { componentPartId: number; qtyMilli: number; notes: string; options: LineOptions }[] = [];
 		const problems: string[] = [];
 		// A line sent without fixed or choose keeps the rules of the same component's line it replaces (the first for
-		// the first, the second for the second…), as assemblies.csv does without its options column (D177, D178).
+		// the first, the second for the second…), as assemblies.csv does without its options column (D192, D193).
 		const previous = await getAssemblyLines(ctx.db, assembly.id);
 		const seen = new Map<number, number>();
 		const keptRules = (componentId: number): LineOptions => {

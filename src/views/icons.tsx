@@ -197,7 +197,7 @@ export const icons = {
 	shoppingCart: ShoppingCart,
 	sigma: Sigma,
 	sun: Sun,
-	/** Part options (D168). */
+	/** Part options (D183). */
 	options: SwatchBook,
 	tag: Tag,
 	timer: Timer,

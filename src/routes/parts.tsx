@@ -581,7 +581,7 @@ function OverviewTab(props: {
 	usedIn: WhereUsedRow[];
 	imagesEnabled: boolean;
 	files: FileRow[];
-	/** The part's options (D168) and its stock per values. */
+	/** The part's options (D183) and its stock per values. */
 	options: OptionDef[];
 	stockByValue: { optionValues: OptionKey; qty: number }[];
 	err?: string | undefined;
@@ -783,7 +783,7 @@ function StockTab(props: {
 	);
 }
 
-/** A part's options (D168): their values, the default marked, and the stock in each values. */
+/** A part's options (D183): their values, the default marked, and the stock in each values. */
 function OptionsCard(props: { part: Part; options: OptionDef[]; stock: { optionValues: OptionKey; qty: number }[] }) {
 	const view = useApp();
 	const { t } = view;
