@@ -63,7 +63,7 @@ import type { AppEnv } from "../types";
 import { CostView, StatusBadge } from "../views/assembly";
 import { StepChart } from "../views/chart";
 import { useApp } from "../views/context";
-import { FilesCard } from "../views/files";
+import { FilesCard, uploadErrorText } from "../views/files";
 import { RecordTabs } from "../views/history";
 import { Icon, type IconNode, icons } from "../views/icons";
 import { Duration } from "../views/machines";
@@ -84,6 +84,8 @@ import {
 	CollapsibleCard,
 	DecimalField,
 	DetailList,
+	Dialog,
+	DialogFooter,
 	EmptyState,
 	ErrorBanner,
 	FieldDescription,
@@ -545,7 +547,7 @@ function PartDetail(props: {
 				{p.kind === "make" || p.kind === "kit" ? <HowItsMade part={p} summary={props.assemblySummary} /> : null}
 				<div class="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
 					{props.imagesEnabled || p.imageKey ? (
-						<ImageCard part={p} enabled={props.imagesEnabled} />
+						<ImageCard part={p} enabled={props.imagesEnabled} uploadError={uploadErrorText(t, props.err, "image")} />
 					) : canEdit ? (
 						<Card>
 							<CardHeader>
@@ -607,6 +609,7 @@ function PartDetail(props: {
 						uploadAction={`/parts/${p.id}/files`}
 						enabled={props.imagesEnabled}
 						editable={true}
+						uploadError={uploadErrorText(t, props.err, "file")}
 					/>
 				) : null}
 				{p.kind === "buy" || props.offers.length > 0 ? (
@@ -678,52 +681,82 @@ const PART_ERRORS = new Set([
 	"invalid",
 ]);
 
-/** The product image (D100): shown, uploaded (resized in the browser when JavaScript runs), removed by admins. */
-function ImageCard(props: { part: Part; enabled: boolean }) {
+/** The id of the image upload dialog (one per part page). */
+const IMAGE_DIALOG = "image-upload";
+
+/**
+ * The product image (D100): shown, uploaded (resized in the browser when JavaScript runs), removed by admins. Add or
+ * Replace in the header opens the upload dialog; `uploadError` (the page comes back from a refused upload) opens it on
+ * load.
+ */
+function ImageCard(props: { part: Part; enabled: boolean; uploadError?: string | undefined }) {
 	const view = useApp();
 	const { t } = view;
 	const p = props.part;
 	const src = imageUrl(p);
+	const upload = can(view, "parts.edit") && props.enabled;
+	const remove = can(view, "parts.delete") && src !== null && props.enabled;
 	return (
 		<Card id="image">
 			<CardHeader>
 				<CardTitle icon={icons.image}>{t.parts.image}</CardTitle>
-				{can(view, "parts.delete") && src && props.enabled ? (
+				{upload || remove ? (
 					<CardAction>
-						<PostButton
-							action={`/parts/${p.id}/image/delete`}
-							label={t.parts.removeImage}
-							confirm={t.parts.confirmRemoveImage}
-							variant="ghost"
-							size="sm"
-							icon={icons.trash}
-						/>
+						{remove ? (
+							<PostButton
+								action={`/parts/${p.id}/image/delete`}
+								label={t.parts.removeImage}
+								confirm={t.parts.confirmRemoveImage}
+								variant="ghost"
+								size="sm"
+								icon={icons.trash}
+							/>
+						) : null}
+						{upload ? (
+							<Button type="button" variant="outline" size="sm" icon={icons.imageUp} popovertarget={IMAGE_DIALOG}>
+								{src ? t.parts.replaceImage : t.parts.addImage}
+							</Button>
+						) : null}
 					</CardAction>
 				) : null}
 			</CardHeader>
-			<CardContent class="flex flex-col gap-4">
+			<CardContent class="flex flex-1 flex-col gap-4">
 				{src ? (
 					<a href={src} class="block overflow-hidden rounded-lg border bg-muted" title={t.parts.openImage}>
 						<img src={src} alt={p.name} class="aspect-4/3 max-h-80 w-full object-contain" />
 					</a>
 				) : (
-					<div class="flex aspect-4/3 max-h-80 w-full flex-col items-center justify-center gap-2 rounded-lg border border-dashed bg-muted/40 text-sm text-muted-foreground">
-						<Icon icon={icons.imageOff} class="size-8" />
+					<div class="flex min-h-32 w-full flex-1 flex-col items-center justify-center gap-2 rounded-lg border border-dashed bg-muted/40 p-4 text-sm text-muted-foreground">
+						<Icon icon={icons.imageOff} class="size-6" />
 						{t.parts.noImage}
 					</div>
 				)}
-				{!can(view, "parts.edit") ? null : props.enabled ? (
+				{can(view, "parts.edit") && !props.enabled ? (
+					<p class="text-xs text-muted-foreground">{t.parts.imagesDisabled}</p>
+				) : null}
+			</CardContent>
+			{upload ? (
+				<Dialog
+					id={IMAGE_DIALOG}
+					title={src ? t.parts.changeImage : t.parts.addImage}
+					open={props.uploadError !== undefined}
+				>
+					{props.uploadError !== undefined ? (
+						<Alert variant="destructive" class="mb-0">
+							{props.uploadError}
+						</Alert>
+					) : null}
 					<form
 						method="post"
 						action={`/parts/${p.id}/image`}
 						enctype="multipart/form-data"
-						class="flex flex-col gap-2"
+						class="flex flex-col gap-4"
 						data-image-form=""
 					>
-						<label for="image-file" class="text-sm font-medium">
-							{t.parts.imageFile}
-						</label>
-						<div class="flex flex-wrap items-center gap-2">
+						<div data-slot="field" class="flex min-w-0 flex-col gap-2">
+							<label for="image-file" class="text-sm font-medium">
+								{t.parts.imageFile}
+							</label>
 							<input
 								id="image-file"
 								type="file"
@@ -731,18 +764,15 @@ function ImageCard(props: { part: Part; enabled: boolean }) {
 								accept="image/jpeg,image/png,image/webp"
 								required
 								data-image-input=""
-								class="flex-1"
 							/>
-							<Button variant="outline" icon={icons.imageUp}>
-								{src ? t.parts.replaceImage : t.parts.uploadImage}
-							</Button>
+							<p class="text-xs text-muted-foreground">{t.parts.imageHint}</p>
 						</div>
-						<p class="text-xs text-muted-foreground">{t.parts.imageHint}</p>
+						<DialogFooter dialog={IMAGE_DIALOG}>
+							<Button icon={icons.imageUp}>{src ? t.parts.replaceImage : t.parts.uploadImage}</Button>
+						</DialogFooter>
 					</form>
-				) : (
-					<p class="text-xs text-muted-foreground">{t.parts.imagesDisabled}</p>
-				)}
-			</CardContent>
+				</Dialog>
+			) : null}
 		</Card>
 	);
 }

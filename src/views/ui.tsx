@@ -78,6 +78,9 @@ export function Button(
 		form?: string;
 		formaction?: string;
 		formmethod?: "get" | "post";
+		/** Opens or closes the popover (a Dialog) with this id. */
+		popovertarget?: string;
+		popovertargetaction?: "show" | "hide" | "toggle";
 		"data-confirm"?: string;
 		[key: `data-${string}`]: string | undefined;
 	},
@@ -301,6 +304,67 @@ export function CollapsibleCard(props: { title: Child; icon?: IconNode; open?: b
 			</summary>
 			<div class="border-t p-6">{props.children}</div>
 		</details>
+	);
+}
+
+// ---------------------------------------------------------------------------
+// Dialog
+
+/**
+ * shadcn Dialog on the Popover API, so it needs no JavaScript: a `<Button type="button" popovertarget={id}>` opens it
+ * (in the top layer, above any `overflow-hidden` card), Esc or a click outside closes it. For forms used now and then
+ * (an upload), so they do not crowd the page. `open` asks app.js to show it on load (data-open), e.g. back from a
+ * refused upload: put the error inside, since the page's own alert sits under the backdrop. A form whose errors are
+ * rendered inline must not live in a dialog: without JavaScript they would stay hidden.
+ */
+export function Dialog(props: { id: string; title: Child; description?: Child; open?: boolean; children: Child }) {
+	const { t } = useApp();
+	return (
+		<div
+			id={props.id}
+			popover="auto"
+			role="dialog"
+			aria-labelledby={`${props.id}-title`}
+			data-slot="dialog-content"
+			data-open={props.open ? "" : undefined}
+			class="m-auto max-h-[calc(100dvh-2rem)] w-full max-w-[calc(100%-2rem)] gap-4 overflow-y-auto overscroll-contain rounded-lg border bg-background p-6 text-foreground shadow-lg backdrop:bg-black/50 open:grid sm:max-w-lg"
+		>
+			<div data-slot="dialog-header" class="flex flex-col gap-2 pr-8">
+				<h2 id={`${props.id}-title`} data-slot="dialog-title" class="m-0 text-lg leading-none font-semibold">
+					{props.title}
+				</h2>
+				{props.description ? (
+					<p data-slot="dialog-description" class="m-0 text-sm text-muted-foreground">
+						{props.description}
+					</p>
+				) : null}
+			</div>
+			{props.children}
+			<Button
+				type="button"
+				variant="ghost"
+				size="icon-sm"
+				icon={icons.x}
+				popovertarget={props.id}
+				popovertargetaction="hide"
+				class="absolute top-3 right-3"
+				aria-label={t.common.close}
+				title={t.common.close}
+			/>
+		</div>
+	);
+}
+
+/** The buttons of a dialog's form: Cancel closes the dialog `dialog`, then the submit button(s). */
+export function DialogFooter(props: { dialog: string; children: Child }) {
+	const { t } = useApp();
+	return (
+		<div data-slot="dialog-footer" class="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+			<Button type="button" variant="outline" popovertarget={props.dialog} popovertargetaction="hide">
+				{t.common.cancel}
+			</Button>
+			{props.children}
+		</div>
 	);
 }
 

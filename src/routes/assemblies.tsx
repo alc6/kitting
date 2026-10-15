@@ -69,7 +69,7 @@ import type { AppEnv } from "../types";
 import { CostView, missingNames, StatusBadge } from "../views/assembly";
 import { AssemblyDiagram, type DiagramView, diagramTree, treeDepth } from "../views/assembly-diagram";
 import { useApp } from "../views/context";
-import { FilesCard } from "../views/files";
+import { FilesCard, uploadErrorText } from "../views/files";
 import { Icon, type IconNode, icons } from "../views/icons";
 import { Duration, MachineTimeCard, type MachineTimeRow } from "../views/machines";
 import { PartPicker, PartPickerDialog, PartSelectPicker } from "../views/part-picker";
@@ -1080,6 +1080,7 @@ async function renderEditor(
 						uploadAction={`/assemblies/${assembly.id}/files`}
 						enabled={filesBucket(c.env) !== null}
 						editable={assembly.status !== "archived"}
+						uploadError={uploadErrorText(t, c.req.query("err"), "file")}
 					/>
 				</div>
 			) : null}

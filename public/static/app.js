@@ -215,6 +215,11 @@
 		if (tooLarge) input.reportValidity();
 	});
 
+	// <div popover data-open>: a dialog the page shows on load, e.g. back from a refused upload with the reason inside.
+	for (const dialog of document.querySelectorAll("[popover][data-open]")) {
+		if (dialog instanceof HTMLElement && typeof dialog.showPopover === "function") dialog.showPopover();
+	}
+
 	// <form data-upload-form data-busy="Uploading…">: a large file takes a while on the workshop's Wi-Fi, so the
 	// button says so and cannot send it twice.
 	const busyButtons = [];

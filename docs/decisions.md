@@ -1103,3 +1103,16 @@ D167 makes the margin history follow it across revisions.
     (an abandoned draft archived without activation would leak, and an older revision activated again would be
     missed); merging the rows of every once-active revision (a draft's repricing would show before its activation, and
     would hide a later change of the active one).
+
+## UI polish (October 2026)
+
+A survey of every page (before/after mockups approved by the user, P0–P13) led to the changes below.
+
+- **D168. Occasional forms open in a dialog from the card header.** Uploads (files, product image) were forms always
+  shown under their card. They now open from a header button ("Add file", "Add image", like "New build") in `Dialog`
+  (`src/views/ui.tsx`): shadcn's Dialog recipe on the Popover API (`popovertarget`, `popover="auto"`), so it opens,
+  closes on Esc or outside click and escapes `overflow-hidden` cards with no script and no inline style. A page that
+  must show it open (back from a refused upload) sets `data-open` and `app.js` calls `showPopover()`; the reason is
+  repeated inside the dialog because the page alert sits under the backdrop, and without JavaScript the page alert is
+  still there. A form whose errors are rendered inline next to its fields never goes in a dialog: without JavaScript
+  they would stay hidden (those forms fold in place instead).
