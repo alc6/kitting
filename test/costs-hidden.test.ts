@@ -152,10 +152,17 @@ function pages(s: Awaited<ReturnType<typeof seed>>): string[] {
 	return [
 		"/",
 		"/parts",
+		// WIDGET has no standard cost: the list shows its assembly roll-up, which is BOX-LAMP's cost (D176).
+		"/parts?q=WIDGET",
 		`/parts/${s.box}`,
+		`/parts/${s.box}/prices`,
+		`/parts/${s.box}/stock`,
 		`/parts/${s.widget}`,
+		`/parts/${s.widget}/prices`,
+		`/parts/${s.widget}/stock`,
 		"/suppliers",
 		`/suppliers/${s.supplier}`,
+		`/suppliers/${s.supplier}/edit`,
 		"/assemblies",
 		`/assemblies/${s.assembly}`,
 		`/assemblies/${s.assembly}/tree`,
@@ -190,6 +197,7 @@ function pages(s: Awaited<ReturnType<typeof seed>>): string[] {
 		"/machines?retired=1",
 		`/machines/types/${s.type}`,
 		`/machines/${s.machine}`,
+		`/machines/${s.machine}/edit`,
 		`/parts/${s.clip}`,
 		`/assemblies/${s.clipAssembly}`,
 		`/assemblies/${s.clipAssembly}/tree`,
@@ -199,6 +207,7 @@ function pages(s: Awaited<ReturnType<typeof seed>>): string[] {
 		`/history/${s.rated}`,
 		// Closed to these roles: refused without leaking anything.
 		"/margins",
+		"/margins?cost=actual",
 		`/margins/assemblies/${s.lampAssembly}`,
 		"/stock/valuation",
 		`/purchasing/po/${s.poId}/export.csv`,
@@ -236,8 +245,11 @@ describe("cost visibility", () => {
 		await setRole("planner");
 		const part = await (await request(`/parts/${s.box}`, {}, NOT_ADMIN)).text();
 		expect(part).toContain("1,234.56");
-		expect(part).toContain("1,111.11");
-		expect(part).toContain("777.77");
+		// The offer price and the past cost are on the Suppliers & prices tab (D182).
+		const prices = await (await request(`/parts/${s.box}/prices`, {}, NOT_ADMIN)).text();
+		expect(prices).toContain("1,111.11");
+		expect(prices).toContain("777.77");
+		expect(await (await request("/parts?q=WIDGET", {}, NOT_ADMIN)).text()).toContain("1,234.56");
 		expect(await (await request(`/purchasing/po/${s.poId}`, {}, NOT_ADMIN)).text()).toContain("987.65");
 		expect(await (await request("/stock/moves?format=csv", {}, NOT_ADMIN)).text()).toContain("987.65");
 		expect(await (await request(`/history/${s.priced}`, {}, NOT_ADMIN)).text()).toContain("1,234.56");

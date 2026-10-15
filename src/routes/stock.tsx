@@ -9,6 +9,7 @@ import {
 	adjustInput,
 	adjustmentErrors,
 	adjustmentStatement,
+	belowMinimum,
 	type CountGroup,
 	countStatements,
 	isStocked,
@@ -34,6 +35,7 @@ import {
 	Card,
 	CardContent,
 	CardEmpty,
+	DateRange,
 	FieldGroup,
 	Flash,
 	type FormErrors,
@@ -118,7 +120,7 @@ const dateParam = (v: string | undefined) => (v && /^\d{4}-\d{2}-\d{2}$/.test(v)
 // ---------------------------------------------------------------------------
 // On-hand list
 
-const FILTERS = ["all", "below_zero", "below_moq", "in_stock"] as const;
+const FILTERS = ["all", "below_zero", "below_min", "in_stock"] as const;
 type Filter = (typeof FILTERS)[number];
 
 stockRoutes.get("/", async (c) => {
@@ -130,7 +132,7 @@ stockRoutes.get("/", async (c) => {
 	const all = (await listParts(c.var.db, { q })).filter((p) => isStocked(p.kind));
 	const rows = all.filter((p) => {
 		if (filter === "below_zero") return p.onHandMilli < 0;
-		if (filter === "below_moq") return p.moqMilli > 0 && p.onHandMilli < p.moqMilli;
+		if (filter === "below_min") return belowMinimum(p);
 		if (filter === "in_stock") return p.onHandMilli > 0;
 		return true;
 	});
@@ -153,7 +155,7 @@ stockRoutes.get("/", async (c) => {
 			<div id="results">
 				<TableCard title={fmt(t.common.results, { n: rows.length })}>
 					{rows.length === 0 ? (
-						<CardEmpty />
+						<CardEmpty large />
 					) : (
 						<Table>
 							<TableHeader class="bg-muted/50">
@@ -161,7 +163,7 @@ stockRoutes.get("/", async (c) => {
 									<TableHead>{t.parts.ref}</TableHead>
 									<TableHead>{t.parts.name}</TableHead>
 									<TableHead>{t.parts.kind}</TableHead>
-									<TableHead class="text-right">{t.parts.moq}</TableHead>
+									<TableHead class="text-right">{t.parts.minStock}</TableHead>
 									<TableHead class="text-right">{t.stock.onHand}</TableHead>
 									{canAdjust ? (
 										<TableHead class="w-0">
@@ -172,7 +174,7 @@ stockRoutes.get("/", async (c) => {
 							</TableHeader>
 							<TableBody>
 								{rows.map((p) => {
-									const low = p.moqMilli > 0 && p.onHandMilli < p.moqMilli;
+									const low = belowMinimum(p);
 									return (
 										<TableRow>
 											<TableCell class="font-medium">
@@ -183,12 +185,12 @@ stockRoutes.get("/", async (c) => {
 												<KindBadge kind={p.kind} />
 											</TableCell>
 											<TableCell class="text-right text-muted-foreground">
-												{p.moqMilli ? <Qty milli={p.moqMilli} unit={p.unit} /> : ""}
+												{p.minStockMilli !== null ? <Qty milli={p.minStockMilli} unit={p.unit} /> : ""}
 											</TableCell>
 											<TableCell class={cn("text-right whitespace-nowrap", low && "font-medium text-warning")}>
 												{low ? (
 													<Badge variant="warning" class="mr-2">
-														{t.stock.filters.below_moq}
+														{t.stock.filters.below_min}
 													</Badge>
 												) : null}
 												<Qty milli={p.onHandMilli} unit={p.unit} />
@@ -197,12 +199,12 @@ stockRoutes.get("/", async (c) => {
 												<TableCell class="w-0 text-right">
 													<Button
 														href={`/stock/adjust?part=${p.id}`}
-														variant="outline"
-														size="sm"
+														variant="ghost"
+														size="icon-sm"
 														icon={icons.arrowUpDown}
-													>
-														{t.stock.adjust}
-													</Button>
+														aria-label={t.stock.adjust}
+														title={t.stock.adjust}
+													/>
 												</TableCell>
 											) : null}
 										</TableRow>
@@ -317,7 +319,7 @@ stockRoutes.post("/adjust", requirePermission("stock.adjust"), async (c) => {
 			nowIso(),
 		),
 	]);
-	return c.redirect(`/parts/${part.id}?ok=adjusted`, 303);
+	return c.redirect(`/parts/${part.id}/stock?ok=adjusted`, 303);
 });
 
 // ---------------------------------------------------------------------------
@@ -349,7 +351,7 @@ async function renderCount(c: Context<AppEnv>, values: FormValues, errors: Field
 				<div id="results">
 					<TableCard>
 						{rows.length === 0 ? (
-							<CardEmpty />
+							<CardEmpty large />
 						) : (
 							<Table>
 								<TableHeader class="bg-muted/50">
@@ -485,8 +487,8 @@ stockRoutes.get("/moves", async (c) => {
 		t.stock.tabs.moves,
 		<>
 			<StockHeader tab="moves" />
-			<SearchBar action="/stock/moves" q={q}>
-				<select name="reason" aria-label={t.stock.reason} class="w-auto flex-[0_1_220px]">
+			<SearchBar action="/stock/moves" q={q} compact>
+				<select name="reason" aria-label={t.stock.reason}>
 					<option value="">{t.stock.reasonAll}</option>
 					{MOVE_REASONS.map((r) => (
 						<option value={r} selected={r === reason}>
@@ -494,14 +496,7 @@ stockRoutes.get("/moves", async (c) => {
 						</option>
 					))}
 				</select>
-				<label class="inline-flex items-center gap-2 text-sm font-medium">
-					<span class="text-muted-foreground">{t.stock.from}</span>
-					<input type="date" name="from" value={from ?? ""} class="w-auto" />
-				</label>
-				<label class="inline-flex items-center gap-2 text-sm font-medium">
-					<span class="text-muted-foreground">{t.stock.to}</span>
-					<input type="date" name="to" value={to ?? ""} class="w-auto" />
-				</label>
+				<DateRange from={from} to={to} fromLabel={t.stock.from} toLabel={t.stock.to} />
 			</SearchBar>
 			<div id="results">
 				<TableCard
@@ -509,7 +504,7 @@ stockRoutes.get("/moves", async (c) => {
 					action={<CsvButton href={`/stock/moves?${query}`} />}
 				>
 					{rows.length === 0 ? (
-						<CardEmpty />
+						<CardEmpty large />
 					) : (
 						<Table>
 							<TableHeader class="bg-muted/50">
@@ -711,7 +706,7 @@ stockRoutes.get("/valuation", requirePermission("costs.view"), async (c) => {
 				action={<CsvButton href={`/stock/valuation?${new URLSearchParams({ at: at ?? "", format: "csv" })}`} />}
 			>
 				{v.rows.length === 0 ? (
-					<CardEmpty />
+					<CardEmpty large />
 				) : (
 					<Table>
 						<TableHeader class="bg-muted/50">

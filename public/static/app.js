@@ -215,6 +215,39 @@
 		if (tooLarge) input.reportValidity();
 	});
 
+	// MoreMenu: CSS anchors the menu to its "⋯" button. A browser without CSS anchor positioning gets the same place
+	// from the button's rectangle (CSSOM, not a style attribute: the CSP allows it).
+	if (!CSS.supports("position-area", "bottom")) {
+		document.addEventListener(
+			"toggle",
+			(event) => {
+				const menu = event.target;
+				if (
+					!(menu instanceof HTMLElement) ||
+					menu.dataset.slot !== "dropdown-menu-content" ||
+					event.newState !== "open"
+				)
+					return;
+				const trigger = document.querySelector(`[popovertarget="${menu.id}"]`);
+				if (!trigger) return;
+				const rect = trigger.getBoundingClientRect();
+				menu.style.inset = `${rect.bottom}px ${document.documentElement.clientWidth - rect.right}px auto auto`;
+			},
+			true,
+		);
+	}
+
+	// <div popover data-open>: a dialog the page shows on load, e.g. back from a refused upload with the reason inside.
+	for (const dialog of document.querySelectorAll("[popover][data-open]")) {
+		if (dialog instanceof HTMLElement && typeof dialog.showPopover === "function") dialog.showPopover();
+	}
+
+	// <button data-live-submit>: the submit button of a live filter bar (htmx refreshes the results as you type or
+	// change a filter), so it is redundant once htmx is there. Without JavaScript it stays and submits the form.
+	if (window.htmx) {
+		for (const button of document.querySelectorAll("[data-live-submit]")) button.hidden = true;
+	}
+
 	// <form data-upload-form data-busy="Uploading…">: a large file takes a while on the workshop's Wi-Fi, so the
 	// button says so and cannot send it twice.
 	const busyButtons = [];

@@ -3,14 +3,17 @@ import { FILE_KINDS, type FileKind, type FileRow } from "../db/schema";
 import { FORMAT_INFO } from "../domain/file-types";
 import { MAX_FILE_BYTES } from "../domain/files";
 import { can } from "../domain/permissions";
-import { fmt } from "../i18n";
+import { type Dict, errorText, fmt } from "../i18n";
 import { type AppView, useApp } from "./context";
 import { Icon, type IconNode, icons } from "./icons";
 import {
+	Alert,
 	Badge,
 	Button,
 	buttonClass,
 	CardEmpty,
+	Dialog,
+	DialogFooter,
 	shortDateTime,
 	Table,
 	TableBody,
@@ -112,21 +115,38 @@ function OpenLinks(props: { file: FileRow }) {
 }
 
 /**
- * The upload form: kind and note first, the file last (the server reads the body as a stream, D161). No `accept`
- * attribute: iPadOS greys out extensions it does not know (.step, .3mf), and the server checks the content anyway.
+ * The message for an upload dialog when the page comes back from a refused upload (`?err=file_…` for files,
+ * `image_…` for the product image), else undefined (the dialog stays closed). Unknown keys get the generic message.
  */
-function UploadForm(props: { action: string }) {
+export function uploadErrorText(t: Dict, err: string | undefined, prefix: "file" | "image"): string | undefined {
+	return err?.startsWith(prefix) ? errorText(t, err) : undefined;
+}
+
+/** The id of the upload dialog of the Files card (one per page). */
+const UPLOAD_DIALOG = "files-upload";
+
+/**
+ * The upload dialog: kind and note first, the file last (the server reads the body as a stream, D161). No `accept`
+ * attribute: iPadOS greys out extensions it does not know (.step, .3mf), and the server checks the content anyway.
+ * `error` (a refused upload) opens it on load, with the reason.
+ */
+function UploadDialog(props: { action: string; error?: string | undefined }) {
 	const { t } = useApp();
 	return (
-		<form
-			method="post"
-			action={props.action}
-			enctype="multipart/form-data"
-			class="flex flex-col gap-3 border-t p-4"
-			data-upload-form=""
-			data-busy={t.files.uploading}
-		>
-			<div class="grid gap-3 md:grid-cols-2">
+		<Dialog id={UPLOAD_DIALOG} title={t.files.addTitle} open={props.error !== undefined}>
+			{props.error !== undefined ? (
+				<Alert variant="destructive" class="mb-0">
+					{props.error}
+				</Alert>
+			) : null}
+			<form
+				method="post"
+				action={props.action}
+				enctype="multipart/form-data"
+				class="flex flex-col gap-4"
+				data-upload-form=""
+				data-busy={t.files.uploading}
+			>
 				<div data-slot="field" class="flex min-w-0 flex-col gap-2">
 					<label for="file-kind" class="text-sm font-medium">
 						{t.files.kind}
@@ -144,19 +164,22 @@ function UploadForm(props: { action: string }) {
 					<label for="file-note" class="text-sm font-medium">
 						{t.files.note}
 					</label>
-					<input id="file-note" name="note" type="text" maxlength={500} data-slot="input" />
+					<input id="file-note" name="note" type="text" maxlength={500} autocomplete="off" data-slot="input" />
 				</div>
-			</div>
-			<FileField button={t.files.upload} />
-		</form>
+				<FileField />
+				<DialogFooter dialog={UPLOAD_DIALOG}>
+					<Button icon={icons.upload}>{t.files.upload}</Button>
+				</DialogFooter>
+			</form>
+		</Dialog>
 	);
 }
 
 /**
- * The file input of an upload form (the last field), with its submit button and the accepted formats. app.js checks
- * the size before sending (data-max-bytes), so a too large file never starts a long upload.
+ * The file input of an upload form (the last field) and the accepted formats, with its submit button when `button` is
+ * given. app.js checks the size before sending (data-max-bytes), so a too large file never starts a long upload.
  */
-export function FileField(props: { button: string }) {
+export function FileField(props: { button?: string }) {
 	const { t } = useApp();
 	return (
 		<div data-slot="field" class="flex min-w-0 flex-col gap-2">
@@ -173,9 +196,11 @@ export function FileField(props: { button: string }) {
 					data-max-bytes={String(MAX_FILE_BYTES)}
 					data-too-large={t.errors.file_too_large}
 				/>
-				<Button variant="outline" icon={icons.upload}>
-					{props.button}
-				</Button>
+				{props.button !== undefined ? (
+					<Button variant="outline" icon={icons.upload}>
+						{props.button}
+					</Button>
+				) : null}
 			</div>
 			<p class="text-xs text-muted-foreground">{t.files.hint}</p>
 		</div>
@@ -184,9 +209,16 @@ export function FileField(props: { button: string }) {
 
 /**
  * The Files card of a part or an assembly revision. `enabled` says the deployment has a bucket (else no control and
- * no link); `editable` is false on an archived assembly.
+ * no link); `editable` is false on an archived assembly. "Add file" in the header opens the upload dialog;
+ * `uploadError` (the page comes back from a refused upload) opens it on load.
  */
-export function FilesCard(props: { files: FileRow[]; uploadAction: string; enabled: boolean; editable: boolean }) {
+export function FilesCard(props: {
+	files: FileRow[];
+	uploadAction: string;
+	enabled: boolean;
+	editable: boolean;
+	uploadError?: string | undefined;
+}) {
 	const view = useApp();
 	const { t } = view;
 	const edit = props.enabled && props.editable && can(view, "files.edit");
@@ -199,6 +231,13 @@ export function FilesCard(props: { files: FileRow[]; uploadAction: string; enabl
 					{t.files.title}
 					{props.files.length > 0 ? <Badge variant="secondary">{props.files.length}</Badge> : null}
 				</span>
+			}
+			action={
+				edit ? (
+					<Button type="button" variant="outline" size="sm" icon={icons.plus} popovertarget={UPLOAD_DIALOG}>
+						{t.files.add}
+					</Button>
+				) : undefined
 			}
 		>
 			{props.files.length === 0 ? (
@@ -263,7 +302,7 @@ export function FilesCard(props: { files: FileRow[]; uploadAction: string; enabl
 					</TableBody>
 				</Table>
 			)}
-			{edit ? <UploadForm action={props.uploadAction} /> : null}
+			{edit ? <UploadDialog action={props.uploadAction} error={props.uploadError} /> : null}
 			{!props.enabled && can(view, "files.edit") ? (
 				<p class="border-t px-4 py-3 text-xs text-muted-foreground">{t.files.disabled}</p>
 			) : null}

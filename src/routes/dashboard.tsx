@@ -4,7 +4,7 @@ import { listBuilds } from "../domain/builds";
 import { listParts } from "../domain/parts";
 import { can } from "../domain/permissions";
 import { computeShortages, listPos } from "../domain/purchasing";
-import { isStocked, valuation } from "../domain/stock";
+import { belowMinimum, isStocked, valuation } from "../domain/stock";
 import { fmt } from "../i18n";
 import { cn } from "../lib/cn";
 import { formatMoney } from "../lib/units";
@@ -20,6 +20,7 @@ import {
 	CardAction,
 	CardContent,
 	CardDescription,
+	CardEmpty,
 	CardHeader,
 	CardTitle,
 	EmptyState,
@@ -113,14 +114,14 @@ dashboardRoutes.get("/", async (c) => {
 	const today = nowIso().slice(0, 10);
 	const stocked = allParts.filter((p) => isStocked(p.kind));
 	const belowZero = stocked.filter((p) => p.onHandMilli < 0);
-	const belowMoq = stocked.filter((p) => p.moqMilli > 0 && p.onHandMilli >= 0 && p.onHandMilli < p.moqMilli);
+	const belowMin = stocked.filter((p) => p.onHandMilli >= 0 && belowMinimum(p));
 	const shortageLines = shortages.groups.flatMap((g) => g.lines.map((l) => ({ ...l, supplierName: g.supplierName })));
 	const shortSuppliers = new Set(shortageLines.map((l) => l.supplierName)).size;
 	const overdue = openPos.filter((p) => p.expectedAt && p.expectedAt < today).length;
 	const inProgress = open.filter((b) => b.status === "in_progress").length;
 	const alerts = [
 		...belowZero.map((p) => ({ p, label: t.dashboard.belowZero, negative: true })),
-		...belowMoq.map((p) => ({ p, label: t.dashboard.belowMoq, negative: false })),
+		...belowMin.map((p) => ({ p, label: t.dashboard.belowMin, negative: false })),
 	];
 	return page(
 		c,
@@ -202,7 +203,9 @@ dashboardRoutes.get("/", async (c) => {
 							</Alert>
 						))}
 						{shortageLines.length === 0 ? (
-							<EmptyState icon={icons.circleCheck} description={t.dashboard.noShortages} class="md:p-6" />
+							<CardEmpty icon={icons.circleCheck} class="px-0 py-1">
+								{t.dashboard.noShortages}
+							</CardEmpty>
 						) : (
 							<Table>
 								<TableHeader>
@@ -235,19 +238,8 @@ dashboardRoutes.get("/", async (c) => {
 							</Table>
 						)}
 					</Section>
-					<Section
-						title={t.dashboard.upcoming}
-						href="/builds"
-						total={open.length}
-						action={
-							canBuild ? (
-								<Button href="/builds/new" variant="outline" size="sm" icon={icons.plus}>
-									{t.builds.new}
-								</Button>
-							) : undefined
-						}
-					>
-						<BuildsTable rows={[...open].reverse().slice(0, LIMIT)} />
+					<Section title={t.dashboard.upcoming} href="/builds" total={open.length}>
+						<BuildsTable rows={[...open].reverse().slice(0, LIMIT)} compact />
 					</Section>
 					<Section title={t.dashboard.openPos} href="/purchasing/po" total={openPos.length}>
 						<PoTable rows={openPos.slice(0, LIMIT)} today={today} />
@@ -256,7 +248,9 @@ dashboardRoutes.get("/", async (c) => {
 
 				<Section title={t.dashboard.alerts} href="/stock" total={alerts.length}>
 					{alerts.length === 0 ? (
-						<EmptyState icon={icons.circleCheck} description={t.dashboard.noAlerts} class="md:p-6" />
+						<CardEmpty icon={icons.circleCheck} class="px-0 py-1">
+							{t.dashboard.noAlerts}
+						</CardEmpty>
 					) : (
 						<ul class="m-0 flex list-none flex-col divide-y p-0">
 							{alerts.slice(0, LIMIT).map(({ p, label, negative }) => (

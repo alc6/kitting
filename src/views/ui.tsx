@@ -78,6 +78,9 @@ export function Button(
 		form?: string;
 		formaction?: string;
 		formmethod?: "get" | "post";
+		/** Opens or closes the popover (a Dialog) with this id. */
+		popovertarget?: string;
+		popovertargetaction?: "show" | "hide" | "toggle";
 		"data-confirm"?: string;
 		[key: `data-${string}`]: string | undefined;
 	},
@@ -272,15 +275,30 @@ export function TableCard(props: { title?: Child; action?: Child; class?: string
 	);
 }
 
-/** An empty state inside a card (the card already draws the border). */
-export function CardEmpty(props: { icon?: IconNode; children?: Child }) {
+/**
+ * Nothing to show inside a card (D170): one muted line with a small icon, no box and no tile, for the secondary
+ * cards of a page (files, where used, prices paid...). `large` keeps the full EmptyState for a card that is the
+ * main result of the page (an empty stock list); the card already draws the border.
+ */
+export function CardEmpty(props: { icon?: IconNode; children?: Child; large?: boolean; class?: string }) {
 	const { t } = useApp();
+	const text = props.children ?? t.common.noResults;
+	if (props.large) {
+		return (
+			<EmptyState icon={props.icon} description={text} class={cn("rounded-none border-0 p-4 md:p-6", props.class)} />
+		);
+	}
 	return (
-		<EmptyState
-			icon={props.icon}
-			description={props.children ?? t.common.noResults}
-			class="rounded-none border-0 p-4 md:p-6"
-		/>
+		<p
+			data-slot="card-empty"
+			class={cn(
+				"m-0 flex items-center gap-2 px-6 py-4 text-sm text-muted-foreground [&_svg:not([class*='size-'])]:size-4",
+				props.class,
+			)}
+		>
+			<Icon icon={props.icon ?? icons.inbox} class="shrink-0" />
+			<span>{text}</span>
+		</p>
 	);
 }
 
@@ -300,6 +318,202 @@ export function CollapsibleCard(props: { title: Child; icon?: IconNode; open?: b
 				/>
 			</summary>
 			<div class="border-t p-6">{props.children}</div>
+		</details>
+	);
+}
+
+// ---------------------------------------------------------------------------
+// Dialog
+
+/**
+ * shadcn Dialog on the Popover API, so it needs no JavaScript: a `<Button type="button" popovertarget={id}>` opens it
+ * (in the top layer, above any `overflow-hidden` card), Esc or a click outside closes it. For forms used now and then
+ * (an upload), so they do not crowd the page. `open` asks app.js to show it on load (data-open), e.g. back from a
+ * refused upload: put the error inside, since the page's own alert sits under the backdrop. A form whose errors are
+ * rendered inline must not live in a dialog: without JavaScript they would stay hidden.
+ */
+export function Dialog(props: { id: string; title: Child; description?: Child; open?: boolean; children: Child }) {
+	const { t } = useApp();
+	return (
+		<div
+			id={props.id}
+			popover="auto"
+			role="dialog"
+			aria-labelledby={`${props.id}-title`}
+			data-slot="dialog-content"
+			data-open={props.open ? "" : undefined}
+			class="m-auto max-h-[calc(100dvh-2rem)] w-full max-w-[calc(100%-2rem)] gap-4 overflow-y-auto overscroll-contain rounded-lg border bg-background p-6 text-foreground shadow-lg backdrop:bg-black/50 open:grid sm:max-w-lg"
+		>
+			<div data-slot="dialog-header" class="flex flex-col gap-2 pr-8">
+				<h2 id={`${props.id}-title`} data-slot="dialog-title" class="m-0 text-lg leading-none font-semibold">
+					{props.title}
+				</h2>
+				{props.description ? (
+					<p data-slot="dialog-description" class="m-0 text-sm text-muted-foreground">
+						{props.description}
+					</p>
+				) : null}
+			</div>
+			{props.children}
+			<Button
+				type="button"
+				variant="ghost"
+				size="icon-sm"
+				icon={icons.x}
+				popovertarget={props.id}
+				popovertargetaction="hide"
+				class="absolute top-3 right-3"
+				aria-label={t.common.close}
+				title={t.common.close}
+			/>
+		</div>
+	);
+}
+
+/** The buttons of a dialog's form: Cancel closes the dialog `dialog`, then the submit button(s). */
+export function DialogFooter(props: { dialog: string; children: Child }) {
+	const { t } = useApp();
+	return (
+		<div data-slot="dialog-footer" class="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+			<Button type="button" variant="outline" popovertarget={props.dialog} popovertargetaction="hide">
+				{t.common.cancel}
+			</Button>
+			{props.children}
+		</div>
+	);
+}
+
+// ---------------------------------------------------------------------------
+// MoreMenu
+
+/** One entry of a MoreMenu: a link (`href`) or a POST form (`action`, with an optional `confirm` prompt). */
+export type MenuItem = {
+	label: string;
+	icon?: IconNode;
+	href?: string;
+	action?: string;
+	confirm?: string;
+	/** Archive, delete, cancel: shown in the destructive colour, after a separator. */
+	destructive?: boolean;
+	/** Opens the dialog (popover) with this id instead of following a link or posting. */
+	dialog?: string;
+};
+
+const MENU_ITEM =
+	"flex w-full cursor-default items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm font-normal whitespace-nowrap text-foreground no-underline outline-none select-none hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground coarse:min-h-12 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 [&_svg:not([class*='text-'])]:text-muted-foreground";
+const MENU_ITEM_DESTRUCTIVE =
+	"text-destructive hover:bg-destructive/10 hover:text-destructive focus-visible:bg-destructive/10 focus-visible:text-destructive dark:hover:bg-destructive/20 [&_svg:not([class*='text-'])]:text-destructive";
+
+/**
+ * The "⋯" button of a page header and its menu (shadcn DropdownMenu look, on the Popover API like Dialog: no
+ * JavaScript, Esc or a click outside closes it, the menu is anchored to its button by CSS). It is a plain popover of
+ * links and buttons, reached with Tab: no ARIA menu roles, which would promise arrow-key navigation it does not have). It holds what is not an
+ * everyday action: archive, delete, retire, cancel. Falsy entries are skipped, and without any entry nothing is
+ * rendered, so a role that may use none of them sees no button. Entries are links or POST forms (`data-confirm`
+ * still asks first); destructive ones come last, in the destructive colour.
+ */
+export function MoreMenu(props: { id?: string; items: (MenuItem | false | null | undefined)[] }) {
+	const { t } = useApp();
+	const id = props.id ?? "more-menu";
+	const items = props.items.filter((i): i is MenuItem => Boolean(i));
+	if (items.length === 0) return null;
+	const ordered = [...items.filter((i) => !i.destructive), ...items.filter((i) => i.destructive)];
+	return (
+		<>
+			<Button
+				type="button"
+				variant="outline"
+				size="icon"
+				icon={icons.ellipsis}
+				popovertarget={id}
+				aria-label={t.common.moreActions}
+				title={t.common.moreActions}
+			/>
+			<div
+				id={id}
+				popover="auto"
+				data-slot="dropdown-menu-content"
+				class="m-0 mt-1 min-w-44 overflow-visible rounded-md border bg-popover p-1 text-popover-foreground shadow-md [position-area:bottom_span-left] [position-try-fallbacks:flip-block]"
+			>
+				{ordered.map((item, i) => {
+					const cls = cn(MENU_ITEM, item.destructive && MENU_ITEM_DESTRUCTIVE);
+					const body = (
+						<>
+							{item.icon ? <Icon icon={item.icon} /> : null}
+							{item.label}
+						</>
+					);
+					const separator = item.destructive && i > 0 && !ordered[i - 1]?.destructive;
+					return (
+						<>
+							{separator ? <hr data-slot="dropdown-menu-separator" class="-mx-1 my-1 h-px border-0 bg-border" /> : null}
+							{item.dialog !== undefined ? (
+								<button type="button" popovertarget={item.dialog} data-slot="dropdown-menu-item" class={cls}>
+									{body}
+								</button>
+							) : item.href !== undefined ? (
+								<a href={item.href} data-slot="dropdown-menu-item" class={cls}>
+									{body}
+								</a>
+							) : (
+								<form method="post" action={item.action} data-confirm={item.confirm} class="contents">
+									<button type="submit" data-slot="dropdown-menu-item" class={cls}>
+										{body}
+									</button>
+								</form>
+							)}
+						</>
+					);
+				})}
+			</div>
+		</>
+	);
+}
+
+// ---------------------------------------------------------------------------
+// InlineEdit
+
+/**
+ * A form shown only on demand, in place (native <details>, so no JavaScript): `summary` is always visible, the Edit
+ * button on its right reveals `children` under it, and `open` starts it open (a refused form, with its errors inline).
+ * Unlike a Dialog it is fine for forms that render their errors next to their fields. The whole summary line toggles;
+ * the button is its visual cue, and says "Close" while the form is open.
+ */
+export function InlineEdit(props: {
+	summary: Child;
+	label?: Child;
+	icon?: IconNode;
+	open?: boolean;
+	class?: string;
+	summaryClass?: string;
+	bodyClass?: string;
+	children: Child;
+}) {
+	const { t } = useApp();
+	return (
+		<details open={props.open} data-slot="inline-edit" class={cn("group/edit", props.class)}>
+			<summary
+				class={cn(
+					"group/summary flex min-h-(--control-h) list-none items-center justify-between gap-x-4 gap-y-2 outline-none [&::-webkit-details-marker]:hidden",
+					props.summaryClass,
+				)}
+			>
+				<div class="min-w-0 flex-1">{props.summary}</div>
+				<span
+					data-slot="button"
+					class={buttonClass(
+						"outline",
+						"sm",
+						"cursor-pointer group-focus-visible/summary:border-ring group-focus-visible/summary:ring-[3px] group-focus-visible/summary:ring-ring/50",
+					)}
+				>
+					<Icon icon={props.icon ?? icons.pencil} class="group-open/edit:hidden" data-icon="inline-start" />
+					<Icon icon={icons.x} class="hidden group-open/edit:block" data-icon="inline-start" />
+					<span class="group-open/edit:hidden">{props.label ?? t.common.edit}</span>
+					<span class="hidden group-open/edit:inline">{t.common.close}</span>
+				</span>
+			</summary>
+			<div class={cn("pt-4", props.bodyClass)}>{props.children}</div>
 		</details>
 	);
 }
@@ -617,13 +831,24 @@ export function StatCard(props: {
 // ---------------------------------------------------------------------------
 // Page furniture
 
-export function PageHeader(props: { title: string; subtitle?: Child; actions?: Child }) {
+/** `lead` is a small visual beside the title (a part's thumbnail). */
+export function PageHeader(props: { title: string; subtitle?: Child; actions?: Child; lead?: Child }) {
+	const heading = (
+		<div class="flex min-w-0 flex-col gap-1">
+			<h1 class="text-2xl font-semibold tracking-tight">{props.title}</h1>
+			{props.subtitle ? <p class="text-sm text-muted-foreground">{props.subtitle}</p> : null}
+		</div>
+	);
 	return (
 		<div class="mb-6 flex flex-wrap items-start justify-between gap-4">
-			<div class="flex min-w-0 flex-col gap-1">
-				<h1 class="text-2xl font-semibold tracking-tight">{props.title}</h1>
-				{props.subtitle ? <p class="text-sm text-muted-foreground">{props.subtitle}</p> : null}
-			</div>
+			{props.lead ? (
+				<div class="flex min-w-0 items-center gap-4">
+					{props.lead}
+					{heading}
+				</div>
+			) : (
+				heading
+			)}
 			{props.actions ? <div class="page-actions flex flex-wrap items-center gap-2">{props.actions}</div> : null}
 		</div>
 	);
@@ -647,13 +872,17 @@ export function ErrorBanner(props: { show: boolean; message?: string }) {
 /**
  * Live search: a plain GET form that also works without JavaScript. With htmx it
  * refreshes only #results (selected from the full page response) as you type.
+ * `compact` keeps a bar with a DateRange on one line (D171).
  */
-export function SearchBar(props: { action: string; q: string; children?: Child }) {
+export function SearchBar(props: { action: string; q: string; compact?: boolean; children?: Child }) {
 	const { t } = useApp();
 	return (
 		<search>
 			<form
-				class="searchbar mb-4 flex flex-wrap items-center gap-2 [&>select]:w-auto [&>select]:flex-[0_1_220px]"
+				class={cn(
+					"searchbar mb-4 flex flex-wrap items-center gap-2 [&>select]:w-auto [&>select]:flex-[0_1_220px]",
+					props.compact && "[&>select]:flex-[0_1_130px]",
+				)}
 				method="get"
 				action={props.action}
 				hx-get={props.action}
@@ -663,7 +892,7 @@ export function SearchBar(props: { action: string; q: string; children?: Child }
 				hx-swap="outerHTML"
 				hx-push-url="true"
 			>
-				<div class="relative flex-[1_1_260px]">
+				<div class={cn("relative", props.compact ? "flex-[1_1_120px]" : "flex-[1_1_260px]")}>
 					<Icon
 						icon={icons.search}
 						class="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground"
@@ -678,9 +907,33 @@ export function SearchBar(props: { action: string; q: string; children?: Child }
 					/>
 				</div>
 				{props.children}
-				<Button variant="outline">{t.common.search}</Button>
+				{/* Needed without JavaScript only: app.js hides it, the form submits itself as you type (D172). */}
+				<Button variant="outline" data-live-submit="">
+					{t.common.search}
+				</Button>
 			</form>
 		</search>
+	);
+}
+
+/**
+ * A date range for a filter bar (D171): one "Dates" label and "from - to" on one line, the inputs named `from` and
+ * `to`. Each input keeps its own accessible name.
+ */
+export function DateRange(props: { from?: string | null; to?: string | null; fromLabel: string; toLabel: string }) {
+	const { t } = useApp();
+	return (
+		<fieldset class="m-0 flex min-w-0 shrink-0 items-center gap-2 border-0 p-0">
+			<legend class="sr-only">{t.common.dates}</legend>
+			<span aria-hidden="true" class="text-sm font-medium text-muted-foreground">
+				{t.common.dates}
+			</span>
+			<input type="date" name="from" value={props.from ?? ""} aria-label={props.fromLabel} class="w-auto px-2" />
+			<span aria-hidden="true" class="text-muted-foreground">
+				&ndash;
+			</span>
+			<input type="date" name="to" value={props.to ?? ""} aria-label={props.toLabel} class="w-auto px-2" />
+		</fieldset>
 	);
 }
 

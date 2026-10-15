@@ -101,7 +101,7 @@ describe("adding a past price from the part page", () => {
 		const before = await one("SELECT * FROM parts WHERE id = ?", id);
 		const res = await post(id, form({ price: "3,25", note: "Price list 2024" }));
 		expect(res.status).toBe(303);
-		expect(res.headers.get("Location")).toBe(`/parts/${id}?ok=pastprice#price-history`);
+		expect(res.headers.get("Location")).toBe(`/parts/${id}/prices?ok=pastprice#price-history`);
 		expect(
 			await rows(
 				"SELECT kind, supplier_id, price_cents, valid_from, source, note, created_by FROM price_history ORDER BY id",
@@ -158,7 +158,7 @@ describe("adding a past price from the part page", () => {
 		await post(id, form({ date: "2024-03-01", price: "3.00" }));
 		await post(id, form({ date: "2025-06-15", price: "4.00" }));
 		await post(id, form({ date: "2022-01-10", price: "2.00" }));
-		const html = await (await request(`/parts/${id}?ok=pastprice`)).text();
+		const html = await (await request(`/parts/${id}/prices?ok=pastprice`)).text();
 		expect(html).toContain("Past price added.");
 		const at = (d: string) => html.indexOf(`>${d}</td>`);
 		expect(at("2026-01-01")).toBeGreaterThan(-1);
@@ -240,14 +240,14 @@ describe("adding a past price from the part page", () => {
 	it("is for planners: the form is shown to them only", async () => {
 		const id = await setup();
 		await setRole("planner");
-		const html = await (await request(`/parts/${id}`, {}, NOT_ADMIN)).text();
+		const html = await (await request(`/parts/${id}/prices`, {}, NOT_ADMIN)).text();
 		expect(html).toContain(`action="/parts/${id}/prices/past#price-history"`);
 		expect((await post(id, form(), NOT_ADMIN)).status).toBe(303);
 
 		await letLowerRolesSeeCosts();
 		for (const role of ["operator", "viewer"] as const) {
 			await setRole(role);
-			const page = await request(`/parts/${id}`, {}, NOT_ADMIN);
+			const page = await request(`/parts/${id}/prices`, {}, NOT_ADMIN);
 			expect(page.status).toBe(200);
 			const body = await page.text();
 			expect(body).toContain("Price history");
@@ -260,7 +260,7 @@ describe("adding a past price from the part page", () => {
 	it("shows neither the form nor the amounts to someone who may not see costs", async () => {
 		const id = await setup();
 		await setRole("operator");
-		const body = await (await request(`/parts/${id}`, {}, NOT_ADMIN)).text();
+		const body = await (await request(`/parts/${id}/prices`, {}, NOT_ADMIN)).text();
 		expect(body).not.toContain("Price history");
 		expect(body).not.toContain("/prices/past");
 		expect((await post(id, form(), NOT_ADMIN)).status).toBe(403);
@@ -350,7 +350,7 @@ describe("deleting a wrong row of the price history (D143)", () => {
 		const row = await priceId("2024-03-01");
 		const res = await del(id, row);
 		expect(res.status).toBe(303);
-		expect(location(res)).toBe(`/parts/${id}?ok=pricedeleted#price-history`);
+		expect(location(res)).toBe(`/parts/${id}/prices?ok=pricedeleted#price-history`);
 		expect(await rows("SELECT valid_from, price_cents FROM price_history")).toEqual([
 			{ valid_from: "2026-01-01", price_cents: 500 },
 		]);
@@ -365,7 +365,7 @@ describe("deleting a wrong row of the price history (D143)", () => {
 		});
 		expect(sets.at(-1)?.summary).not.toMatch(/\d\.\d/);
 		expect(await one("SELECT cost_cents FROM parts WHERE id = ?", id)).toEqual({ cost_cents: 500 });
-		const page = await (await request(`/parts/${id}?ok=pricedeleted`)).text();
+		const page = await (await request(`/parts/${id}/prices?ok=pricedeleted`)).text();
 		expect(page).toContain("Price deleted from the history.");
 	});
 
@@ -373,10 +373,10 @@ describe("deleting a wrong row of the price history (D143)", () => {
 		const id = await withTypo();
 		const res = await del(id, await priceId("2026-01-01"));
 		expect(res.status).toBe(303);
-		expect(location(res)).toBe(`/parts/${id}?err=price_is_current#price-history`);
+		expect(location(res)).toBe(`/parts/${id}/prices?err=price_is_current#price-history`);
 		expect(await countHistory()).toBe(2);
 		expect((await rows("SELECT * FROM change_sets")).length).toBe(1);
-		const page = await (await request(`/parts/${id}?err=price_is_current`)).text();
+		const page = await (await request(`/parts/${id}/prices?err=price_is_current`)).text();
 		expect(page).toContain("Change the current price on the part&#39;s form instead.");
 	});
 
@@ -415,10 +415,10 @@ describe("deleting a wrong row of the price history (D143)", () => {
 			),
 		);
 		const res = await del(id, await priceId("2025-01-01"));
-		expect(location(res)).toBe(`/parts/${id}?err=price_not_deletable#price-history`);
+		expect(location(res)).toBe(`/parts/${id}/prices?err=price_not_deletable#price-history`);
 		expect(await countHistory()).toBe(3);
 		// And no button is shown for it: only the standard cost row has one.
-		expect((await (await request(`/parts/${id}`)).text()).match(/\/prices\/\d+\/delete"/g)?.length).toBe(1);
+		expect((await (await request(`/parts/${id}/prices`)).text()).match(/\/prices\/\d+\/delete"/g)?.length).toBe(1);
 	});
 
 	it("is a 404 for a row of another part or that does not exist, and writes nothing", async () => {
@@ -437,7 +437,7 @@ describe("deleting a wrong row of the price history (D143)", () => {
 	it("is for administrators: planners and operators get a 403 and see no delete button", async () => {
 		const id = await withTypo();
 		const row = await priceId("2024-03-01");
-		const adminPage = await (await request(`/parts/${id}`)).text();
+		const adminPage = await (await request(`/parts/${id}/prices`)).text();
 		expect(adminPage).toContain(`action="/parts/${id}/prices/${row}/delete"`);
 		// One button per standard cost or supplier price row.
 		expect(adminPage.match(/\/prices\/\d+\/delete"/g)?.length).toBe(2);
@@ -445,7 +445,7 @@ describe("deleting a wrong row of the price history (D143)", () => {
 		await letLowerRolesSeeCosts();
 		for (const role of ["planner", "operator", "viewer"] as const) {
 			await setRole(role);
-			const page = await request(`/parts/${id}`, {}, NOT_ADMIN);
+			const page = await request(`/parts/${id}/prices`, {}, NOT_ADMIN);
 			expect(page.status).toBe(200);
 			expect(await page.text()).not.toMatch(/\/prices\/\d+\/delete/);
 			expect((await del(id, row, NOT_ADMIN)).status).toBe(403);

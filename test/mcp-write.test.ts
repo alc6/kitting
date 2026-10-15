@@ -362,6 +362,27 @@ describe("catalog tools", () => {
 		const dup = await callTool(token, "create_part", { ref: "knob-xl", name: "Again", kind: "buy" });
 		expect(dup.isError).toBe(true);
 		expect(dup.text).toContain("Differs only by upper/lower case from existing reference KNOB-XL");
+		const withMin = await write(token, "create_part", {
+			ref: "KNOB-S",
+			name: "Small knob",
+			kind: "buy",
+			min_stock: "20",
+		});
+		expect(withMin.data.part).toMatchObject({ ref: "KNOB-S", min_stock: "20" });
+		expect(created.data.part).toMatchObject({ min_stock: null });
+		const raised = await write(token, "update_part", { ref: "KNOB-S", min_stock: 30.5 });
+		expect(raised.data.part).toMatchObject({ min_stock: "30.5" });
+		// Fields left out keep the minimum; null removes it.
+		expect((await write(token, "update_part", { ref: "KNOB-S", notes: "x" })).data.part).toMatchObject({
+			min_stock: "30.5",
+		});
+		expect((await write(token, "update_part", { ref: "KNOB-S", min_stock: null })).data.part).toMatchObject({
+			min_stock: null,
+		});
+		const badMin = await callTool(token, "update_part", { ref: "KNOB-S", min_stock: "-1" });
+		expect(badMin.text).toContain("min_stock: Must be zero or more.");
+		const kitMin = await callTool(token, "create_part", { ref: "KIT-8", name: "Kit", kind: "kit", min_stock: "5" });
+		expect(kitMin.text).toContain("min_stock: Only buy and make parts have a minimum stock.");
 		const serialKit = await callTool(token, "create_part", {
 			ref: "KIT-9",
 			name: "Kit",

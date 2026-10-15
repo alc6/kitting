@@ -6,7 +6,6 @@ import {
 	type Part,
 	type PartKind,
 	type PriceSource,
-	partSuppliers,
 	parts,
 	stockMoves,
 	suppliers,
@@ -38,6 +37,7 @@ export const partInput = z.object({
 	moq: field.qty(),
 	pack_size: field.qty(),
 	lead_days: field.int(),
+	min_stock: field.optionalQty(),
 	track_serial: field.bool(),
 	notes: field.text(),
 });
@@ -53,6 +53,7 @@ export function partColumns(d: PartInput) {
 		costCents: d.cost,
 		salePriceCents: d.sale_price,
 		supplierId: d.supplier_id,
+		minStockMilli: d.min_stock,
 		trackSerial: d.track_serial,
 		notes: d.notes,
 	};
@@ -85,6 +86,7 @@ export function partToForm(p: Part, locale: NumberLocale, offer?: OfferTerms): R
 		moq: o.moqMilli ? formatQtyInput(o.moqMilli, locale) : "",
 		pack_size: o.packSizeMilli ? formatQtyInput(o.packSizeMilli, locale) : "",
 		lead_days: o.leadDays ? String(o.leadDays) : "",
+		min_stock: p.minStockMilli === null ? "" : formatQtyInput(p.minStockMilli, locale),
 		track_serial: p.trackSerial ? "on" : "",
 		notes: p.notes,
 	};
@@ -209,11 +211,12 @@ export function deletePartStatement(db: Db, partId: number) {
 
 /** Business rules shared by the form and the CSV import. Returns field -> error key. */
 export function partRuleErrors(
-	d: { kind: PartKind; trackSerial: boolean },
+	d: { kind: PartKind; trackSerial: boolean; minStockMilli?: number | null },
 	ctx: { hasMoves: boolean; hasAssemblies?: boolean },
 ): FieldErrors {
 	const errors: FieldErrors = {};
 	if (d.trackSerial && (d.kind === "kit" || d.kind === "fee")) errors.track_serial = "serial_kind";
+	if (d.minStockMilli != null && (d.kind === "kit" || d.kind === "fee")) errors.min_stock = "min_stock_kind";
 	if (ctx.hasMoves && (d.kind === "kit" || d.kind === "fee")) errors.kind = "kind_has_stock";
 	if (ctx.hasAssemblies && d.kind !== "make" && d.kind !== "kit") errors.kind = "kind_has_assemblies";
 	return errors;
@@ -235,7 +238,10 @@ export async function checkPart(db: Db, body: Record<string, unknown>, existing?
 	const ownsAssemblies = existing ? await hasAssemblies(db, existing.id) : false;
 	Object.assign(
 		errors,
-		partRuleErrors({ kind: d.kind, trackSerial: d.track_serial }, { hasMoves, hasAssemblies: ownsAssemblies }),
+		partRuleErrors(
+			{ kind: d.kind, trackSerial: d.track_serial, minStockMilli: d.min_stock },
+			{ hasMoves, hasAssemblies: ownsAssemblies },
+		),
 	);
 	if (Object.keys(errors).length > 0) return { ok: false as const, errors, clashRef: clash?.ref };
 	return { ok: true as const, data: d };
@@ -276,8 +282,8 @@ export async function listParts(db: Db, f: PartFilters = {}) {
 			kind: parts.kind,
 			unit: parts.unit,
 			costCents: parts.costCents,
-			// MOQ of the preferred offer (0 without one), for the below-MOQ alerts.
-			moqMilli: sql<number>`COALESCE(${partSuppliers.moqMilli}, 0)`,
+			// Minimum stock (D173), for the stock alerts.
+			minStockMilli: parts.minStockMilli,
 			trackSerial: parts.trackSerial,
 			archived: parts.archived,
 			supplierId: parts.supplierId,
@@ -287,7 +293,6 @@ export async function listParts(db: Db, f: PartFilters = {}) {
 		})
 		.from(parts)
 		.leftJoin(suppliers, eq(parts.supplierId, suppliers.id))
-		.leftJoin(partSuppliers, and(eq(partSuppliers.partId, parts.id), eq(partSuppliers.supplierId, parts.supplierId)))
 		.where(conds.length ? and(...conds) : undefined)
 		.orderBy(asc(parts.ref))
 		.limit(2000);

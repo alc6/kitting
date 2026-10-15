@@ -245,8 +245,34 @@
 		@apply w-full min-w-0 rounded-md border border-input bg-transparent px-3 py-1 text-base shadow-xs transition-[color,box-shadow] outline-none selection:bg-primary selection:text-primary-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 md:text-sm dark:bg-input/30 dark:aria-invalid:ring-destructive/40;
 		min-height: var(--control-h);
 	}
+	/*
+	 * Preflight resets border-radius on controls with an element selector (specificity 0,0,1), which beats the
+	 * zero-specificity :where() block above: the radius needs its own, slightly stronger selector.
+	 */
+	:is(
+		input:not([type]),
+		input[type="text"],
+		input[type="search"],
+		input[type="email"],
+		input[type="tel"],
+		input[type="date"],
+		input[type="number"],
+		input[type="password"],
+		input[type="file"],
+		select,
+		textarea
+	) {
+		@apply rounded-md;
+	}
 	:where(input[type="file"]) {
-		@apply py-1.5 file:mr-3 file:inline-flex file:h-7 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground;
+		@apply py-1.5;
+	}
+	/* The "Choose file" button: a small rounded secondary control, like the buttons of the app. */
+	input[type="file"]::file-selector-button {
+		@apply mr-3 inline-flex h-7 cursor-pointer items-center rounded-md border border-input bg-secondary px-3 text-sm font-medium text-secondary-foreground transition-colors coarse:h-9;
+	}
+	input[type="file"]:hover:not(:disabled)::file-selector-button {
+		@apply bg-accent text-accent-foreground;
 	}
 	:where(select) {
 		@apply appearance-none bg-no-repeat pr-9;

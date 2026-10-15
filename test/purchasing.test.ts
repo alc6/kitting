@@ -449,4 +449,27 @@ describe("dashboard", () => {
 		expect(html).toContain(`/parts/${neg}`);
 		expect(html).toContain("B-0005");
 	});
+
+	it("lists the upcoming builds on one line each, without assembly or serial, and without its own New build button", async () => {
+		await loadDemo();
+		await planLamps(2);
+		const html = await (await request("/")).text();
+		const start = html.indexOf("Planned and in-progress builds");
+		const card = html.slice(start, html.indexOf("Open POs", start));
+		const head = card.slice(card.indexOf("<thead"), card.indexOf("</thead>"));
+		for (const label of ["Number", "Quantity", "Status", "Planned for"]) expect(head, label).toContain(label);
+		expect(head).not.toContain("Assembly");
+		expect(head).not.toContain("Serial");
+		expect(card).toContain("LAMP-DESK");
+		expect(card).toContain("Modular desk lamp");
+		expect(card).not.toContain("std · "); // the assembly code and revision are not shown here
+		expect(card).not.toContain("L-1"); // nor the serial number
+		// The page header keeps the only New build button.
+		expect(html.match(/href="\/builds\/new"/g)).toHaveLength(1);
+		// The build pages keep both columns.
+		const builds = await (await request("/builds")).text();
+		expect(builds).toContain("Assembly");
+		expect(builds).toContain("Serial");
+		expect(builds).toContain("L-1");
+	});
 });

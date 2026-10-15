@@ -66,6 +66,7 @@ import {
 	Card,
 	CardContent,
 	CardDescription,
+	CardEmpty,
 	CardFooter,
 	CardHeader,
 	CardTitle,
@@ -82,6 +83,7 @@ import {
 	KindBadge,
 	LinkButton,
 	Money,
+	MoreMenu,
 	PageHeader,
 	PostButton,
 	Qty,
@@ -119,19 +121,30 @@ export function BuildStatusBadge(props: { status: BuildStatus }) {
 	return <span class={`status status-${props.status}`}>{t.builds.statuses[props.status]}</span>;
 }
 
-/** Bare table of builds (no card), also embedded by the dashboard and the part page. */
-export function BuildsTable(props: { rows: BuildRow[] }) {
+/**
+ * Bare table of builds, also embedded by the dashboard and the part page, where it sits in a secondary card:
+ * its empty state is the quiet one (`emptyClass` aligns it with the padding of the card). `compact` (the dashboard,
+ * D175) keeps the columns that fit beside the alerts rail: product on one line, no assembly and no serial number (the
+ * build pages keep them).
+ */
+export function BuildsTable(props: { rows: BuildRow[]; emptyClass?: string; compact?: boolean }) {
 	const { t } = useApp();
-	if (props.rows.length === 0) return <EmptyState icon={icons.hammer} description={t.builds.noBuilds} />;
+	if (props.rows.length === 0) {
+		return (
+			<CardEmpty icon={icons.hammer} class={props.emptyClass ?? "px-0 py-1"}>
+				{t.builds.noBuilds}
+			</CardEmpty>
+		);
+	}
 	return (
 		<Table>
 			<TableHeader>
 				<TableRow>
 					<TableHead>{t.builds.number}</TableHead>
 					<TableHead>{t.builds.part}</TableHead>
-					<TableHead>{t.builds.assembly}</TableHead>
+					{props.compact ? null : <TableHead>{t.builds.assembly}</TableHead>}
 					<TableHead class="text-right">{t.builds.qty}</TableHead>
-					<TableHead>{t.builds.serial}</TableHead>
+					{props.compact ? null : <TableHead>{t.builds.serial}</TableHead>}
 					<TableHead>{t.builds.status}</TableHead>
 					<TableHead>{t.builds.plannedFor}</TableHead>
 				</TableRow>
@@ -144,17 +157,29 @@ export function BuildsTable(props: { rows: BuildRow[] }) {
 								{b.number}
 							</a>
 						</TableCell>
-						<TableCell>
-							<span class={cn(CODE, "font-medium")}>{b.partRef}</span>{" "}
-							<span class="text-muted-foreground">{b.partName}</span>
-						</TableCell>
-						<TableCell class="whitespace-nowrap text-muted-foreground">
-							{b.assemblyCode} · {b.assemblyRevision}
-						</TableCell>
-						<TableCell class="text-right">
+						{props.compact ? (
+							// max-w-0 + w-full: the cell takes the room left by the other columns and truncates its text.
+							<TableCell class="w-full max-w-0 truncate">
+								<span title={`${b.partRef} ${b.partName}`}>
+									<span class={cn(CODE, "font-medium")}>{b.partRef}</span>{" "}
+									<span class="text-muted-foreground">{b.partName}</span>
+								</span>
+							</TableCell>
+						) : (
+							<TableCell>
+								<span class={cn(CODE, "font-medium")}>{b.partRef}</span>{" "}
+								<span class="text-muted-foreground">{b.partName}</span>
+							</TableCell>
+						)}
+						{props.compact ? null : (
+							<TableCell class="whitespace-nowrap text-muted-foreground">
+								{b.assemblyCode} · {b.assemblyRevision}
+							</TableCell>
+						)}
+						<TableCell class="text-right whitespace-nowrap">
 							<Qty milli={b.qtyMilli} unit={b.unit} />
 						</TableCell>
-						<TableCell class={CODE}>{b.serial ?? ""}</TableCell>
+						{props.compact ? null : <TableCell class={CODE}>{b.serial ?? ""}</TableCell>}
 						<TableCell>
 							<BuildStatusBadge status={b.status} />
 						</TableCell>
@@ -827,12 +852,16 @@ function BuildHeader(props: { data: BuildData }) {
 						{build.status === "planned" ? (
 							<PostButton action={`/builds/${build.id}/start`} label={t.builds.start} icon={icons.play} />
 						) : null}
-						<PostButton
-							action={`/builds/${build.id}/cancel`}
-							label={t.builds.cancel}
-							confirm={t.builds.confirmCancel}
-							variant="destructive"
-							icon={icons.ban}
+						<MoreMenu
+							items={[
+								{
+									label: t.builds.cancel,
+									icon: icons.ban,
+									action: `/builds/${build.id}/cancel`,
+									confirm: t.builds.confirmCancel,
+									destructive: true,
+								},
+							]}
 						/>
 					</>
 				) : null

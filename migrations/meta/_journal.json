@@ -71,6 +71,13 @@
       "when": 1792053198301,
       "tag": "0009_po_shipments",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1792056766590,
+      "tag": "0010_min_stock",
+      "breakpoints": true
     }
   ]
 }

@@ -69,7 +69,7 @@ import type { AppEnv } from "../types";
 import { CostView, missingNames, StatusBadge } from "../views/assembly";
 import { AssemblyDiagram, type DiagramView, diagramTree, treeDepth } from "../views/assembly-diagram";
 import { useApp } from "../views/context";
-import { FilesCard } from "../views/files";
+import { FilesCard, uploadErrorText } from "../views/files";
 import { Icon, type IconNode, icons } from "../views/icons";
 import { Duration, MachineTimeCard, type MachineTimeRow } from "../views/machines";
 import { PartPicker, PartPickerDialog, PartSelectPicker } from "../views/part-picker";
@@ -93,10 +93,12 @@ import {
 	Flash,
 	type FormErrors,
 	type FormValues,
+	InlineEdit,
 	KindBadge,
 	LinkButton,
 	LinkTabs,
 	Money,
+	MoreMenu,
 	PageHeader,
 	PostButton,
 	Qty,
@@ -266,23 +268,24 @@ function AssemblyHeader(props: { assembly: Assembly; part: Part; tab: AssemblyTa
 								/>
 							</>
 						) : null}
-						{canArchive && assembly.status !== "archived" ? (
-							<PostButton
-								action={`/assemblies/${assembly.id}/archive`}
-								label={t.assemblies.archive}
-								confirm={t.common.confirmArchive}
-								icon={icons.archive}
-							/>
-						) : null}
-						{canDelete ? (
-							<PostButton
-								action={`/assemblies/${assembly.id}/delete`}
-								label={t.common.delete}
-								confirm={t.common.confirmDelete}
-								variant="destructive"
-								icon={icons.trash}
-							/>
-						) : null}
+						<MoreMenu
+							items={[
+								canArchive &&
+									assembly.status !== "archived" && {
+										label: t.assemblies.archive,
+										icon: icons.archive,
+										action: `/assemblies/${assembly.id}/archive`,
+										confirm: t.common.confirmArchive,
+									},
+								canDelete && {
+									label: t.common.delete,
+									icon: icons.trash,
+									action: `/assemblies/${assembly.id}/delete`,
+									confirm: t.common.confirmDelete,
+									destructive: true,
+								},
+							]}
+						/>
 					</>
 				}
 			/>
@@ -880,38 +883,63 @@ function ProductionBar(props: {
 	const p = { values: props.values, errors: props.errors };
 	return (
 		<CardContent>
-			<form
-				method="post"
-				action={`/assemblies/${assembly.id}/production`}
-				id="production"
-				class="flex flex-col gap-3 rounded-lg border bg-muted/40 p-4"
+			<InlineEdit
+				open={Object.keys(props.errors).length > 0}
+				class="rounded-lg border bg-muted/40 p-4"
+				summary={
+					<p class="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+						<span>
+							{t.assemblies.batch} <Qty milli={assembly.batchQtyMilli} unit={part.unit} />
+						</span>
+						<span aria-hidden="true">·</span>
+						<span>
+							{t.assemblies.productionMachine} {machine ? machine.name : t.machines.none.toLowerCase()}
+						</span>
+						<span aria-hidden="true">·</span>
+						<span>
+							{t.assemblies.productionTime}{" "}
+							{assembly.machineMinutes > 0 ? (
+								<Duration minutesMilli={assembly.machineMinutes * MILLI} />
+							) : (
+								t.common.none
+							)}
+						</span>
+					</p>
+				}
 			>
-				<div class="grid gap-3 md:grid-cols-[minmax(0,11rem)_minmax(0,1fr)_minmax(0,10rem)_auto] md:items-start">
-					<DecimalField name="batch_qty" label={fmt(t.assemblies.batchSize, { unit: part.unit })} {...p} />
-					<SelectField
-						name="machine_type_id"
-						label={t.machines.machineType}
-						options={[
-							{ value: "", label: t.machines.none },
-							...props.machineTypes.map((m) => ({ value: String(m.id), label: m.name })),
-						]}
-						{...p}
-					/>
-					<TextField name="machine_time" label={t.machines.timePerBatch} placeholder="3:10" {...p} />
-					<Button variant="outline" icon={icons.save} class="md:mt-[1.375rem]">
-						{t.common.save}
-					</Button>
-				</div>
-				<p class="text-xs text-muted-foreground">
-					{fmt(t.assemblies.batchHint, { ref: part.ref })} {t.machines.timeHint}
-					{props.machineTypes.length === 0 && can(view, "machines.edit") ? (
-						<>
-							{" "}
-							<a href="/machines/types/new">{t.machines.newType}</a>
-						</>
-					) : null}
-				</p>
-			</form>
+				<form
+					method="post"
+					action={`/assemblies/${assembly.id}/production`}
+					id="production"
+					class="flex flex-col gap-3"
+				>
+					<div class="grid gap-3 md:grid-cols-[minmax(0,11rem)_minmax(0,1fr)_minmax(0,10rem)_auto] md:items-start">
+						<DecimalField name="batch_qty" label={fmt(t.assemblies.batchSize, { unit: part.unit })} {...p} />
+						<SelectField
+							name="machine_type_id"
+							label={t.machines.machineType}
+							options={[
+								{ value: "", label: t.machines.none },
+								...props.machineTypes.map((m) => ({ value: String(m.id), label: m.name })),
+							]}
+							{...p}
+						/>
+						<TextField name="machine_time" label={t.machines.timePerBatch} placeholder="3:10" {...p} />
+						<Button variant="outline" icon={icons.save} class="md:mt-[1.375rem]">
+							{t.common.save}
+						</Button>
+					</div>
+					<p class="text-xs text-muted-foreground">
+						{fmt(t.assemblies.batchHint, { ref: part.ref })} {t.machines.timeHint}
+						{props.machineTypes.length === 0 && can(view, "machines.edit") ? (
+							<>
+								{" "}
+								<a href="/machines/types/new">{t.machines.newType}</a>
+							</>
+						) : null}
+					</p>
+				</form>
+			</InlineEdit>
 		</CardContent>
 	);
 }
@@ -970,31 +998,54 @@ function SalePriceCard(props: { assembly: Assembly; part: Part; values: FormValu
 			</SideCard>
 		);
 	}
+	const effective = salePriceOf(part, assembly);
 	return (
 		<Card id="sale-price" class="gap-4">
 			<CardHeader>
 				<CardTitle icon={icons.tag}>{t.assemblies.salePriceTitle}</CardTitle>
 			</CardHeader>
-			<form method="post" action={`/assemblies/${assembly.id}/sale-price`} class="flex flex-col gap-4">
-				<CardContent>
-					<DecimalField
-						name="sale_price"
-						label={t.assemblies.salePrice}
-						hint={
-							partPrice === null
-								? t.assemblies.salePriceHintNone
-								: fmt(t.assemblies.salePriceHint, { price: formatMoney(partPrice, locale, currency) })
-						}
-						values={props.values}
-						errors={props.errors}
-					/>
-				</CardContent>
-				<CardFooter>
-					<Button variant="outline" icon={icons.save}>
-						{t.common.save}
-					</Button>
-				</CardFooter>
-			</form>
+			<CardContent>
+				<InlineEdit
+					open={Object.keys(props.errors).length > 0}
+					summary={
+						<span class="inline-flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+							{effective === null ? (
+								t.common.none
+							) : (
+								<strong class="font-semibold">
+									<Money cents={effective} />
+								</strong>
+							)}
+							{assembly.salePriceCents !== null ? (
+								<Badge variant="info" title={t.margins.ownPriceTitle}>
+									{t.margins.ownPrice}
+								</Badge>
+							) : effective !== null ? (
+								<span class="text-xs text-muted-foreground">({t.assemblies.salePriceInherited})</span>
+							) : null}
+						</span>
+					}
+				>
+					<form method="post" action={`/assemblies/${assembly.id}/sale-price`} class="flex flex-col gap-4">
+						<DecimalField
+							name="sale_price"
+							label={t.assemblies.salePrice}
+							hint={
+								partPrice === null
+									? t.assemblies.salePriceHintNone
+									: fmt(t.assemblies.salePriceHint, { price: formatMoney(partPrice, locale, currency) })
+							}
+							values={props.values}
+							errors={props.errors}
+						/>
+						<div>
+							<Button variant="outline" icon={icons.save}>
+								{t.common.save}
+							</Button>
+						</div>
+					</form>
+				</InlineEdit>
+			</CardContent>
 		</Card>
 	);
 }
@@ -1080,6 +1131,7 @@ async function renderEditor(
 						uploadAction={`/assemblies/${assembly.id}/files`}
 						enabled={filesBucket(c.env) !== null}
 						editable={assembly.status !== "archived"}
+						uploadError={uploadErrorText(t, c.req.query("err"), "file")}
 					/>
 				</div>
 			) : null}

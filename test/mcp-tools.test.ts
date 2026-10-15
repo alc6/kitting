@@ -191,6 +191,9 @@ describe("read tools", () => {
 			expect.objectContaining({ supplier: "Lumen Parts Co", preferred: true, price: "4.10", moq: "10" }),
 			expect.objectContaining({ supplier: "Quickparts Express", preferred: false, price: "4.90" }),
 		]);
+		// The minimum stock is in the examples (D173): LED-5W-CW has 6 on hand against a minimum of 20.
+		expect(led.data.part).toMatchObject({ min_stock: "20" });
+		expect((await callTool(token, "get_part", { ref: "MANUAL" })).data.part).toMatchObject({ min_stock: null });
 		const used = led.data.where_used as { parent: string; depth: number; via: string }[];
 		expect(used).toContainEqual(expect.objectContaining({ parent: "HEAD-KIT-CW", depth: 1, via: "LED-5W-CW" }));
 		expect(used).toContainEqual(expect.objectContaining({ parent: "LAMP-DESK", depth: 2, via: "HEAD-KIT-CW" }));
@@ -298,6 +301,14 @@ describe("read tools", () => {
 		const token = await connect(["stock:read"]);
 		const below = await callTool(token, "stock_on_hand", { filter: "below_zero" });
 		expect(below.data.parts).toEqual([expect.objectContaining({ ref: "PAD-FELT", on_hand: "-50" })]);
+		const belowMin = await callTool(token, "stock_on_hand", { filter: "below_min" });
+		const refs = (belowMin.data.parts as { ref: string; min_stock: string; on_hand: string }[]).map((p) => p.ref);
+		expect(refs).toContain("LED-5W-CW");
+		expect(refs).toContain("PAD-FELT"); // 50 on hand after the scrap, minimum 200
+		expect(belowMin.data.parts).toContainEqual(
+			expect.objectContaining({ ref: "LED-5W-CW", on_hand: "6", min_stock: "20" }),
+		);
+		expect(refs).not.toContain("CABLE-2C"); // no minimum set
 		const stocked = await callTool(token, "stock_on_hand", { filter: "in_stock", query: "cable" });
 		expect(stocked.data.parts).toEqual([expect.objectContaining({ ref: "CABLE-2C", unit: "m", on_hand: "42.5" })]);
 		const moves = await callTool(token, "list_moves", { reason: "adjust" });

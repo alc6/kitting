@@ -73,11 +73,11 @@ import {
 	CardAction,
 	CardContent,
 	CardDescription,
+	CardEmpty,
 	CardFooter,
 	CardHeader,
 	CardTitle,
 	CollapsibleCard,
-	Empty,
 	EmptyState,
 	ErrorBanner,
 	FieldGroup,
@@ -86,6 +86,7 @@ import {
 	type FormValues,
 	LinkTabs,
 	Money,
+	MoreMenu,
 	PageHeader,
 	PostButton,
 	Qty,
@@ -458,7 +459,13 @@ purchasingRoutes.get("/po", async (c) => {
 /** The PO list as a bare table (or an empty state); callers put it in a card. */
 export function PoTable(props: { rows: Awaited<ReturnType<typeof listPos>>; today: string }) {
 	const { t, seeCosts } = useApp();
-	if (props.rows.length === 0) return <Empty>{t.purchasing.noPos}</Empty>;
+	if (props.rows.length === 0) {
+		return (
+			<CardEmpty icon={icons.receipt} class="px-0 py-1">
+				{t.purchasing.noPos}
+			</CardEmpty>
+		);
+	}
 	// The tracking column only when some PO has a shipment.
 	const tracking = props.rows.some((po) => po.shipmentCount > 0);
 	return (
@@ -694,7 +701,9 @@ function DraftLines(props: {
 				</CardHeader>
 				<CardContent class="px-2">
 					{props.lines.length === 0 ? (
-						<EmptyState icon={icons.list} description={t.purchasing.noLines} class="mx-4" />
+						<CardEmpty icon={icons.list} class="px-4">
+							{t.purchasing.noLines}
+						</CardEmpty>
 					) : (
 						<Table>
 							<TableHeader>
@@ -1301,31 +1310,6 @@ async function renderPo(
 								{t.purchasing.exportCsv}
 							</Button>
 						) : null}
-						{canEdit && (po.status === "draft" || po.status === "sent") && !anyReceived ? (
-							<PostButton
-								action={`/purchasing/po/${po.id}/cancel`}
-								label={t.purchasing.cancelPo}
-								confirm={t.purchasing.confirmCancel}
-								icon={icons.ban}
-							/>
-						) : null}
-						{canEdit && (po.status === "sent" || po.status === "partial") ? (
-							<PostButton
-								action={`/purchasing/po/${po.id}/close`}
-								label={t.purchasing.closePo}
-								confirm={t.purchasing.confirmClose}
-								icon={icons.circleCheck}
-							/>
-						) : null}
-						{can(c.var, "purchasing.delete") && isDraft ? (
-							<PostButton
-								action={`/purchasing/po/${po.id}/delete`}
-								label={t.common.delete}
-								confirm={t.common.confirmDelete}
-								variant="destructive"
-								icon={icons.trash}
-							/>
-						) : null}
 						{canReceive ? (
 							<Button href="#receive" variant={isDraft ? "outline" : "default"} icon={icons.truck}>
 								{t.purchasing.receive}
@@ -1339,6 +1323,34 @@ async function renderPo(
 								icon={icons.send}
 							/>
 						) : null}
+						<MoreMenu
+							items={[
+								canEdit &&
+									(po.status === "draft" || po.status === "sent") &&
+									!anyReceived && {
+										label: t.purchasing.cancelPo,
+										icon: icons.ban,
+										action: `/purchasing/po/${po.id}/cancel`,
+										confirm: t.purchasing.confirmCancel,
+										destructive: true,
+									},
+								canEdit &&
+									(po.status === "sent" || po.status === "partial") && {
+										label: t.purchasing.closePo,
+										icon: icons.circleCheck,
+										action: `/purchasing/po/${po.id}/close`,
+										confirm: t.purchasing.confirmClose,
+									},
+								can(c.var, "purchasing.delete") &&
+									isDraft && {
+										label: t.common.delete,
+										icon: icons.trash,
+										action: `/purchasing/po/${po.id}/delete`,
+										confirm: t.common.confirmDelete,
+										destructive: true,
+									},
+							]}
+						/>
 					</>
 				}
 			/>

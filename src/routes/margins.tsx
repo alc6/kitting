@@ -68,9 +68,16 @@ function matches(filter: Filter, r: MarginRow): boolean {
 	return true;
 }
 
-function filterHref(filter: Filter, format?: "csv"): string {
+/** Which column group the table shows (D174): the planned cost or the actual cost. The CSV has both. */
+const COST_VIEWS = ["planned", "actual"] as const;
+type CostView = (typeof COST_VIEWS)[number];
+
+const costViewParam = (v: string | undefined): CostView => (v === "actual" ? "actual" : "planned");
+
+function filterHref(filter: Filter, view: CostView, format?: "csv"): string {
 	const params = new URLSearchParams();
 	if (filter !== "all") params.set("show", filter);
+	if (view !== "planned") params.set("cost", view);
 	if (format) params.set("format", format);
 	const qs = params.toString();
 	return qs ? `/margins?${qs}` : "/margins";
@@ -93,34 +100,22 @@ function Percent(props: { bp: number | null | undefined }) {
 	return <span class="num">{formatPercent(props.bp, locale)}</span>;
 }
 
-function MarginsTable(props: { rows: MarginRow[] }) {
+function MarginsTable(props: { rows: MarginRow[]; view: CostView }) {
 	const { t } = useApp();
 	const none = <span class="text-muted-foreground">{t.common.none}</span>;
+	const planned = props.view === "planned";
 	return (
 		<Table>
 			<TableHeader class="bg-muted/50">
 				<TableRow class="hover:bg-transparent">
-					<TableHead colspan={3} />
-					<TableHead colspan={4} scope="colgroup" class="border-l text-center">
-						{t.margins.planned}
-					</TableHead>
-					<TableHead colspan={4} scope="colgroup" class="border-l text-center">
-						{t.margins.actual}
-					</TableHead>
-					<TableHead />
-				</TableRow>
-				<TableRow class="hover:bg-transparent">
 					<TableHead>{t.margins.product}</TableHead>
 					<TableHead>{t.margins.variant}</TableHead>
-					<TableHead class="text-right">{t.margins.price}</TableHead>
-					<TableHead class="border-l text-right">{t.margins.cost}</TableHead>
+					<TableHead class="text-right whitespace-normal">{t.margins.price}</TableHead>
+					{planned ? null : <TableHead class="border-l text-right">{t.margins.builds}</TableHead>}
+					<TableHead class={cn("text-right", planned && "border-l")}>{t.margins.cost}</TableHead>
 					<TableHead class="text-right">{t.margins.margin}</TableHead>
 					<TableHead class="text-right">{t.margins.rate}</TableHead>
-					<TableHead class="text-right">{t.margins.markup}</TableHead>
-					<TableHead class="border-l text-right">{t.margins.builds}</TableHead>
-					<TableHead class="text-right">{t.margins.cost}</TableHead>
-					<TableHead class="text-right">{t.margins.margin}</TableHead>
-					<TableHead class="text-right">{t.margins.rate}</TableHead>
+					{planned ? <TableHead class="text-right">{t.margins.markup}</TableHead> : null}
 					<TableHead class="w-0">
 						<span class="sr-only">{t.margins.history}</span>
 					</TableHead>
@@ -129,7 +124,7 @@ function MarginsTable(props: { rows: MarginRow[] }) {
 			<TableBody>
 				{props.rows.map((r) => (
 					<TableRow>
-						<TableCell class="min-w-44">
+						<TableCell class="min-w-36">
 							<div class="flex flex-col gap-0.5">
 								<a href={`/parts/${r.part.id}`} class="font-medium">
 									{r.part.ref}
@@ -137,9 +132,9 @@ function MarginsTable(props: { rows: MarginRow[] }) {
 								<span class="text-xs text-muted-foreground">{r.part.name}</span>
 							</div>
 						</TableCell>
-						<TableCell class="whitespace-nowrap">
+						<TableCell>
 							{r.assembly ? (
-								<span class="inline-flex items-center gap-1.5">
+								<span class="inline-flex flex-wrap items-center gap-x-1.5 gap-y-1">
 									<a href={`/assemblies/${r.assembly.id}`}>{r.assembly.code}</a>
 									<span class="text-xs text-muted-foreground">{r.assembly.revision}</span>
 									{r.assembly.ownPrice ? (
@@ -155,38 +150,47 @@ function MarginsTable(props: { rows: MarginRow[] }) {
 						<TableCell class="text-right font-medium">
 							<Money cents={r.priceCents} />
 						</TableCell>
-						<TableCell class="border-l text-right whitespace-nowrap">
-							<Money cents={r.plannedCostCents} />
-							{r.plannedIncomplete ? <IncompleteMark /> : null}
-						</TableCell>
-						<TableCell class={cn("text-right font-medium", marginTone(r.planned))}>
-							{r.planned ? <Money cents={r.planned.marginCents} /> : none}
-						</TableCell>
-						<TableCell class={cn("text-right", marginTone(r.planned))}>
-							<Percent bp={r.planned?.rateBp} />
-						</TableCell>
-						<TableCell class={cn("text-right", marginTone(r.planned))}>
-							<Percent bp={r.planned?.markupBp} />
-						</TableCell>
-						<TableCell class={cn("border-l text-right tabular-nums", r.doneBuilds === 0 && "text-muted-foreground")}>
-							{r.doneBuilds}
-						</TableCell>
-						<TableCell class="text-right whitespace-nowrap">
-							{r.doneBuilds > 0 ? (
-								<>
-									<Money cents={r.actualCostCents} />
-									{r.actualIncomplete ? <IncompleteMark /> : null}
-								</>
-							) : (
-								none
-							)}
-						</TableCell>
-						<TableCell class={cn("text-right font-medium", marginTone(r.actual))}>
-							{r.actual ? <Money cents={r.actual.marginCents} /> : none}
-						</TableCell>
-						<TableCell class={cn("text-right", marginTone(r.actual))}>
-							<Percent bp={r.actual?.rateBp} />
-						</TableCell>
+						{planned ? (
+							<>
+								<TableCell class="border-l text-right whitespace-nowrap">
+									<Money cents={r.plannedCostCents} />
+									{r.plannedIncomplete ? <IncompleteMark /> : null}
+								</TableCell>
+								<TableCell class={cn("text-right font-medium", marginTone(r.planned))}>
+									{r.planned ? <Money cents={r.planned.marginCents} /> : none}
+								</TableCell>
+								<TableCell class={cn("text-right", marginTone(r.planned))}>
+									<Percent bp={r.planned?.rateBp} />
+								</TableCell>
+								<TableCell class={cn("text-right", marginTone(r.planned))}>
+									<Percent bp={r.planned?.markupBp} />
+								</TableCell>
+							</>
+						) : (
+							<>
+								<TableCell
+									class={cn("border-l text-right tabular-nums", r.doneBuilds === 0 && "text-muted-foreground")}
+								>
+									{r.doneBuilds}
+								</TableCell>
+								<TableCell class="text-right whitespace-nowrap">
+									{r.doneBuilds > 0 ? (
+										<>
+											<Money cents={r.actualCostCents} />
+											{r.actualIncomplete ? <IncompleteMark /> : null}
+										</>
+									) : (
+										none
+									)}
+								</TableCell>
+								<TableCell class={cn("text-right font-medium", marginTone(r.actual))}>
+									{r.actual ? <Money cents={r.actual.marginCents} /> : none}
+								</TableCell>
+								<TableCell class={cn("text-right", marginTone(r.actual))}>
+									<Percent bp={r.actual?.rateBp} />
+								</TableCell>
+							</>
+						)}
 						<TableCell class="py-1">
 							<Button
 								href={historyHref(r)}
@@ -210,6 +214,7 @@ marginRoutes.get("/", async (c) => {
 	const t = c.var.t;
 	const locale = c.var.locale;
 	const filter = filterParam(c.req.query("show"));
+	const view = costViewParam(c.req.query("cost"));
 	const rows = await marginReport(c.var.db);
 	const shown = rows.filter((r) => matches(filter, r));
 
@@ -318,25 +323,34 @@ marginRoutes.get("/", async (c) => {
 				<ToggleLinks
 					label={t.common.show}
 					items={FILTERS.map((f) => ({
-						href: filterHref(f),
+						href: filterHref(f, view),
 						label: t.margins.filters[f],
 						active: f === filter,
 						title: f === "all" ? undefined : t.margins.filterTitles[f],
+					}))}
+				/>
+				<ToggleLinks
+					label={t.margins.costViewLabel}
+					items={COST_VIEWS.map((v) => ({
+						href: filterHref(filter, v),
+						label: t.margins.costViews[v],
+						active: v === view,
+						title: t.margins.costViewTitles[v],
 					}))}
 				/>
 			</div>
 			<TableCard
 				title={fmt(t.common.results, { n: shown.length })}
 				action={
-					<Button href={filterHref(filter, "csv")} variant="outline" size="sm" icon={icons.download}>
+					<Button href={filterHref(filter, view, "csv")} variant="outline" size="sm" icon={icons.download}>
 						{t.margins.downloadCsv}
 					</Button>
 				}
 			>
-				{shown.length === 0 ? <CardEmpty icon={icons.filter} /> : <MarginsTable rows={shown} />}
+				{shown.length === 0 ? <CardEmpty icon={icons.filter} large /> : <MarginsTable rows={shown} view={view} />}
 				<div class="flex flex-col gap-1 border-t px-4 py-3 text-xs text-muted-foreground">
 					<p>{t.margins.legend}</p>
-					{shown.some((r) => r.plannedIncomplete || (r.doneBuilds > 0 && r.actualIncomplete)) ? (
+					{shown.some((r) => (view === "planned" ? r.plannedIncomplete : r.doneBuilds > 0 && r.actualIncomplete)) ? (
 						<p>{t.margins.legendIncomplete}</p>
 					) : null}
 				</div>

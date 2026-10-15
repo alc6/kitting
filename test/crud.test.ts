@@ -124,6 +124,34 @@ describe("parts", () => {
 		]);
 	});
 
+	it("saves the minimum stock from the form and shows it on the form, the page and the stock list", async () => {
+		const res = await postForm("/parts", partForm({ min_stock: "12,5" }));
+		expect(res.status).toBe(303);
+		const id = (await one<{ id: number }>("SELECT id FROM parts")).id;
+		expect(await one("SELECT min_stock_milli FROM parts")).toEqual({ min_stock_milli: 12500 });
+		expect(await (await request(`/parts/${id}/edit`)).text()).toMatch(/name="min_stock"[^>]*value="12.5"/);
+		const detail = await (await request(`/parts/${id}`)).text();
+		expect(detail).toContain("Minimum stock");
+		expect(detail).toContain("12.5");
+		// Empty removes it; the change is one history entry with its label.
+		expect((await postForm(`/parts/${id}`, partForm({ min_stock: "" }))).status).toBe(303);
+		expect(await one("SELECT min_stock_milli FROM parts")).toEqual({ min_stock_milli: null });
+		const history = await (await request(`/parts/${id}/history`)).text();
+		expect(history).toContain("minimum stock");
+	});
+
+	it("refuses a negative minimum and a minimum on a kit or a fee", async () => {
+		const neg = await postForm("/parts", partForm({ min_stock: "-2" }));
+		expect(neg.status).toBe(422);
+		expect(await neg.text()).toContain("Must be zero or more.");
+		for (const kind of ["kit", "fee"]) {
+			const bad = await postForm("/parts", partForm({ ref: `X-${kind}`, kind, min_stock: "3" }));
+			expect(bad.status).toBe(422);
+			expect(await bad.text()).toContain("Only buy and make parts have a minimum stock.");
+		}
+		expect(await rows("SELECT id FROM parts")).toEqual([]);
+	});
+
 	it("treats an empty cost as unknown (NULL)", async () => {
 		await postForm("/parts", partForm({ cost: "" }));
 		expect(await one("SELECT cost_cents FROM parts")).toEqual({ cost_cents: null });
@@ -194,8 +222,9 @@ describe("parts", () => {
 		const id = await insertPart("P1");
 		await insertMove(id, 2500, "count");
 		await insertMove(id, -500, "adjust");
+		// The moves are on the Stock tab (D182).
+		expect(await (await request(`/parts/${id}/stock`)).text()).toContain("Inventory count");
 		const html = await (await request(`/parts/${id}`)).text();
-		expect(html).toContain("Inventory count");
 		// The "On hand" stat shows 2.5 - 0.5 = 2 (the first quantity after its label).
 		expect(html).toMatch(/data-slot="stat"/);
 		expect(html.match(/On hand<\/span>[\s\S]*?<span class="num">([^<]*)<\/span>/)?.[1]).toBe("2");

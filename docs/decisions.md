@@ -657,7 +657,7 @@ Short log of choices made where the brief left room. Newest at the bottom of eac
   already restore an archived assembly ("Set back to draft", "Activate", `assemblies.edit`) and activating a revision
   archives the previous one, so assembly status changes keep using `assemblies.edit` through `TABLE_ACTIONS`. Adding another
   gated column is one line in `COLUMN_ACTIONS` (plus an `history.rights` label in both dictionaries).
-- **D137. The dashboard is a main column and an alerts rail.** Shortages, upcoming builds and open POs stack in a
+- **D137. The dashboard is a main column and an alerts rail** (builds table amended by D175). Shortages, upcoming builds and open POs stack in a
   two-thirds column; stock alerts sit in a one-third rail beside them (from `xl`, single column below). Side-by-side
   rows left a void under whichever card was shorter (an empty shortage list next to ten alerts). The rail starts at
   `xl` because at `lg` with the sidebar open it is too narrow for a part reference; alert rows stack the quantity
@@ -1138,3 +1138,134 @@ a tracking link) arrived in one person's mailbox and was passed on by chat. D168
   - *History and MCP.* Shipments are in the PO's history (a child of the PO, as its lines), in backups, and undoable
     with `purchasing.order`. `get_purchase_order` and the PO write tools return `shipments`; `record_po_shipment`
     (`purchasing:write`, `purchasing.order`) adds or updates one. Removing one stays in the app.
+
+## UI polish (October 2026)
+
+A survey of every page (before/after mockups approved by the user, P0–P13) led to the changes below.
+
+- **D169. Occasional forms open in a dialog from the card header.** Uploads (files, product image) were forms always
+  shown under their card. They now open from a header button ("Add file", "Add image", like "New build") in `Dialog`
+  (`src/views/ui.tsx`): shadcn's Dialog recipe on the Popover API (`popovertarget`, `popover="auto"`), so it opens,
+  closes on Esc or outside click and escapes `overflow-hidden` cards with no script and no inline style. A page that
+  must show it open (back from a refused upload) sets `data-open` and `app.js` calls `showPopover()`; the reason is
+  repeated inside the dialog because the page alert sits under the backdrop, and without JavaScript the page alert is
+  still there. A form whose errors are rendered inline next to its fields never goes in a dialog: without JavaScript
+  they would stay hidden (those forms fold in place instead).
+- **D170. Quiet secondary elements.** `CardEmpty` (nothing to show inside a card) is one muted line with a small icon:
+  no dashed box, no icon tile, so a page of mostly empty cards (a new part: files, prices, builds, where used) stays
+  calm. The full `EmptyState` stays where the empty list is the page's result: an empty Parts, Builds or PO list, a
+  filtered stock list, the change log, margins, and the pages that explain a first step (title, hint, button).
+  `CardEmpty large` keeps the old look for a titled card that is the main list (stock tabs, change log, margins);
+  `BuildsTable` and `PoTable`, embedded in the dashboard and the part page, fall back to the quiet one (their pages
+  guard the main lists before reaching them). The "Adjust" button repeated on each On hand row is an icon-only ghost
+  button (`icon-sm`, so 48px on touch) with the same link, `aria-label` and `title`.
+- **D171. Controls share the button radius.** Inputs, selects, textareas and the file input looked square beside the
+  rounded buttons because Tailwind's preflight resets `border-radius` on them with an element selector, which beats
+  the zero-specificity `:where()` block of the base layer. The radius now has its own `:is()` rule in `app.css`
+  (classes in the utilities layer still win), and `::file-selector-button` is a small rounded secondary control
+  (preflight resets it too, so the `file:` utilities never applied). The top search box follows, and its placeholder
+  is just "Search" (it was cut off); the descriptive text moved to its `aria-label`.
+- **D172. Filter bars stay on one line, and drop the redundant button with JavaScript.** Two dated inputs become one
+  `DateRange` ("Dates", from - to, in a `fieldset` whose legend names it for screen readers); `SearchBar compact`
+  gives a bar with a range narrower selects and search so that it fits at 1280px with the sidebar open (change log,
+  stock moves). Every `SearchBar` is live (htmx on input and change), so its Search button is only needed without
+  JavaScript: it is marked `data-live-submit`, and `app.js` hides it with the `hidden` attribute only when htmx has
+  loaded (if the library is blocked, the button stays and the bar still submits).
+- **D173. Stock alerts come from a minimum stock per part, not from the supplier's MOQ.** The dashboard rail and the stock
+  list flagged "Below MOQ" (13 of the 23 demo parts), but the MOQ is the smallest quantity a supplier sells, not a level
+  at which to reorder. `parts.min_stock_milli` (nullable, additive migration `0009_min_stock`) is the level the owner
+  chooses: `belowMinimum()` (`src/domain/stock.ts`) is true for a buy or make part with a minimum set and on hand strictly
+  under it, so a part without one never alerts (0 is a minimum: it alerts under zero stock). "Below zero" stays a
+  separate alert, and a negative part is listed once on the dashboard, as below zero. The stock list filter
+  `below_moq` becomes `below_min` ("Below minimum", also on the MCP `stock_on_hand`, with `min_stock` in place of `moq`)
+  and its MOQ column shows the minimum. The field is on the part form (always shown, as no script may hide it by kind),
+  in `parts.csv` (`min_stock`, empty means none, absent keeps the value), the part's page and the backup (generic over
+  the columns), and `get_part`, `create_part` and `update_part` (`min_stock`, `null` removes it). A kit or a fee cannot
+  have one (`min_stock_kind`, like `serial_kind`: an explicit refusal rather than a silent drop). There is no CHECK
+  constraint, as SQLite cannot add one to `parts` without a table rebuild: `field.optionalQty()` refuses negatives. The
+  two example datasets carry a few minimums so the alerts show on first launch.
+- **D174. The margins table shows one cost group at a time.** Thirteen columns (price, then planned cost, margin, rate,
+  markup, then builds, actual cost, margin, rate) did not fit: the actual group hid behind a sideways scroll, invisible on
+  an iPad. A second `ToggleLinks` ("Planned cost" / "Actual cost", `?cost=actual`, default planned, any other value is
+  planned) beside the row filter chooses the group, so the table has eight columns either way and fits at 820 px and at
+  1280 px with the sidebar. The two controls are independent and every link keeps the other's value. The group header
+  row is gone (the switch says which group it is). The CSV is unchanged: every column, whichever group is shown.
+- **D175. The dashboard's builds table is a compact one** (amends D137). Beside the alerts rail the planned and
+  in-progress builds table wrapped product names over four lines and cut "Planned for". `BuildsTable` takes `compact`
+  for that dashboard card only: Number, Product (reference and name on one line, truncated, with the full text as a
+  tooltip; it takes the room the other columns leave), Quantity, Status and Planned for. Assembly and Serial number are
+  dropped there and stay on the build pages, the part page and the last-builds card. The card's own "New build" button
+  is removed: the page header already has one (D137 kept both).
+- **D176. The parts list shows an assembly roll-up where a made part has no standard cost.** Make and kit parts normally
+  have no standard cost (their cost is their assembly's), so the Standard cost column said "unknown" for them although
+  the cost was known. When `cost_cents` is NULL and the part has an active assembly, the cell now shows the roll-up of
+  its default assembly (the cost the part page and the margins use, `CostCalculator.part()`), muted, titled "Assembly
+  cost roll-up", with the usual `*` and missing-part list when incomplete, and a legend under the table when any row
+  does. A part with a standard cost of its own keeps it; a made part with no active assembly (draft only) stays
+  "unknown". `listRollupCosts()` (`src/domain/assemblies.ts`) computes the whole page in one pass: it loads the graph
+  once (four queries), reuses one memoizing `CostCalculator`, and is skipped when no listed part qualifies or the role
+  does not see costs. Never one query per row. The parts CSV still exports stored values only.
+- **D177. Page headers keep the everyday actions; the rest goes in a "More actions" menu.** A red Delete next to Edit on
+  every detail page made a destructive click as easy as the common one. `MoreMenu` (`src/views/ui.tsx`) is a "⋯" icon
+  button (`aria-label` "More actions") and a shadcn DropdownMenu-style list on the same Popover API as `Dialog`: no
+  script, Esc or an outside click closes it, and CSS anchor positioning (`position-area`, the invoker is the implicit
+  anchor) places it under its button, with a small `app.js` fallback that computes the place for a browser without it.
+  Entries are links or POST forms (`data-confirm` still asks first); non-destructive ones come first, then a
+  separator and the destructive ones in the destructive colour. It is a plain popover of links and buttons reached with Tab, so it carries no ARIA
+  menu roles (they would promise arrow-key navigation it does not have). Falsy entries are skipped and no entry renders
+  nothing at all, so a role that may do none of them sees no button: the `can()` checks stay where the entries are
+  built, and the routes keep their `requirePermission`. What moved: Archive/Unarchive and Delete (parts,
+  assemblies), Delete (suppliers, purchase orders), Close and Cancel (purchase orders), Cancel build, Retire (machines),
+  Remove (the file page). Staying in the header: Edit, Adjust stock, New revision, Copy as new variant, Activate,
+  Start, Receive, Mark sent. Cancel build, Cancel PO, Delete and Remove are destructive; Archive, Close and Retire are
+  not (they can be undone from the page or the history).
+- **D178. Forms needed now and then fold open in place, not in a dialog, when they show errors inline.** `InlineEdit`
+  (`src/views/ui.tsx`) is a native `<details>` whose `<summary>` stays visible and carries an Edit button (its label
+  says "Close" while open): the form works as a plain form without JavaScript, and `open` starts it open when the page
+  comes back from a refused post, with the errors next to the fields (the rule of D169). Used for the production
+  settings of an assembly (the summary is one line: "Batch 1 pcs · Machine none · Machine time —"; the long help text
+  stays in the form), the selling price of a variant (the summary is the price with its "own price" badge, or "product's
+  price"), and "Add a past price" of a part, which became the price history card's header button. The posts, the
+  validation and the redirects are unchanged. An htmx swap of the lines card closes the production form again, which is
+  harmless because the line forms never need it.
+- **D179. Supplier and machine pages are read views, like parts; editing has its own route.** They opened straight
+  into the edit form with the name focused, so a visit to read a phone number put the keyboard in a form. Now
+  `/suppliers/:id` shows the contact details (email and phone as `mailto:`/`tel:` links) and notes,
+  `/machines/:id` its type, status and notes; the header has Edit for who may (`suppliers.edit`, `machines.edit`) leading
+  to `/suppliers/:id/edit` and `/machines/:id/edit` (the same forms, saved by the same posts, Cancel returning to
+  the page, no autofocus: only the "new" forms focus the name). A refused edit re-renders the edit form with its errors.
+  A role that may not edit sees the same page without the button. Machine types keep their form on the page (their rate
+  history lives below it).
+- **D180. Import is one list in import order; a type's form opens in a dialog.** Eight importer cards made a page of
+  nearly 3,000 px for a task done one type at a time. The page is now a numbered list (the order a dependent type
+  needs) with, per row, the type, a one-line summary, Template, Export and "Import…". "Import…" opens that type's form
+  (column list with required marks, file or pasted CSV, Preview) in a `Dialog`: unlike a form with inline errors
+  (D169), this one never shows errors, because Preview posts to its own page where the file's problems are listed, so
+  a dialog is safe, with or without JavaScript. The full help text of the type moved from the card to the dialog's
+  description. Preview, confirm and the Backup card are unchanged.
+- **D181. The part page's header carries the image, and the top of the overview fills its width.** The Image card took a
+  third of the first row to show a placeholder most of the time. The image is now a 64 px thumbnail beside the title
+  (`PageHeader` takes a `lead`): with an image it links to the full-size one; without one, for who may upload
+  (`parts.edit`) and when the deployment has the `IMAGES` bucket, it is a dashed button opening the upload dialog
+  (D169); otherwise nothing is drawn, so the "images are not set up" card and its hint are gone (the deployment docs
+  cover the bucket). Replacing and removing live in the More menu (D177), whose entries may now open a dialog
+  (`MenuItem.dialog`): "Replace the image" (who may upload) and, as a destructive entry, "Remove image" (admins, label
+  changed from "Remove"). The dialog is in the header, so every tab offers it and a refused upload (`?err=image_type#image`,
+  Overview) still reopens it. Details and Prices share one row (two equal columns from `lg`; Details alone when costs
+  are hidden), so the supplier email and price notes stop wrapping; the figure cards are a wrapping flex row whose
+  cards grow (`*:flex-1`), so one, two or three cards always fill the width.
+- **D182. The part page is four tabs, each its own URL, and a tab that can never have content is not offered.** A bought
+  part's overview reached about 2,800 px. Overview (figures, manufacturing, details and prices, files, where used,
+  assemblies of the part) stays at `/parts/:id`; `/parts/:id/prices` ("Suppliers & prices": the offers and the price
+  history with its past price form), `/parts/:id/stock` (stock moves and recent builds) and the existing
+  `/parts/:id/history` are plain links, so no script is needed and deep links work. Each tab loads only its own data.
+  Hidden rather than empty (a tab that explains why it is empty is noise): Stock for kits and fees (never stocked);
+  Suppliers & prices for a kit or fee shows only the price history, so it is labelled "Prices" and is offered only to who
+  sees costs (a kit or fee viewed without costs has Overview and History). Buy and make parts keep it whatever the role,
+  because offers (supplier, MOQ, lead time) are not costs; the offers card is now shown on a make part too (offers are
+  allowed for it) instead of only when it already has some. The URL of a hidden tab redirects to the overview. The
+  History tab uses the same header as the others. Anchors and redirects followed their content: offer create, edit, prefer
+  and delete, past price add and delete (and their refusals, `#price-history` kept) land on `/prices`; a stock adjustment
+  lands on `/stock` (where its move is listed); `GET /parts/:id/offers` goes to `/prices`; standard cost shortcuts, edits,
+  file and image redirects stay on the overview, where they show (`#files`, `#how-its-made`, `#image` still resolve).
+  Flash messages and errors are shown above whichever tab the redirect lands on.

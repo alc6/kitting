@@ -1,7 +1,7 @@
-ref,name,kind,unit,cost,sale_price,supplier,supplier_ref,moq,pack_size,lead_days,track_serial,notes
-DESK-LAMP,Desk lamp,make,pcs,,49.00,,,,,,no,The finished product
-BASE-ASSY,Lamp base,make,pcs,,,,,,,,no,Sub-assembly built in the workshop
-BASE-PLATE,Steel base plate,buy,pcs,5.50,,Ironleaf Metalworks,BP150,10,,14,no,
-SWITCH,Inline switch,buy,pcs,1.10,,Lumen Parts Co,SW-IN,20,,7,no,
-LED-MODULE,LED module 5W,buy,pcs,4.20,,Lumen Parts Co,LED5W,10,,10,no,
-LAMP-SHADE,Aluminium shade,buy,pcs,6.80,,Ironleaf Metalworks,SH-AL,10,,14,no,
+ref,name,kind,unit,cost,sale_price,supplier,supplier_ref,moq,pack_size,lead_days,min_stock,track_serial,notes
+DESK-LAMP,Desk lamp,make,pcs,,49.00,,,,,,,no,The finished product
+BASE-ASSY,Lamp base,make,pcs,,,,,,,,,no,Sub-assembly built in the workshop
+BASE-PLATE,Steel base plate,buy,pcs,5.50,,Ironleaf Metalworks,BP150,10,,14,,no,
+SWITCH,Inline switch,buy,pcs,1.10,,Lumen Parts Co,SW-IN,20,,7,10,no,
+LED-MODULE,LED module 5W,buy,pcs,4.20,,Lumen Parts Co,LED5W,10,,10,5,no,
+LAMP-SHADE,Aluminium shade,buy,pcs,6.80,,Ironleaf Metalworks,SH-AL,10,,14,,no,

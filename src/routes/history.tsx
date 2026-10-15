@@ -51,6 +51,7 @@ import {
 	CardEmpty,
 	CardHeader,
 	CardTitle,
+	DateRange,
 	DetailList,
 	Flash,
 	PageHeader,
@@ -150,7 +151,7 @@ historyRoutes.get("/", async (c) => {
 		<>
 			<PageHeader title={t.history.title} subtitle={t.history.intro} />
 			<Flash message={c.req.query("ok") === "undone" ? t.history.undone : undefined} />
-			<SearchBar action="/history" q={q}>
+			<SearchBar action="/history" q={q} compact>
 				<select name="source" aria-label={t.history.source}>
 					<option value="">{t.history.allSources}</option>
 					{CHANGE_SOURCES.map((s) => (
@@ -167,19 +168,14 @@ historyRoutes.get("/", async (c) => {
 						</option>
 					))}
 				</select>
-				<label class="inline-flex items-center gap-2 text-sm font-medium">
-					<span class="text-muted-foreground">{t.history.from}</span>
-					<input type="date" name="from" value={from ?? ""} class="w-auto" />
-				</label>
-				<label class="inline-flex items-center gap-2 text-sm font-medium">
-					<span class="text-muted-foreground">{t.history.to}</span>
-					<input type="date" name="to" value={to ?? ""} class="w-auto" />
-				</label>
+				<DateRange from={from} to={to} fromLabel={t.history.from} toLabel={t.history.to} />
 			</SearchBar>
 			<div id="results" class="flex flex-col gap-3">
 				<TableCard title={fmt(t.common.results, { n: list.length })}>
 					{list.length === 0 ? (
-						<CardEmpty icon={icons.history}>{filtered ? t.history.emptyFiltered : t.history.empty}</CardEmpty>
+						<CardEmpty large icon={icons.history}>
+							{filtered ? t.history.emptyFiltered : t.history.empty}
+						</CardEmpty>
 					) : (
 						<ChangeSetTable rows={list.map((s) => ({ summary: s, undoable: undoable(c, s) }))} />
 					)}

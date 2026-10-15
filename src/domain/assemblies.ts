@@ -8,6 +8,7 @@ import {
 	assemblyLines,
 	machineTypes,
 	type Part,
+	type PartKind,
 	parts,
 } from "../db/schema";
 import type { Statement } from "../lib/db";
@@ -675,6 +676,24 @@ export async function partAssemblySummary(db: Db, partId: number) {
 		refs: new Map([...graph.parts.values()].map((p) => [p.id, p.ref])),
 		machines: new Map([...graph.machineTypes.values()].map((m) => [m.id, m.name])),
 	};
+}
+
+/**
+ * Assembly roll-ups for the parts list (D176): the unit cost rolled up from the default active assembly of each listed
+ * make or kit part that has no standard cost of its own. One pass for the whole page: the graph is loaded once (and
+ * not at all when no listed part qualifies) and the costs are memoized across parts, never one query per row.
+ * `refs` names the parts a cost is missing, for the incomplete marker.
+ */
+export async function listRollupCosts(db: Db, rows: { id: number; kind: PartKind; costCents: number | null }[]) {
+	const costs = new Map<number, Cost>();
+	const wanted = rows.filter((r) => (r.kind === "make" || r.kind === "kit") && r.costCents === null);
+	if (wanted.length === 0) return { costs, refs: new Map<number, string>() };
+	const graph = await loadGraph(db);
+	const withActive = new Set<number>();
+	for (const b of graph.assemblies.values()) if (b.status === "active") withActive.add(b.parentPartId);
+	const calc = new CostCalculator(graph);
+	for (const r of wanted) if (withActive.has(r.id)) costs.set(r.id, calc.part(r.id));
+	return { costs, refs: new Map([...graph.parts.values()].map((p) => [p.id, p.ref])) };
 }
 
 /** Statements setting an assembly variant's selling price (NULL = use the part's), logged in the price history. */
