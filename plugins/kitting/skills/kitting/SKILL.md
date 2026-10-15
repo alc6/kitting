@@ -1,6 +1,6 @@
 ---
 name: kitting
-description: Work with a Kitting mini-MRP through its MCP tools - parts and references, assemblies (bills of materials, BoMs, nomenclatures, kits, variants, revisions), stock and inventory counts, builds (production, fabrication, serial numbers and traceability), shortages (manquants) and what to order, purchase orders (commandes fournisseur), supplier offers, costs, prices and margins. Use whenever the user talks about making, buying or counting parts, planning or completing a build, changing an assembly, a BoM or a nomenclature, receiving a delivery, or tracing a serial, in English or French (fabrication, stock, achats, commande, prix de revient, marge).
+description: Work with a Kitting mini-MRP through its MCP tools - parts and references, assemblies (bills of materials, BoMs, nomenclatures, kits, variants, revisions), part options (colour, size: couleur, taille), stock and inventory counts, builds (production, fabrication, serial numbers and traceability), shortages (manquants) and what to order, purchase orders (commandes fournisseur), supplier offers, costs, prices and margins. Use whenever the user talks about making, buying or counting parts, planning or completing a build, changing an assembly, a BoM or a nomenclature, receiving a delivery, or tracing a serial, in English or French (fabrication, stock, achats, commande, prix de revient, marge).
 ---
 
 # Kitting
@@ -26,6 +26,15 @@ worked conversations in [references/examples.md](references/examples.md).
   (editable, not used), `active` (the one builds and explosions use; one per part and code) or `archived`
   (read-only history, can be re-activated). Select an assembly with `assembly` (an id, or the part ref for its active assembly)
   and optionally `code` and `revision`.
+- **Options (colour, size...)**: a buy or make part can come in values of one or more **options** (`Colour`: white,
+  black; `Size`: S, M, L), with a default value each. It stays one part, but its stock, PO lines and builds are
+  counted **per values**: 6 white and 10 black covers are two stocks of `NL-COVER`. Do not confuse them with
+  **variants**: a variant is another recipe (`code` `std`, `warm`); an option is a value of the same part. Tools take
+  and return `options` as `{"Colour": "white"}` (option name → value name). A recipe line says per option of its
+  component: **follows** the build (the default: the cover takes the colour of the lamp, matched by option and
+  value name), **fixed** to a value (`fixed`), or **chosen when planned** (`choose`: the build asks). Writing on a
+  part with options always needs a value of every option: never assume the default, ask. Defining options on a part
+  is done in the app, not over MCP.
 - **Batches**: an assembly can make several units at once (`batch`, e.g. 24 parts per print plate); its lines are then
   the quantities for the whole batch, and a build of any quantity takes line × quantity / batch (rounded up). Plan in
   batches with `plan_build`'s `batches`. The batch belongs to a revision: change it with `set_assembly_production`,
@@ -100,6 +109,24 @@ worked conversations in [references/examples.md](references/examples.md).
 7. Goods arrive: ask what was received, for serial-tracked parts which serials, confirm, then `receive_po`
    (partial deliveries are fine; `close_po` if the rest will never come, `cancel_po` if nothing came).
 
+### Plan builds in a colour (parts with options)
+"Plan 12 black mini lamps" where the product or its components have options.
+1. `get_part` on the product shows its `options` (values and `default`) and `stock_by_options`; `get_assembly` shows,
+   per component line, `options` (resolved), `fixed` and `choose`. A component that has options but whose line is in
+   neither follows the product's value of the same option name.
+2. `explode_assembly` with `options` (e.g. `{"Colour": "black"}`) and `use_stock: true`: one line per component **and
+   values**, with `on_hand` in those values: black heads in stock count for black lamps only. A `missing_value` means
+   a component that does not come in that value (a cover with no red): tell the user, nothing can be planned.
+3. Ask for any option the user did not name (never take the default silently), and, for each component in a
+   `choose` line, the values to make it with. Confirm, then `plan_build` with `options` and, if needed, `choices`
+   (`[{"ref": "NL-COVER", "options": {"Colour": "black"}}]`). The values are stored on the build.
+4. `get_shortages` lists, per values, what to make (`to_make`, each with `options`) and what to buy (one line per
+   part and values, rounded to the MOQ on its own); `create_draft_pos` drafts them, `order_from` takes `options`
+   when the part is short in several values. Check `missing_values`: nothing is ordered for those.
+5. Stock in a colour: `adjust_stock`, `count_stock` and `receive_po` take `options` (a PO line has its values;
+   `options` tells lines of the same part apart); `complete_build` uses the values stored on the build (`serials`
+   take `options` only when the same part is consumed in several values).
+
 ### Complete a build
 1. `get_build` for the number: the pick list (`pick_list` with `short`), `serials_to_scan` per serial-tracked
    component, `sub_assemblies` (each with a `path`, how many are `from_stock` or `to_build`), and `problems`.
@@ -137,7 +164,8 @@ the one it came from, so an older revision may still hold an older file: say whi
    user which products this affects.
 2. `get_assembly` on the active assembly, so you edit from the real lines.
 3. Propose the complete new line list. Confirm. Then `set_assembly_lines` with the **complete** list (it replaces all
-   lines). On an active assembly this does not touch it: it creates the next draft revision and puts the lines there
+   lines; send back each line's `fixed` and `choose` as `get_assembly` shows them, or the line goes back to following
+   the build). On an active assembly this does not touch it: it creates the next draft revision and puts the lines there
    (the result says `new_revision: true`; the revision keeps the variant's own `sale_price`). Need a new component
    first? `create_part` (and `upsert_supplier_offer`). A new variant (`create_assembly` with another `code`) starts
    without its own selling price: ask whether it needs one (`set_sale_price` with `code`).

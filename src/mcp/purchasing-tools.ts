@@ -3,6 +3,8 @@
 // cannot be undone.
 import { z } from "zod";
 import { getOffer, poUnitPrice } from "../domain/offers";
+import { type OptionDef, type OptionKey, stockKey } from "../domain/option-keys";
+import { optionsOf } from "../domain/options";
 import {
 	addPoLineStatement,
 	addShipmentStatement,
@@ -54,6 +56,7 @@ import {
 	tool,
 	writes,
 } from "./kit";
+import { completeKey, optionsInput, optionsView, selectByOptions } from "./options";
 
 const now = () => new Date().toISOString();
 
@@ -75,6 +78,7 @@ async function poView(db: Db, number: string) {
 		lines: lines.map((l) => ({
 			ref: l.ref,
 			unit: l.unit,
+			options: optionsView(l.options, l.line.optionValues),
 			qtyMilli: l.line.qtyMilli,
 			receivedMilli: l.line.receivedQtyMilli,
 			remainingMilli: Math.max(0, l.line.qtyMilli - l.line.receivedQtyMilli),
@@ -85,18 +89,30 @@ async function poView(db: Db, number: string) {
 	};
 }
 
-/** The line of a part on a PO; refused when the part is not on it, or on several lines (ambiguous). */
-function lineOf<T extends { ref: string }>(lines: T[], ref: string, number: string): T | undefined {
-	const found = lines.filter((l) => l.ref.toLowerCase() === ref.toLowerCase());
-	if (found.length > 1) throw new ToolError(`${ref} is on several lines of ${number}: edit it in Kitting.`);
-	return found[0];
+/**
+ * The line of a part on a PO, found by reference and, for a part ordered in several values, by options (D178). None:
+ * undefined. Refused when the part is on several lines and the options do not say which.
+ */
+function lineFor<T extends { ref: string; line: { optionValues: OptionKey }; options: OptionDef[] }>(
+	lines: T[],
+	ref: string,
+	given: Record<string, string> | undefined,
+	number: string,
+	defs?: OptionDef[],
+): { line: T | undefined; ids: number[]; defs: OptionDef[] } {
+	const same = lines.filter((l) => l.ref.toLowerCase() === ref.toLowerCase());
+	// A part on no line has nothing to match: the caller says it is not on the PO (its options may be unknown here).
+	if (same.length === 0 && !defs) return { line: undefined, ids: [], defs: [] };
+	const options = defs ?? same[0]?.options ?? [];
+	const { item, ids } = selectByOptions(same, options, given, (l) => l.line.optionValues, `${ref} on ${number}`);
+	return { line: item, ids, defs: options };
 }
 
 const createDraftPos = tool({
 	name: "create_draft_pos",
 	title: "Draft POs from shortages",
 	description:
-		"Turns the current shortages (get_shortages) into draft purchase orders, as the shortage page's button does: one draft per supplier, each line rounded up to that supplier's MOQ and pack size and priced at its offer (else the standard cost). By default every supplier group is drafted; suppliers limits it to some. order_from orders a part from another supplier that has an offer for it (parts without a preferred supplier are drafted only this way). Drafts are not sent: review them, then mark_po_sent.",
+		"Turns the current shortages (get_shortages) into draft purchase orders, as the shortage page's button does: one draft per supplier, each line (a part in some options) rounded up to that supplier's MOQ and pack size and priced at its offer (else the standard cost). By default every supplier group is drafted; suppliers limits it to some. order_from orders a part from another supplier that has an offer for it (parts without a preferred supplier are drafted only this way). Drafts are not sent: review them, then mark_po_sent.",
 	rule: { scope: "purchasing:write", action: "purchasing.order" },
 	annotations: writes({ destructive: false, idempotent: false }),
 	input: z.object({
@@ -106,10 +122,16 @@ const createDraftPos = tool({
 			.optional()
 			.describe("Only these suppliers' groups (names, case-insensitive)."),
 		order_from: z
-			.array(z.object({ ref: z.string().trim().min(1).max(64), supplier: z.string().trim().min(1).max(200) }))
+			.array(
+				z.object({
+					ref: z.string().trim().min(1).max(64),
+					options: optionsInput("the shortage line, when the part is short in several values"),
+					supplier: z.string().trim().min(1).max(200),
+				}),
+			)
 			.max(500)
 			.default([])
-			.describe("Order these parts from another supplier with an offer for them."),
+			.describe("Order these parts (in these options) from another supplier with an offer for them."),
 	}),
 	run: async (a, ctx) => {
 		const shortages = await computeShortages(ctx.db);
@@ -122,8 +144,14 @@ const createDraftPos = tool({
 		}
 		const chosen = new Map<string, number>();
 		for (const o of a.order_from) {
-			const line = lines.find((l) => l.part.ref.toLowerCase() === o.ref.toLowerCase());
-			if (!line) throw new ToolError(`${o.ref} is not short: get_shortages lists what to order.`);
+			const short = lines.filter((l) => l.part.ref.toLowerCase() === o.ref.toLowerCase());
+			const { item: line } = !short.length
+				? { item: undefined }
+				: selectByOptions(short, short[0]?.part.options ?? [], o.options, (l) => l.optionValues, `${o.ref} to order`);
+			if (!line)
+				throw new ToolError(
+					`${o.ref} is not short${o.options ? " in these options" : ""}: get_shortages lists what to order.`,
+				);
 			const supplier = await supplierByName(ctx.db, o.supplier);
 			if (!line.offers.some((offer) => offer.supplierId === supplier.id))
 				throw new ToolError(`${supplier.name} has no offer for ${line.part.ref}: add one with upsert_supplier_offer.`);
@@ -153,7 +181,7 @@ const updateDraftPo = tool({
 	name: "update_draft_po",
 	title: "Edit a draft PO",
 	description:
-		"Edits a purchase order: its expected date and notes (any open PO, as on its page), and the lines of a draft. Each line sets the quantity of a part on the PO: an existing line is changed (its price too when given), a new part is added (priced at this supplier's offer, else the standard cost, unless a price is given), and qty \"0\" removes the part's line. Lines of a sent PO cannot change.",
+		"Edits a purchase order: its expected date and notes (any open PO, as on its page), and the lines of a draft. Each line sets the quantity of a part on the PO: an existing line is changed (its price too when given), a new part is added (priced at this supplier's offer, else the standard cost, unless a price is given), and qty \"0\" removes the part's line. A part with options is on one line per values: options says which line (a value of every option is needed to add one). Lines of a sent PO cannot change.",
 	rule: { scope: "purchasing:write", action: "purchasing.order" },
 	annotations: writes({ destructive: true, idempotent: true }),
 	input: z.object({
@@ -164,6 +192,7 @@ const updateDraftPo = tool({
 			.array(
 				z.object({
 					ref: z.string().trim().min(1).max(64),
+					options: optionsInput("the line, to tell lines of the same part apart or to add one"),
 					qty: decimal('Quantity to order in the part\'s unit; "0" removes the line.'),
 					price: decimal('Unit price, e.g. "1.05".').optional(),
 				}),
@@ -188,7 +217,8 @@ const updateDraftPo = tool({
 		}
 		const current = await getPoLines(ctx.db, po.id);
 		const problems: string[] = [];
-		const seen = new Set<number>();
+		const edited = new Set<number>();
+		const added = new Set<string>();
 		for (const [i, l] of a.lines.entries()) {
 			const at = `line ${i + 1} (${l.ref})`;
 			const v = validate(z.object({ qty: field.qty(), price: field.money() }), {
@@ -204,14 +234,22 @@ const updateDraftPo = tool({
 				problems.push(`${at}: ${errorMessage("unknown_part", { ref: l.ref })}`);
 				continue;
 			}
-			if (seen.has(part.id)) {
-				problems.push(`${at}: listed twice.`);
+			let found: ReturnType<typeof lineFor<(typeof current)[number]>>;
+			try {
+				found = lineFor(current, part.ref, l.options, po.number, await optionsOf(ctx.db, part.id));
+			} catch (err) {
+				if (!(err instanceof ToolError)) throw err;
+				problems.push(`${at}: ${err.message}`);
 				continue;
 			}
-			seen.add(part.id);
-			const existing = lineOf(current, part.ref, po.number);
+			const existing = found.line;
 			const { qty, price } = v.data;
 			if (existing) {
+				if (edited.has(existing.line.id)) {
+					problems.push(`${at}: listed twice.`);
+					continue;
+				}
+				edited.add(existing.line.id);
 				if (qty === 0) stmts.push(deletePoLineStatement(ctx.db, po.id, existing.line.id));
 				else
 					stmts.push(
@@ -227,10 +265,30 @@ const updateDraftPo = tool({
 			} else if (qty === 0) problems.push(`${at}: not on ${po.number}.`);
 			else if (!isStocked(part.kind)) problems.push(`${at}: ${errorMessage("not_stocked", { kind: part.kind })}`);
 			else {
+				// A new line of a part with options needs a value of each (D176).
+				let optionValues: OptionKey;
+				try {
+					optionValues = completeKey(found.defs, found.ids, `${at} options`);
+				} catch (err) {
+					if (!(err instanceof ToolError)) throw err;
+					problems.push(err.message);
+					continue;
+				}
+				if (added.has(stockKey(part.id, optionValues))) {
+					problems.push(`${at}: listed twice.`);
+					continue;
+				}
+				added.add(stockKey(part.id, optionValues));
 				const unitPriceCents =
 					price ?? poUnitPrice((await getOffer(ctx.db, part.id, po.supplierId))?.priceCents, part.costCents);
 				stmts.push(
-					addPoLineStatement(ctx.db, po.id, { partId: part.id, qtyMilli: qty, unitPriceCents }, ctx.user, stamp),
+					addPoLineStatement(
+						ctx.db,
+						po.id,
+						{ partId: part.id, qtyMilli: qty, unitPriceCents, optionValues },
+						ctx.user,
+						stamp,
+					),
 				);
 			}
 		}
@@ -264,7 +322,7 @@ const receivePo = tool({
 	name: "receive_po",
 	title: "Receive goods on a PO",
 	description:
-		"Records goods received on a purchase order, as its receive form does: per part, the quantity received now (more deliveries can follow), and optionally one serial per unit. Stock goes up at the PO's price; the PO becomes partly received or received. This writes the stock ledger: it cannot be undone, only corrected with an adjustment.",
+		"Records goods received on a purchase order, as its receive form does: per line (a part, and its options when it is ordered in several values), the quantity received now (more deliveries can follow), and optionally one serial per unit. Stock goes up at the PO's price; the PO becomes partly received or received. This writes the stock ledger: it cannot be undone, only corrected with an adjustment.",
 	rule: { scope: "purchasing:write", action: "purchasing.receive" },
 	annotations: writes({ destructive: true, idempotent: false }),
 	input: z.object({
@@ -273,6 +331,7 @@ const receivePo = tool({
 			.array(
 				z.object({
 					ref: z.string().trim().min(1).max(64),
+					options: optionsInput("the line, when the part is on several lines of the PO in different values"),
 					qty: decimal('Quantity received now, e.g. "4".'),
 					serials: z.array(z.string().trim().min(1).max(100)).max(1000).default([]).describe("One per unit, if any."),
 				}),
@@ -287,15 +346,19 @@ const receivePo = tool({
 		const values: Record<string, string> = {};
 		const names: Record<string, string> = {};
 		for (const l of a.lines) {
-			const line = lineOf(lines, l.ref, po.number);
-			if (!line) throw new ToolError(`${l.ref} is not on ${po.number}. get_purchase_order lists its lines.`);
+			const { line } = lineFor(lines, l.ref, l.options, po.number);
+			if (!line)
+				throw new ToolError(
+					`${l.ref} is not on ${po.number}${l.options ? " in these options" : ""}. get_purchase_order lists its lines.`,
+				);
 			const qtyField = receiveQtyField(line.line.id);
 			const serialsField = receiveSerialsField(line.line.id);
-			if (qtyField in values) throw new ToolError(`${line.ref} is listed twice.`);
+			const label = line.values ? `${line.ref} (${line.values})` : line.ref;
+			if (qtyField in values) throw new ToolError(`${label} is listed twice.`);
 			values[qtyField] = formValue(l.qty);
 			values[serialsField] = l.serials.join("\n");
-			names[qtyField] = `${line.ref} qty`;
-			names[serialsField] = `${line.ref} serials`;
+			names[qtyField] = `${label} qty`;
+			names[serialsField] = `${label} serials`;
 		}
 		const { receipts, errors } = planReceipts(lines, values);
 		if (Object.keys(errors).length) {
@@ -315,11 +378,15 @@ const receivePo = tool({
 		const view = await poView(ctx.db, po.number);
 		return {
 			...change,
-			received: receipts.map((r) => ({
-				ref: lines.find((l) => l.line.id === r.lineId)?.ref,
-				qtyMilli: r.qtyMilli,
-				serials: r.serials.length ? r.serials : undefined,
-			})),
+			received: receipts.map((r) => {
+				const line = lines.find((l) => l.line.id === r.lineId);
+				return {
+					ref: line?.ref,
+					options: optionsView(line?.options ?? [], r.optionValues),
+					qtyMilli: r.qtyMilli,
+					serials: r.serials.length ? r.serials : undefined,
+				};
+			}),
 			...view,
 		};
 	},

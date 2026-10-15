@@ -9,6 +9,9 @@ Use the user's words, and map them to Kitting's. The tools and their fields are 
 | assembly (bill of materials, BoM) | assemblage (nomenclature) | the components of one make or kit part (`get_assembly`, `set_assembly_lines`) |
 | component (a line of an assembly) | composant | a part and a quantity per parent |
 | variant (code) | variante | the `code` of an assembly (`std`, `warm`...) |
+| option (colour, size) | option (couleur, taille) | `options` of a part: an option name (`Colour`) with values; defined in the app |
+| option value | valeur d'option, valeur | one of an option's values (`white`); a part's stock is counted per values; `{"Colour": "white"}` |
+| follows the build / fixed / chosen when planned | suit la fabrication / fixée / choisie au lancement | a recipe line's rule per option: default, `fixed`, `choose` |
 | revision | indice, révision | `Rev1`, `Rev2`... of a variant; `draft`, `active` or `archived` |
 | draft | brouillon | not used by builds until `activate_assembly` |
 | activate | activer, mettre en vigueur | `activate_assembly`: this revision becomes the one builds use |

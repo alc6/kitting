@@ -196,6 +196,7 @@ export const en = {
 		options_syntax: "Write the values as Option=value, separated by |.",
 		option_value_in_use: "This value is used by stock, orders or builds: it cannot be removed.",
 		option_in_use: "Values of this option are used by stock, orders or builds: it cannot be deleted.",
+		option_default_twice: "Only one value of an option can be the default.",
 		option_default_removed: "The default value cannot be removed: choose another default first.",
 		options_kind: "Only bought and made parts can have options.",
 		kind_has_options: "This part has options: it must stay a buy or make part.",
@@ -829,7 +830,7 @@ export const en = {
 		intro:
 			"Upload a CSV file (comma or semicolon separated, UTF-8). You always get a preview first; nothing is written until you confirm.",
 		order:
-			"Import in this order: suppliers, parts, supplier offers, past prices, machine types, machines, assemblies, stock.",
+			"Import in this order: suppliers, parts, part options, supplier offers, past prices, machine types, machines, assemblies, stock.",
 		file: "CSV file",
 		orPaste: "…or paste CSV text",
 		preview: "Preview",
@@ -851,6 +852,7 @@ export const en = {
 		types: {
 			suppliers: "Suppliers",
 			parts: "Parts",
+			part_options: "Part options",
 			part_suppliers: "Supplier offers",
 			price_history: "Past prices",
 			machine_types: "Machine types",
@@ -861,6 +863,8 @@ export const en = {
 		help: {
 			suppliers: "Upsert by name.",
 			parts: "Upsert by ref. Columns left out of the file keep their current values. Suppliers are matched by name.",
+			part_options:
+				"One row per value of an option, in order: ref, option, value, and default = yes on the default value. For each part in the file, the file replaces its options: those left out are removed (refused while stock, orders or builds use them), the others keep their records and take the file order. Adding an option to a part that has stock moves that stock onto its default value, and cannot be undone.",
 			part_suppliers:
 				"One row per part and supplier: their reference, price and ordering terms. Upsert by ref + supplier; preferred = yes makes it the supplier used for shortages.",
 			price_history:
@@ -868,13 +872,14 @@ export const en = {
 			machine_types: "Upsert by name. hourly_rate is the cost of one hour on a machine of the type (empty: unknown).",
 			machines: "Upsert by name. type is the name of a machine type; status is active, maintenance or retired.",
 			assemblies:
-				"One row per component of an assembly. Rows are grouped by parent_ref + code + revision; the components of each assembly are replaced.",
+				"One row per component of an assembly. Rows are grouped by parent_ref + code + revision; the components of each assembly are replaced. options sets the values of a component with options: Colour=black always, Size=* chosen when a build is planned, | between options; options left out follow the build. Without the column, the options of existing lines are kept.",
 			stock:
-				"Sets on-hand to the counted quantity by posting a count move for the difference. For serial-tracked parts, one row per serial.",
+				"Sets on-hand to the counted quantity by posting a count move for the difference. For serial-tracked parts, one row per serial. A part with options has one row per values, written in options (Colour=white|Size=L).",
 		},
 		summaries: {
 			suppliers: "Names and contact details.",
 			parts: "The catalogue: references, kinds, units, costs.",
+			part_options: "Options of parts and their values, such as colours.",
 			part_suppliers: "What each supplier offers: reference, price, terms.",
 			price_history: "Prices from before Kitting.",
 			machine_types: "Types of machine and their hourly rate.",

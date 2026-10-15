@@ -199,6 +199,7 @@ export const fr: Dict = {
 			"Cette valeur est utilisée par du stock, des commandes ou des fabrications : elle ne peut pas être retirée.",
 		option_in_use:
 			"Des valeurs de cette option sont utilisées par du stock, des commandes ou des fabrications : elle ne peut pas être supprimée.",
+		option_default_twice: "Une seule valeur d’une option peut être la valeur par défaut.",
 		option_default_removed:
 			"La valeur par défaut ne peut pas être retirée : choisissez d’abord une autre valeur par défaut.",
 		options_kind: "Seuls les articles achetés et fabriqués peuvent avoir des options.",
@@ -846,7 +847,7 @@ export const fr: Dict = {
 		intro:
 			"Envoyez un fichier CSV (séparateur virgule ou point-virgule, UTF-8). Un aperçu s’affiche toujours d’abord ; rien n’est écrit avant votre confirmation.",
 		order:
-			"Importez dans cet ordre : fournisseurs, articles, offres fournisseurs, anciens prix, types de machines, machines, assemblages, stock.",
+			"Importez dans cet ordre : fournisseurs, articles, options des articles, offres fournisseurs, anciens prix, types de machines, machines, assemblages, stock.",
 		file: "Fichier CSV",
 		orPaste: "…ou collez le texte CSV",
 		preview: "Aperçu",
@@ -868,6 +869,7 @@ export const fr: Dict = {
 		types: {
 			suppliers: "Fournisseurs",
 			parts: "Articles",
+			part_options: "Options des articles",
 			part_suppliers: "Offres fournisseurs",
 			price_history: "Anciens prix",
 			machine_types: "Types de machines",
@@ -879,6 +881,8 @@ export const fr: Dict = {
 			suppliers: "Mise à jour ou création par nom.",
 			parts:
 				"Mise à jour ou création par ref. Les colonnes absentes du fichier gardent leur valeur actuelle. Les fournisseurs sont reconnus par leur nom.",
+			part_options:
+				"Une ligne par valeur d’une option, dans l’ordre : ref, option, value, et default = oui sur la valeur par défaut. Pour chaque article du fichier, le fichier remplace ses options : celles qui manquent sont retirées (refusé tant que du stock, des commandes ou des fabrications les utilisent), les autres gardent leurs enregistrements et prennent l’ordre du fichier. Ajouter une option à un article qui a du stock fait passer ce stock sur sa valeur par défaut, sans annulation possible.",
 			part_suppliers:
 				"Une ligne par article et fournisseur : sa référence, son prix et ses conditions. Mise à jour par réf. + fournisseur ; preferred = oui en fait le fournisseur utilisé pour les manquants.",
 			price_history:
@@ -888,14 +892,15 @@ export const fr: Dict = {
 			machines:
 				"Mise à jour ou création par nom. type est le nom d’un type de machine ; status vaut active, maintenance ou retired.",
 			assemblies:
-				"Une ligne par composant. Les lignes sont regroupées par parent_ref + code + revision ; les composants de chaque assemblage sont remplacés.",
+				"Une ligne par composant. Les lignes sont regroupées par parent_ref + code + revision ; les composants de chaque assemblage sont remplacés. options fixe les valeurs d’un composant qui a des options : Couleur=noir toujours, Taille=* choisie à la planification d’une fabrication, | entre les options ; les options absentes suivent la fabrication. Sans cette colonne, les options des lignes existantes sont conservées.",
 			stock:
-				"Fixe le stock à la quantité comptée en créant un mouvement d’inventaire pour l’écart. Articles suivis par n° de série : une ligne par numéro.",
+				"Fixe le stock à la quantité comptée en créant un mouvement d’inventaire pour l’écart. Articles suivis par n° de série : une ligne par numéro. Un article avec options a une ligne par valeurs, écrites dans options (Couleur=blanc|Taille=L).",
 		},
 		summaries: {
 			suppliers: "Noms et coordonnées.",
 			parts: "Le catalogue : références, types, unités, coûts.",
 			part_suppliers: "Ce que propose chaque fournisseur : référence, prix, conditions.",
+			part_options: "Options des articles et leurs valeurs, comme des couleurs.",
 			price_history: "Prix d’avant Kitting.",
 			machine_types: "Types de machine et leur taux horaire.",
 			machines: "Les machines de chaque type.",

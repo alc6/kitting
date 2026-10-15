@@ -11,8 +11,10 @@ import {
 import type { Statement } from "../../lib/db";
 import { formatCentsInput, formatQtyInput, MILLI } from "../../lib/units";
 import { field, REF_PATTERN, validate } from "../../lib/validation";
-import { DEFAULT_CODE, DEFAULT_REVISION, loadGraph } from "../assemblies";
+import { DEFAULT_CODE, DEFAULT_REVISION, type LineOptions, lineOptionColumns, loadGraph } from "../assemblies";
 import { type AssemblyGraph, findCycle, type GraphAssembly, type GraphLine } from "../assembly-graph";
+import { CHOSEN_MARK, idsOf, keyOf, OPTIONS_SEPARATOR, type OptionDef, parseKeyText, valueIn } from "../option-keys";
+import { loadOptions } from "../options";
 import { checkHeader, emptyPlan, fieldIssues, type Importer, type PlanRow, type RowIssue } from "./types";
 
 const label = (fallback: string) =>
@@ -41,6 +43,8 @@ const assemblyRow = z.object({
 	component_ref: field.required(64),
 	qty: field.qty({ positive: true }),
 	notes: field.text(500),
+	/** A line's rule per option of its component (D171, D177): "Colour=black|Size=*". */
+	options: field.text(500),
 });
 
 type Group = {
@@ -57,7 +61,8 @@ type Group = {
 	/** Machine type and minutes per batch from the file, null when empty (only used when their columns are present). */
 	machineTypeId: number | null;
 	machineMinutes: number | null;
-	lines: { line: number; componentId: number; qtyMilli: number; notes: string }[];
+	/** `options` is the line's rule; undefined (no options column) keeps that of the existing assembly's line. */
+	lines: { line: number; componentId: number; qtyMilli: number; notes: string; options?: LineOptions }[];
 	existing?: GraphAssembly;
 };
 
@@ -76,7 +81,7 @@ const groupKey = (parentId: number, code: string, revision: string) => `${parent
 export const assembliesImporter: Importer = {
 	type: "assemblies",
 	required: ["parent_ref", "component_ref", "qty"],
-	optional: ["code", "revision", "status", "sale_price", "batch_qty", "machine", "machine_minutes", "notes"],
+	optional: ["code", "revision", "status", "sale_price", "batch_qty", "machine", "machine_minutes", "notes", "options"],
 	columns: [
 		"parent_ref",
 		"code",
@@ -89,13 +94,14 @@ export const assembliesImporter: Importer = {
 		"component_ref",
 		"qty",
 		"notes",
+		"options",
 	],
 	example: [
-		["SA-MAIN", "std", "Rev1", "active", "", "", "", "", "RES-10K", "4", ""],
-		["SA-MAIN", "std", "Rev1", "active", "", "", "", "", "CBL-2C", "0.35", "cut to length"],
-		["SA-MAIN", "std", "Rev1", "active", "", "", "", "", "KIT-SCREWS", "1", ""],
-		["KIT-SCREWS", "std", "Rev1", "active", "", "", "", "", "SCREW-M3", "6", ""],
-		["SPACER-10", "std", "Rev1", "active", "", "24", "FDM printer", "190", "PLA-BLACK", "0.26", "one print plate"],
+		["SA-MAIN", "std", "Rev1", "active", "", "", "", "", "RES-10K", "4", "", ""],
+		["SA-MAIN", "std", "Rev1", "active", "", "", "", "", "CBL-2C", "0.35", "cut to length", ""],
+		["SA-MAIN", "std", "Rev1", "active", "", "", "", "", "KIT-SCREWS", "1", "", ""],
+		["KIT-SCREWS", "std", "Rev1", "active", "", "", "", "", "SCREW-M3", "6", "", ""],
+		["SPACER-10", "std", "Rev1", "active", "", "24", "FDM printer", "190", "PLA-BLACK", "0.26", "one print plate", ""],
 	],
 
 	async plan({ db }, table) {
@@ -120,6 +126,8 @@ export const assembliesImporter: Importer = {
 		for (const b of activeLast) variantPrice.set(`${b.parentPartId}|${b.code}`, priceOf.get(b.id) ?? null);
 		const batchesInFile = table.header.includes("batch_qty");
 		const machinesInFile = table.header.includes("machine") || table.header.includes("machine_minutes");
+		const optionsInFile = table.header.includes("options");
+		const optionsOf = (partId: number): OptionDef[] => graph.parts.get(partId)?.options ?? [];
 		const byRef = new Map([...graph.parts.values()].map((p) => [p.ref, p]));
 		const existingByKey = new Map(
 			[...graph.assemblies.values()].map((b) => [groupKey(b.parentPartId, b.code, b.revision), b]),
@@ -160,6 +168,21 @@ export const assembliesImporter: Importer = {
 				continue;
 			}
 			if (!parent || !comp || parent.id === comp.id || (parent.kind !== "make" && parent.kind !== "kit")) continue;
+			// The line's rule per option (D171): fixed values, options chosen when planned; the rest follows the build.
+			let rule: LineOptions | undefined;
+			if (optionsInFile) {
+				const parsed = parseKeyText(comp.options, d.options, { chosen: true });
+				if (parsed.issue) {
+					issues.push({
+						line: rec.line,
+						column: "options",
+						key: parsed.issue.key,
+						vars: { ref: comp.ref, ...parsed.issue.vars },
+					});
+					continue;
+				}
+				rule = { fixedValueIds: parsed.ids, chosenOptionIds: parsed.chosen };
+			}
 			const key = groupKey(parent.id, d.code, d.revision);
 			let g = groups.get(key);
 			if (!g) {
@@ -199,7 +222,20 @@ export const assembliesImporter: Importer = {
 				if (g.machineTypeId === null) g.machineTypeId = machineTypeId;
 				if (g.machineMinutes === null) g.machineMinutes = d.machine_minutes || null;
 			}
-			g.lines.push({ line: rec.line, componentId: comp.id, qtyMilli: d.qty, notes: d.notes });
+			g.lines.push({ line: rec.line, componentId: comp.id, qtyMilli: d.qty, notes: d.notes, options: rule });
+		}
+
+		// Without the options column, a line keeps the rule of the line of the same component in the assembly it
+		// replaces (the first one for the first, the second for the second…); a new line follows the build.
+		for (const g of groups.values()) {
+			const seen = new Map<number, number>();
+			for (const l of g.lines) {
+				const n = seen.get(l.componentId) ?? 0;
+				seen.set(l.componentId, n + 1);
+				if (l.options !== undefined) continue;
+				const old = g.existing?.lines.filter((x) => x.componentPartId === l.componentId)[n];
+				l.options = { fixedValueIds: old?.fixedValueIds ?? [], chosenOptionIds: old?.chosenOptionIds ?? [] };
+			}
 		}
 
 		// Production settings: from the file when their columns are present, else kept (D146, D148).
@@ -257,8 +293,8 @@ export const assembliesImporter: Importer = {
 				qtyMilli: l.qtyMilli,
 				position: i + 1,
 				notes: l.notes,
-				fixedValueIds: [],
-				chosenOptionIds: [],
+				fixedValueIds: l.options?.fixedValueIds ?? [],
+				chosenOptionIds: l.options?.chosenOptionIds ?? [],
 			}));
 			next.assemblies.set(id, {
 				id,
@@ -282,7 +318,7 @@ export const assembliesImporter: Importer = {
 		const rows: PlanRow[] = [];
 		const changed: Group[] = [];
 		for (const g of groups.values()) {
-			const changes = g.existing ? diffAssembly(g, g.existing, ref) : [];
+			const changes = g.existing ? diffAssembly(g, g.existing, ref, optionsOf) : [];
 			const oldPrice = g.existing ? (priceOf.get(g.existing.id) ?? null) : null;
 			if (g.existing && pricesInFile && oldPrice !== g.salePrice) {
 				const money = (v: number | null) => (v === null ? "∅" : formatCentsInput(v));
@@ -397,6 +433,7 @@ export const assembliesImporter: Importer = {
 								qtyMilli: l.qtyMilli,
 								position: i + 1,
 								notes: l.notes,
+								...lineOptionColumns(l.options),
 								createdBy: user,
 								createdAt: now,
 								...audit,
@@ -410,6 +447,7 @@ export const assembliesImporter: Importer = {
 	},
 
 	async exportRows({ db, locale }) {
+		const options = await loadOptions(db);
 		const rows = await db.all<{
 			parent_ref: string;
 			code: string;
@@ -419,12 +457,16 @@ export const assembliesImporter: Importer = {
 			batch_qty_milli: number;
 			machine: string | null;
 			machine_minutes: number;
+			component_id: number;
 			component_ref: string;
 			qty_milli: number;
 			notes: string;
+			fixed: string | null;
+			chosen: string | null;
 		}>(sql`
 			SELECT p.ref AS parent_ref, b.code, b.revision, b.status, b.sale_price_cents, b.batch_qty_milli,
-				m.name AS machine, b.machine_minutes, c.ref AS component_ref, l.qty_milli, l.notes
+				m.name AS machine, b.machine_minutes, c.id AS component_id, c.ref AS component_ref, l.qty_milli, l.notes,
+				l.fixed_option_values AS fixed, l.chosen_option_ids AS chosen
 			FROM assembly_lines l
 			JOIN assemblies b ON b.id = l.assembly_id
 			JOIN parts p ON p.id = b.parent_part_id
@@ -443,18 +485,48 @@ export const assembliesImporter: Importer = {
 			r.component_ref,
 			formatQtyInput(r.qty_milli, locale),
 			r.notes,
+			ruleText(options.get(r.component_id) ?? [], { fixedValueIds: idsOf(r.fixed), chosenOptionIds: idsOf(r.chosen) }),
 		]);
 	},
 };
 
-function diffAssembly(g: Group, existing: GraphAssembly, ref: (id: number) => string): string[] {
+/**
+ * A line's rule as text ("Colour=black|Size=*"), in the order of the component's options, so equal rules read the same
+ * (ids of options the component no longer has are left out). Empty when every option follows the build.
+ */
+function ruleText(options: OptionDef[], rule: LineOptions): string {
+	return options
+		.flatMap((o) => {
+			const fixed = valueIn(o, rule.fixedValueIds);
+			if (fixed) return [`${o.name}=${fixed.name}`];
+			return rule.chosenOptionIds.includes(o.id) ? [`${o.name}=${CHOSEN_MARK}`] : [];
+		})
+		.join(OPTIONS_SEPARATOR);
+}
+
+const sameRule = (a: LineOptions, b: LineOptions) =>
+	keyOf(a.fixedValueIds) === keyOf(b.fixedValueIds) && keyOf(a.chosenOptionIds) === keyOf(b.chosenOptionIds);
+
+function diffAssembly(
+	g: Group,
+	existing: GraphAssembly,
+	ref: (id: number) => string,
+	optionsOf: (partId: number) => OptionDef[],
+): string[] {
 	const changes: string[] = [];
 	if (existing.status !== g.status) changes.push(`status: ${existing.status} → ${g.status}`);
+	const ruleOf = (l: { options?: LineOptions }) => l.options ?? { fixedValueIds: [], chosenOptionIds: [] };
 	const sameLines =
 		existing.lines.length === g.lines.length &&
 		existing.lines.every((l, i) => {
 			const n = g.lines[i];
-			return n && n.componentId === l.componentPartId && n.qtyMilli === l.qtyMilli && n.notes === l.notes;
+			return (
+				n &&
+				n.componentId === l.componentPartId &&
+				n.qtyMilli === l.qtyMilli &&
+				n.notes === l.notes &&
+				sameRule(ruleOf(n), l)
+			);
 		});
 	if (sameLines) return changes;
 	const total = (pairs: { id: number; qty: number }[]) => {
@@ -470,6 +542,15 @@ function diffAssembly(g: Group, existing: GraphAssembly, ref: (id: number) => st
 		else if (old !== qty) changes.push(`${ref(id)}: ${formatQtyInput(old)} → ${formatQtyInput(qty)}`);
 	}
 	for (const [id] of before) if (!after.has(id)) changes.push(`− ${ref(id)}`);
+	// A changed rule of a component that is still there (compared line by line, in order).
+	existing.lines.forEach((l, i) => {
+		const n = g.lines[i];
+		if (!n || n.componentId !== l.componentPartId || sameRule(ruleOf(n), l)) return;
+		const options = optionsOf(l.componentPartId);
+		changes.push(
+			`${ref(l.componentPartId)} options: ${ruleText(options, l) || "∅"} → ${ruleText(options, ruleOf(n)) || "∅"}`,
+		);
+	});
 	if (changes.length === (existing.status !== g.status ? 1 : 0)) changes.push("lines reordered or notes changed");
 	return changes;
 }

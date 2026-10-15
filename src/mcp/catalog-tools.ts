@@ -18,6 +18,7 @@ import {
 	findAssembly,
 	getAssemblyLines,
 	keptSalePrice,
+	type LineOptions,
 	loadGraph,
 	newAssemblyErrors,
 	nextRevision,
@@ -30,6 +31,8 @@ import {
 import { copyFilesStatement } from "../domain/files";
 import { findMachineTypeByName, machineTypeOptions } from "../domain/machines";
 import { getOffer } from "../domain/offers";
+import { idsOf } from "../domain/option-keys";
+import { loadOptions, optionsOf } from "../domain/options";
 import { archivePartStatement, checkPart, getPart, partToForm, savePartStatements } from "../domain/parts";
 import {
 	createSupplierStatement,
@@ -61,6 +64,7 @@ import {
 	tool,
 	writes,
 } from "./kit";
+import { chooseInput, fixedInput, lineRules, rulesView } from "./options";
 
 const now = () => new Date().toISOString();
 
@@ -292,10 +296,14 @@ async function newRevisionLabel(db: Db, assembly: Assembly): Promise<string> {
 }
 
 async function linesView(db: Db, assemblyId: number) {
-	return (await getAssemblyLines(db, assemblyId)).map((l) => ({
+	const lines = await getAssemblyLines(db, assemblyId);
+	const options = await loadOptions(db, [...new Set(lines.map((l) => l.partId))]);
+	return lines.map((l) => ({
 		ref: l.ref,
 		qtyMilli: l.qtyMilli,
 		notes: l.notes || undefined,
+		// What the line does with its component's options (D171): the rest follows the build.
+		...rulesView(options.get(l.partId) ?? [], idsOf(l.fixedOptionValues), idsOf(l.chosenOptionIds)),
 	}));
 }
 
@@ -362,7 +370,7 @@ const setAssemblyLines = tool({
 	name: "set_assembly_lines",
 	title: "Set the lines of an assembly",
 	description:
-		"Replaces all the lines of an assembly at once, in the given order, with the editor's checks on every line (known part, not archived, whole units for serial-tracked parts, no cycle); nothing changes if one line is refused. An active assembly is never edited in place: a new draft revision is created with these lines (and the active one's production settings and own selling price), and the active one stays as it is until you call activate_assembly on the new revision. Archived assemblies are read-only.",
+		"Replaces all the lines of an assembly at once, in the given order (a line's fixed and choose give its component's options a rule, and an option named in neither follows the build; a line sent without both keeps the rules of the same component's line it replaces, and fixed: {} with choose: [] resets them), with the editor's checks on every line (known part, not archived, whole units for serial-tracked parts, no cycle); nothing changes if one line is refused. An active assembly is never edited in place: a new draft revision is created with these lines (and the active one's production settings and own selling price), and the active one stays as it is until you call activate_assembly on the new revision. Archived assemblies are read-only.",
 	rule: { scope: "catalog:write", action: "assemblies.edit" },
 	annotations: writes({ destructive: true, idempotent: false }),
 	input: z.object({
@@ -374,6 +382,8 @@ const setAssemblyLines = tool({
 					qty: decimal(
 						'Quantity per batch of the parent (per unit when its batch is 1), e.g. "2" or "0.5", in the component\'s unit.',
 					),
+					fixed: fixedInput,
+					choose: chooseInput,
 					notes: z.string().max(500).default(""),
 				}),
 			)
@@ -387,8 +397,21 @@ const setAssemblyLines = tool({
 			throw new ToolError(
 				`Assembly ${label} is archived: ${errorMessage("assembly_archived")} Copy it with new_assembly_revision.`,
 			);
-		const lines: { componentPartId: number; qtyMilli: number; notes: string }[] = [];
+		const lines: { componentPartId: number; qtyMilli: number; notes: string; options: LineOptions }[] = [];
 		const problems: string[] = [];
+		// A line sent without fixed or choose keeps the rules of the same component's line it replaces (the first for
+		// the first, the second for the second…), as assemblies.csv does without its options column (D177, D178).
+		const previous = await getAssemblyLines(ctx.db, assembly.id);
+		const seen = new Map<number, number>();
+		const keptRules = (componentId: number): LineOptions => {
+			const n = seen.get(componentId) ?? 0;
+			seen.set(componentId, n + 1);
+			const old = previous.filter((p) => p.partId === componentId)[n];
+			return {
+				fixedValueIds: idsOf(old?.fixedOptionValues ?? null),
+				chosenOptionIds: idsOf(old?.chosenOptionIds ?? null),
+			};
+		};
 		for (const [i, l] of a.lines.entries()) {
 			const at = `line ${i + 1} (${l.ref})`;
 			const v = validate(assemblyLineInput, { component: l.ref, qty: formValue(l.qty), notes: l.notes });
@@ -399,7 +422,19 @@ const setAssemblyLines = tool({
 			const component = await findPart(ctx.db, l.ref);
 			const problem = await componentError(ctx.db, part, component, l.ref, v.data.qty);
 			if (problem) problems.push(`${at} ${problem.field}: ${errorMessage(problem.key, problem.vars)}`);
-			else if (component) lines.push({ componentPartId: component.id, qtyMilli: v.data.qty, notes: v.data.notes });
+			else if (component) {
+				try {
+					const kept = keptRules(component.id);
+					const options =
+						l.fixed === undefined && l.choose === undefined
+							? kept
+							: lineRules(await optionsOf(ctx.db, component.id), l.fixed, l.choose, at);
+					lines.push({ componentPartId: component.id, qtyMilli: v.data.qty, notes: v.data.notes, options });
+				} catch (err) {
+					if (!(err instanceof ToolError)) throw err;
+					problems.push(err.message);
+				}
+			}
 		}
 		if (problems.length) throw new ToolError(`Refused, nothing was changed. ${problems.join(" ")}`);
 		const t = ctx.t.history.summaries;

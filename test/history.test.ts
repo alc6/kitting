@@ -365,6 +365,7 @@ describe("change capture", () => {
 		expect(await rows("SELECT summary, revertible FROM change_sets WHERE source = 'import' ORDER BY id")).toEqual([
 			{ summary: "Import suppliers.csv", revertible: 1 },
 			{ summary: "Import parts.csv", revertible: 1 },
+			{ summary: "Import part_options.csv", revertible: 1 },
 			{ summary: "Import part_suppliers.csv", revertible: 1 },
 			{ summary: "Import machine_types.csv", revertible: 1 },
 			{ summary: "Import machines.csv", revertible: 1 },

@@ -35,6 +35,13 @@ listed user, but costs need planner (or the cost option set on the Users page).
 - **Batches.** An assembly makes `batch` units at a time (1 unless set, e.g. 24 parts per print plate), and its lines
   are the quantities for the whole batch. Quantities needed for a build are line × units / batch, rounded up to the
   thousandth (whole units for serial-tracked parts); costs are per unit.
+- **Options.** A buy or make part can have options (Colour, Size): each has ordered values and one default, and the
+  part's stock, PO lines and builds are counted per values (a white and a black cover are two stocks of one part).
+  Tools take and return `options` as an object, option name → value name: `{"Colour": "white"}`. Names are matched
+  ignoring case and are the workshop's own words: their case and spaces are kept as they are. A write on a part with
+  options needs a value for every option (it is refused with the values that exist); on a part without options it is
+  refused. Results show `options` only where a record has values. Options are not variants (`code`, an assembly):
+  a variant is another recipe, an option is a value of the same part. Defining options is done in the app only.
 - **Machine time.** An assembly can also take `machine_minutes` per batch on a `machine_type` (an FDM printer, a laser
   cutter); the type carries the `hourly_rate`. Machine time is costed like a component (unit costs include it) and
   listed as `machine_time[]` (`type`, `minutes` for the quantity asked, `hourly_rate`, `cost`). `minutes` is a
@@ -53,21 +60,21 @@ Find parts by reference, name or any supplier's reference. Use it before relying
 One part in full: details, prices, supplier offers (preferred first), on hand, its assemblies with unit cost, where it is used, and its own files.
 - **Scope:** `catalog:read` · **Permission:** none
 - **Inputs:** `ref` (part reference).
-- **Returns:** `part` (`ref`, `name`, `kind`, `unit`, `track_serial`, `archived`, `notes`, `min_stock` (null: no alert), `on_hand`, `standard_cost`, `sale_price`), `offers[]` (`supplier`, `preferred`, `supplier_ref`, `price`, `moq`, `pack_size`, `lead_days`), `assemblies[]` (`assembly_id`, `code`, `revision`, `status`, `batch`, `unit_cost`, `cost_incomplete`, `sale_price`), `rolled_up_cost`, `where_used[]` (`parent`, `assembly_id`, `code`, `revision`, `status`, `depth`, `via`, `qty_per_parent` for one batch of `batch` units of the parent), `files[]` attached to the part whatever its assembly (`name`, `kind`: cad, print, drawing, instructions, datasheet or other, `format`, `size_bytes`, `uploaded_at`, `uploaded_by`, `note`, `download_path`, `download_url`).
+- **Returns:** `part` (`ref`, `name`, `kind`, `unit`, `track_serial`, `archived`, `notes`, `min_stock` (null: no alert), `on_hand`, `standard_cost`, `sale_price`; for a part with options also `options[]` of `name`, `values` in order and `default`, and `stock_by_options[]` of `options` and `on_hand`, the values with stock; `on_hand` is the total), `offers[]` (`supplier`, `preferred`, `supplier_ref`, `price`, `moq`, `pack_size`, `lead_days`), `assemblies[]` (`assembly_id`, `code`, `revision`, `status`, `batch`, `unit_cost`, `cost_incomplete`, `sale_price`), `rolled_up_cost`, `where_used[]` (`parent`, `assembly_id`, `code`, `revision`, `status`, `depth`, `via`, `qty_per_parent` for one batch of `batch` units of the parent), `files[]` attached to the part whatever its assembly (`name`, `kind`: cad, print, drawing, instructions, datasheet or other, `format`, `size_bytes`, `uploaded_at`, `uploaded_by`, `note`, `download_path`, `download_url`).
 - **Example:** `get_part({ "ref": "PAD-FELT" })`
 
 ### `get_assembly`
 The structure of an assembly as a tree with cost roll-up. Kits and sub-assemblies are expanded through their active assemblies.
 - **Scope:** `catalog:read` · **Permission:** none
 - **Inputs:** `assembly`, `code`, `revision` (selector), `qty` (how many to build, default 1).
-- **Returns:** `assembly` (`assembly_id`, `part`, `code`, `revision`, `status`, `batch`, `machine_type`, `machine_minutes` per batch), `qty`, `cost` (`unit_cost`, `total_cost`, `incomplete`, `missing_costs` with machine types without a rate), `machine_time[]` for `qty`, `lines[]` as a tree: `ref`, `kind`, `per_parent` (per batch of the parent; `parent_batch` gives its size when it is not 1), `qty` (cumulative), `mode`, `unit_cost`, `extended_cost`, `cost_incomplete`, `children`; `files[]` of this revision (print files, assembly instructions; same fields as in `get_part`).
+- **Returns:** `assembly` (`assembly_id`, `part`, `code`, `revision`, `status`, `batch`, `machine_type`, `machine_minutes` per batch, `options` of the product: its defaults), `qty`, `cost` (`unit_cost`, `total_cost`, `incomplete`, `missing_costs` with machine types without a rate), `machine_time[]` for `qty`, `lines[]` as a tree: `ref`, `kind`, for a component with options `options` (the values it resolves to here), `fixed` (the values the line always takes), `choose` (options chosen when a build is planned; an option in neither follows the build) and `missing_values` (a value the build asks that the component does not come in), `per_parent` (per batch of the parent; `parent_batch` gives its size when it is not 1), `qty` (cumulative), `mode`, `unit_cost`, `extended_cost`, `cost_incomplete`, `children`; `files[]` of this revision (print files, assembly instructions; same fields as in `get_part`).
 - **Example:** `get_assembly({ "assembly": "LAMP-DESK", "code": "warm", "qty": 3 })`
 
 ### `explode_assembly`
 The flat list of components needed for a quantity, with on hand and shortfall. Fee lines are listed apart (cost only).
 - **Scope:** `catalog:read` · **Permission:** none
-- **Inputs:** `assembly`, `code`, `revision` (selector), `qty` (required), `use_stock` (take sub-assemblies already in stock instead of building them; default false).
-- **Returns:** `assembly` (with its `batch`), `qty`, `use_stock`, `components[]` (`ref`, `name`, `kind`, `unit`, `qty`, `on_hand`, `short`, `missing_assembly`, `unit_cost`, `extended_cost`), `fees[]`, `machine_time[]` (sub-assemblies taken from stock need none), `total_cost` (machine time included), `cost_incomplete`.
+- **Inputs:** `assembly`, `code`, `revision` (selector), `qty` (required), `options` (the values of the product, e.g. `{"Colour": "black"}`; left out, each option takes its default), `use_stock` (take sub-assemblies already in stock instead of building them; default false).
+- **Returns:** `assembly` (with its `batch` and the product's `options`), `qty`, `use_stock`, `components[]` (`ref`, `name`, `kind`, `unit`, `options` when the component has some: one line per part and values, `qty`, `on_hand` in those values, `short`, `missing_assembly`, `missing_value`, `unit_cost`, `extended_cost`), `fees[]`, `machine_time[]` (sub-assemblies taken from stock need none), `total_cost` (machine time included), `cost_incomplete`.
 - **Example:** `explode_assembly({ "assembly": "LAMP-DESK", "code": "warm", "qty": 3, "use_stock": true })`
 
 ### `list_machines`
@@ -90,14 +97,14 @@ The change history (who, when, from where, which rows and fields before/after), 
 On-hand quantities of stocked parts (buy and make; kits and fees are never stocked).
 - **Scope:** `stock:read` · **Permission:** none
 - **Inputs:** `query`, `filter` (all, below_zero, below_min: under a set minimum stock, in_stock; default all), `limit` (default 100, max 1000).
-- **Returns:** `filter`, `count`, `truncated`, `parts[]` (`ref`, `name`, `kind`, `unit`, `on_hand`, `min_stock`, `preferred_supplier`).
+- **Returns:** `filter`, `count`, `truncated`, `parts[]` (`ref`, `name`, `kind`, `unit`, `on_hand` total, `by_options[]` of `options` and `on_hand` for a part with options, `min_stock`, `preferred_supplier`). `below_zero` also catches a part negative in some values; the minimum stock compares the total.
 - **Example:** `stock_on_hand({ "filter": "below_min" })`
 
 ### `list_moves`
 The stock ledger, newest first. On hand is the sum of the signed moves.
 - **Scope:** `stock:read` · **Permission:** none
 - **Inputs:** `query` (part refs, names, serials, notes), `reason` (receipt, build_consume, build_output, adjust or count), `from`, `to`, `limit` (default 100, max 500).
-- **Returns:** `count`, `moves[]` (`at`, `ref`, `name`, `unit`, `qty` signed, `reason`, `serial`, `unit_cost`, `source`, `note`, `by`).
+- **Returns:** `count`, `moves[]` (`at`, `ref`, `name`, `unit`, `options` for a part with options, `qty` signed, `reason`, `serial`, `unit_cost`, `source`, `note`, `by`).
 - **Example:** `list_moves({ "query": "LED-5W-CW", "limit": 20 })`
 
 ## Reading: `builds:read`
@@ -106,14 +113,14 @@ The stock ledger, newest first. On hand is the sum of the signed moves.
 Builds (production orders), newest first. The query also matches the serials of consumed components: use it to find which build used a serial.
 - **Scope:** `builds:read` · **Permission:** none
 - **Inputs:** `query` (build number, product serial, part ref or name, component serial), `status` (open, all, planned, in_progress, done, cancelled; default open, or all when a query is given), `limit` (default 50, max 500).
-- **Returns:** `status`, `count`, `builds[]` (`number`, `status`, `part`, `name`, `unit`, `qty`, `serial`, `assembly`, `planned_for`, `done_at`).
+- **Returns:** `status`, `count`, `builds[]` (`number`, `status`, `part`, `name`, `unit`, `qty`, `serial`, `options` the product is made in, `assembly`, `planned_for`, `done_at`).
 - **Example:** `list_builds({ "query": "CW-24-0003" })`
 
 ### `get_build`
 One build. Done: the as-built record. Open: the pick list from current stock.
 - **Scope:** `builds:read` · **Permission:** none
 - **Inputs:** `number` (e.g. `B-0001`).
-- **Returns:** `build` (`number`, `status`, `part`, `qty`, `serial`, `assembly`, `planned_for`, `done_at`). Done: `as_built[]` (`ref`, `qty`, `serial`, `unit_cost` frozen, `made_by_build`), `machine_time[]` recorded at completion with its rate, `total_cost`. Open: `pick_list[]` (`ref`, `qty`, `on_hand`, `short`, `serials_to_scan` count to give), `sub_assemblies[]` (`ref`, `path`, `qty`, `from_stock`, `to_build`), `fees`, `machine_time[]`, `problems` (what blocks completion). Always: `files[]` to make it, those of its assembly revision then the part's own (`attached_to`: assembly or part; same fields as in `get_part`).
+- **Returns:** `build` (`number`, `status`, `part`, `qty`, `serial`, `options` of the product, `choices[]` of `ref` and `options`: the values chosen for the components whose recipe lines leave options to the build, `assembly`, `planned_for`, `done_at`). Done: `as_built[]` (`ref`, `options`, `qty`, `serial`, `unit_cost` frozen, `made_by_build`), `machine_time[]` recorded at completion with its rate, `total_cost`. Open: `pick_list[]` (`ref`, `options`, `qty`, `on_hand` in those values, `short`, `serials_to_scan` count to give), `sub_assemblies[]` (`ref`, `options`, `path`, `qty`, `from_stock`, `to_build`), `fees`, `machine_time[]`, `problems` (what blocks completion, e.g. a value the component does not come in). Always: `files[]` to make it, those of its assembly revision then the part's own (`attached_to`: assembly or part; same fields as in `get_part`).
 - **Example:** `get_build({ "number": "B-0001" })`
 
 ## Reading: `purchasing:read`
@@ -122,7 +129,7 @@ One build. Done: the as-built record. Open: the pick list from current stock.
 What to make, then what to buy, for all planned and in-progress builds. To make: made parts the builds need beyond stock and the builds already planned for them, deepest first, in whole runs. To buy: need minus on hand minus on order, rounded up to the preferred supplier's MOQ and pack size, grouped by supplier.
 - **Scope:** `purchasing:read` · **Permission:** none
 - **Inputs:** none.
-- **Returns:** `open_builds`, `to_make[]` (`ref`, `unit`, `short`, `on_hand`, `planned` by open builds of it, `qty` to make rounded up to whole runs, `runs`, `assembly`, `machine_time` with `type` and `minutes`, `builds`), `suppliers[]` (`supplier`, `total`, `lines[]` with `ref`, `unit`, `need`, `on_hand`, `on_order`, `net`, `order`, `unit_price`, `supplier_ref`, `moq`, `pack_size`, `lead_days`, `builds`), `missing_assemblies[]` (make or kit parts to build that have no active assembly), `machine_time[]` (`type`, `minutes` needed, what is to make counted in whole runs, `active_machines` in service, `builds`).
+- **Returns:** `open_builds`, `to_make[]` (`ref`, `options` when it has some: one line per values, `unit`, `short`, `on_hand`, `planned` by open builds of it, `qty` to make rounded up to whole runs, `runs`, `assembly`, `machine_time` with `type` and `minutes`, `builds`), `suppliers[]` (`supplier`, `total`, `lines[]` with `ref`, `options` (one line per values), `unit`, `need`, `on_hand`, `on_order`, `net`, `order`, `unit_price`, `supplier_ref`, `moq`, `pack_size`, `lead_days`, `builds`), `missing_assemblies[]` (make or kit parts to build that have no active assembly; `options` when it has some), `missing_values[]` (`ref`, `option`, `value`, `builds`: a value an open build asks of a component that does not come in it; nothing is ordered for it), `machine_time[]` (`type`, `minutes` needed, what is to make counted in whole runs, `active_machines` in service, `builds`).
 - **Example:** `get_shortages({})`
 
 ### `list_purchase_orders`
@@ -136,7 +143,7 @@ Purchase orders, newest first.
 One PO with its lines and the shipments the supplier sent.
 - **Scope:** `purchasing:read` · **Permission:** none
 - **Inputs:** `number` (e.g. `PO-0001`).
-- **Returns:** `purchase_order` (`number`, `status`, `supplier`, `expected_at`, `notes`), `lines[]` (`ref`, `qty`, `received`, `remaining`, `unit_price`, `line_total`), `total`, `shipments[]` (`carrier`, `tracking_number`, `tracking_url`, `shipped_at`, `notes`).
+- **Returns:** `purchase_order` (`number`, `status`, `supplier`, `expected_at`, `notes`), `lines[]` (`ref`, `options`, `qty`, `received`, `remaining`, `unit_price`, `line_total`), `total`, `shipments[]` (`carrier`, `tracking_number`, `tracking_url`, `shipped_at`, `notes`).
 - **Example:** `get_purchase_order({ "number": "PO-0001" })`
 
 ## Writing the catalogue: `catalog:write`
@@ -177,9 +184,9 @@ Creates a draft assembly for a make or kit part, empty or copied from another as
 ### `set_assembly_lines`
 Replaces every line of an assembly at once, in order, with the editor's checks (known part, not archived, whole units for serial-tracked parts, no cycle). Nothing changes if one line is refused. An active assembly is never edited: the next revision is created as a draft (with the active one's notes, production settings and own selling price, lines replaced by yours) and the active assembly stays as it is. Archived assemblies are read-only.
 - **Scope:** `catalog:write` · **Permission:** `assemblies.edit` (planner)
-- **Inputs:** `assembly`, `code`, `revision` (selector), `lines[]` of `ref`, `qty` (per batch of the assembly: per unit when its `batch` is 1), `notes` (1 to 500 lines). Send the complete list, not a delta.
-- **Returns:** the write envelope, `assembly` (the one that was edited), `new_revision` (true when a draft revision was created), `active_assembly` (then), `note`, `lines`.
-- **Example:** `set_assembly_lines({ "assembly": "BASE-ASSY", "lines": [{ "ref": "BASE-PLATE", "qty": 1 }, { "ref": "PAD-FELT", "qty": 6 }] })`
+- **Inputs:** `assembly`, `code`, `revision` (selector), `lines[]` of `ref`, `qty` (per batch of the assembly: per unit when its `batch` is 1), `fixed` (option → value the line always takes), `choose` (options chosen when a build is planned), `notes` (1 to 500 lines). Send the complete list, not a delta. An option of the component in neither `fixed` nor `choose` follows the build: it takes the value of the same option name in the parent (matched by value name), else its default. A line that leaves both `fixed` and `choose` out keeps the rules of the same component's line it replaces; send `"fixed": {}, "choose": []` to make it follow the build again.
+- **Returns:** the write envelope, `assembly` (the one that was edited), `new_revision` (true when a draft revision was created), `active_assembly` (then), `note`, `lines` (`ref`, `qty`, `notes`, `fixed`, `choose`).
+- **Example:** `set_assembly_lines({ "assembly": "BASE-ASSY", "lines": [{ "ref": "BASE-PLATE", "qty": 1 }, { "ref": "PAD-FELT", "qty": 6 }] })`; with options: `{ "ref": "COVER", "qty": 1, "fixed": { "Size": "L" }, "choose": ["Colour"] }`
 
 ### `set_assembly_production`
 How an assembly is produced: `batch_qty`, the units one batch makes (24 parts per print plate: its lines are then the plate's quantities), and the machine time per batch: `machine_type` (a name from `list_machines`, null for none) and `machine_minutes` (whole minutes, 3 h 10 = 190). These settings belong to a revision: a draft is changed in place; an active assembly is never changed, the next draft revision is created with its lines, its own selling price and the new settings; an archived one is refused.
@@ -256,15 +263,15 @@ Both tools write the append-only ledger. They cannot be undone: a mistake is cor
 ### `adjust_stock`
 A signed adjustment of a buy or make part, valued at its standard cost, with a required note.
 - **Scope:** `stock:write` · **Permission:** `stock.adjust` (operator)
-- **Inputs:** `ref`, `qty` (signed, never 0), `serial` (for one unit of a serial-tracked part: qty is 1 or -1), `note` (why).
-- **Returns:** the write envelope, `part`, `unit`, `qty`, `serial`, `on_hand` (after).
-- **Example:** `adjust_stock({ "ref": "SCREW-M3X8", "qty": "-12", "note": "Scrapped: dropped on the floor" })`
+- **Inputs:** `ref`, `options` (a part with options is adjusted in one value of each), `qty` (signed, never 0), `serial` (for one unit of a serial-tracked part: qty is 1 or -1), `note` (why).
+- **Returns:** the write envelope, `part`, `unit`, `options`, `qty`, `serial`, `on_hand` (after; in those values for a part with options, with `total_on_hand` for the whole part).
+- **Example:** `adjust_stock({ "ref": "SCREW-M3X8", "qty": "-12", "note": "Scrapped: dropped on the floor" })`; `adjust_stock({ "ref": "COVER", "options": { "Colour": "white" }, "qty": "5", "note": "Found" })`
 
 ### `count_stock`
 Posts counted quantities: for each part one count move for the difference with the current on hand (nothing when already right). Only the listed parts are touched.
 - **Scope:** `stock:write` · **Permission:** `stock.count` (operator)
-- **Inputs:** `counts[]` of `ref`, `qty` (counted, 0 or more; each part once), `note`.
-- **Returns:** the write envelope, `adjusted`, `counts[]` (`ref`, `previous`, `counted`, `adjustment`).
+- **Inputs:** `counts[]` of `ref`, `options` (a part with options is counted per values: one entry for each values, and only those are touched), `qty` (counted, 0 or more; each part, and each values, once), `note`.
+- **Returns:** the write envelope, `adjusted`, `counts[]` (`ref`, `options`, `previous`, `counted`, `adjustment`).
 - **Example:** `count_stock({ "counts": [{ "ref": "PAD-FELT", "qty": "380" }], "note": "Monthly count" })`
 
 ## Builds: `builds:write`
@@ -272,22 +279,22 @@ Posts counted quantities: for each part one count move for the difference with t
 ### `plan_build`
 Plans a build of a make part from one of its active assemblies. A serial-tracked product is built one unit at a time with its own serial.
 - **Scope:** `builds:write` · **Permission:** `builds.plan` (operator)
-- **Inputs:** `ref`, `qty` (units, default 1) or `batches` (that many batches of the chosen assembly), `code` (variant), `serial`, `planned_for` (date), `notes`.
-- **Returns:** the write envelope and `build` (`number`, `status`, `part`, `qty`, `serial`, `assembly` with its `batch`, `planned_for`).
-- **Example:** `plan_build({ "ref": "LAMP-DESK", "code": "warm", "serial": "L-0100", "planned_for": "2026-11-02" })`
+- **Inputs:** `ref`, `qty` (units, default 1) or `batches` (that many batches of the chosen assembly), `code` (variant), `options` (the values of the product; required when it has options), `choices[]` of `ref` and `options` (the values for each component whose recipe lines leave options to the build: `choose` in `get_assembly`; every such option needs a value), `serial`, `planned_for` (date), `notes`. The values flow down the structure by option name and value name; a value a component does not come in (a cover with no red) is refused.
+- **Returns:** the write envelope and `build` (`number`, `status`, `part`, `qty`, `serial`, `options`, `choices`, `assembly` with its `batch`, `planned_for`).
+- **Example:** `plan_build({ "ref": "LAMP-DESK", "code": "warm", "serial": "L-0100", "planned_for": "2026-11-02" })`; with options: `plan_build({ "ref": "NL-LIGHT", "qty": "5", "options": { "Colour": "white" } })`
 
 ### `complete_build`
 Records a planned or in-progress build as done: components are consumed, the product is added, and the as-built record keeps every serial and frozen unit cost. Refused, with every reason, when a serial is missing or repeated, a sub-assembly to build has no active assembly, or the product needs a serial. Writes the ledger: cannot be undone.
 - **Scope:** `builds:write` · **Permission:** `builds.complete` (operator)
-- **Inputs:** `number`, `serials[]` of `ref` and `serials` (one per unit of each serial-tracked component; the count is `serials_to_scan` in `get_build`), `sub_assemblies[]` of `ref` (every place the part appears) or `path` (one place, from `get_build`) and `mode` (stock or build). Without a choice, a sub-assembly comes from stock when there is enough, else it is built now.
-- **Returns:** the write envelope, `build` (done), `as_built[]`.
+- **Inputs:** `number`, `serials[]` of `ref`, `options` (only when the build uses the component in several values: `get_build` lists each in its `pick_list`) and `serials` (one per unit of each serial-tracked component; the count is `serials_to_scan` in `get_build`), `sub_assemblies[]` of `ref` (every place the part appears) or `path` (one place, from `get_build`) and `mode` (stock or build). Without a choice, a sub-assembly comes from stock when there is enough, else it is built now.
+- **Returns:** the write envelope, `build` (done, with its `options` and `choices`), `as_built[]` (`ref`, `options`, `qty`, `serial`, `unit_cost`). The values are those stored when the build was planned.
 - **Example:** `complete_build({ "number": "B-0001", "serials": [{ "ref": "LED-5W-WW", "serials": ["WW-24-0001"] }, { "ref": "DRV-12V", "serials": ["DRV-7A-101"] }], "sub_assemblies": [{ "ref": "ARM-ASSY", "mode": "stock" }] })`
 
 ### `record_build`
 Records a build that is already done (a print run recorded after the fact) in one step: planned and completed now, in one change set. Same checks as `plan_build`; components are taken from stock, and sub-assemblies too when there are enough (the others are built now); machine time is recorded. Refused when a serial-tracked component needs serials: then `plan_build`, and `complete_build` with the serials. Cannot be undone.
 - **Scope:** `builds:write` · **Permission:** `builds.complete` (operator; recording also plans, `builds.plan`)
-- **Inputs:** `ref`, `qty` (units, default 1) or `batches`, `code` (variant), `serial` (serial-tracked product), `notes`.
-- **Returns:** the write envelope (`revertible: false`), `build` (`number`, `status` done, `part`, `qty`, `serial`, `assembly` with its `batch`, `done_at`), `as_built[]` (`ref`, `qty`, `serial`, `unit_cost`, `made_by_build`), `machine_time[]` (`type`, `minutes`).
+- **Inputs:** `ref`, `qty` (units, default 1) or `batches`, `code` (variant), `options` and `choices[]` (as in `plan_build`), `serial` (serial-tracked product), `notes`.
+- **Returns:** the write envelope (`revertible: false`), `build` (`number`, `status` done, `part`, `qty`, `serial`, `options`, `choices`, `assembly` with its `batch`, `done_at`), `as_built[]` (`ref`, `options`, `qty`, `serial`, `unit_cost`, `made_by_build`), `machine_time[]` (`type`, `minutes`).
 - **Example:** `record_build({ "ref": "LAMP-CLIP", "batches": 2 })`
 
 ### `cancel_build`
@@ -302,15 +309,15 @@ Cancels a planned or in-progress build: nothing was consumed, and its serial bec
 ### `create_draft_pos`
 Turns the current shortages into draft POs, one per supplier, each line rounded up to MOQ and pack size and priced at the offer (else the standard cost). Drafts are not sent.
 - **Scope:** `purchasing:write` · **Permission:** `purchasing.order` (planner)
-- **Inputs:** `suppliers[]` (only these groups; default all), `order_from[]` of `ref` and `supplier` (order a short part from another supplier that has an offer for it; parts with no preferred supplier are drafted only this way).
-- **Returns:** the write envelope and `purchase_orders[]` (each with `lines` and `total`), or "Nothing to order."
+- **Inputs:** `suppliers[]` (only these groups; default all), `order_from[]` of `ref`, `options` (when the part is short in several values: one line each) and `supplier` (order a short part from another supplier that has an offer for it; parts with no preferred supplier are drafted only this way). A part with options is ordered in each values it is short in, one PO line each, rounded to the offer on its own.
+- **Returns:** the write envelope and `purchase_orders[]` (each with `lines`, with their `options`, and `total`), or "Nothing to order."
 - **Example:** `create_draft_pos({ "suppliers": ["Bolt & Nut Depot"] })`
 
 ### `update_draft_po`
 Edits a PO: expected date and notes (any open PO) and the lines of a draft. A line sets the quantity of a part: existing is changed, a new part is added, `"0"` removes it. Lines of a sent PO cannot change.
 - **Scope:** `purchasing:write` · **Permission:** `purchasing.order` (planner)
-- **Inputs:** `number`, `expected_at` (date or null), `notes`, `lines[]` of `ref`, `qty`, `price`.
-- **Returns:** the write envelope, `purchase_order`, `lines`, `total`, `shipments`.
+- **Inputs:** `number`, `expected_at` (date or null), `notes`, `lines[]` of `ref`, `options`, `qty`, `price`. A part with options is on one line per values: `options` says which line (it may be left out when the part is on one line); a new line needs a value of every option.
+- **Returns:** the write envelope, `purchase_order`, `lines` (with their `options`), `total`, `shipments`.
 - **Example:** `update_draft_po({ "number": "PO-0002", "expected_at": "2026-11-10", "lines": [{ "ref": "PAD-FELT", "qty": "1000" }] })`
 
 ### `mark_po_sent`
@@ -323,8 +330,8 @@ Marks a draft as sent. Kitting sends nothing itself: the user sends the order to
 ### `receive_po`
 Records goods received, per part, optionally with one serial per unit. Stock goes up at the PO's price; the PO becomes partial or received. More deliveries can follow. Writes the ledger: cannot be undone.
 - **Scope:** `purchasing:write` · **Permission:** `purchasing.receive` (operator)
-- **Inputs:** `number`, `lines[]` of `ref`, `qty` (received now), `serials`.
-- **Returns:** the write envelope, `received[]`, `purchase_order`, `lines`, `total`, `shipments`.
+- **Inputs:** `number`, `lines[]` of `ref`, `options` (to tell lines of the same part apart; stock goes up in the line's values), `qty` (received now), `serials`.
+- **Returns:** the write envelope, `received[]` (`ref`, `options`, `qty`, `serials`), `purchase_order`, `lines`, `total`, `shipments`.
 - **Example:** `receive_po({ "number": "PO-0001", "lines": [{ "ref": "LED-5W-WW", "qty": "10", "serials": ["WW-24-0101", "WW-24-0102"] }] })`
 
 ### `cancel_po`

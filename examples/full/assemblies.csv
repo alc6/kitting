@@ -39,3 +39,12 @@ BASE-ASSY,std,Rev1,active,,,,,DRV-12V,1
 BASE-ASSY,std,Rev1,active,,,,,CABLE-2C,1.5
 BASE-ASSY,std,Rev1,active,,,,,SCREW-M4X10,3
 LAMP-CLIP,std,Rev1,active,,24,FDM printer,190,PLA-BLACK,0.26
+LAMP-MINI,std,Rev1,active,,,,,MINI-HEAD,1
+LAMP-MINI,std,Rev1,active,,,,,SWITCH-INL,1
+LAMP-MINI,std,Rev1,active,,,,,CABLE-2C,1.2
+LAMP-MINI,std,Rev1,active,,,,,PSU-EU-12V,1
+LAMP-MINI,std,Rev1,active,,,,,BOX-LAMP,1
+MINI-HEAD,std,Rev1,active,,,,,MINI-COVER,1
+MINI-HEAD,std,Rev1,active,,,,,DIFF-OPAL,1
+MINI-HEAD,std,Rev1,active,,,,,HS-ALU-40,1
+MINI-HEAD,std,Rev1,active,,,,,SCREW-M3X8,2

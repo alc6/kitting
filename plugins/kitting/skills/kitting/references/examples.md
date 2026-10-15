@@ -92,3 +92,29 @@ reconnecting the app with the scope ticked if the role allows it.
 
    > **Claude:** The two builds need about 7 h 40 of printing on the FDM printers. Two printers are in service
    > (PRINTER-3 is under maintenance), so that is about 3 h 50 each. The filament in stock covers it.
+
+## 6. Twelve black mini lamps (parts with options)
+
+**User:** Plan 12 black mini lamps and tell me what to order.
+
+1. `search_parts({ "query": "mini" })` finds `LAMP-MINI` (make). `get_part({ "ref": "LAMP-MINI" })` shows its option
+   `Colour` (values white and black, default white). `get_assembly({ "assembly": "LAMP-MINI" })`: the lamp has
+   `MINI-HEAD` (a made part with a `Colour` option), which has `MINI-COVER` (a bought part, also in `Colour`); no line
+   fixes or chooses a colour, so they all follow the lamp's.
+2. `explode_assembly({ "assembly": "LAMP-MINI", "qty": 12, "options": { "Colour": "black" }, "use_stock": true })`:
+   12 `MINI-HEAD` in black, none in stock in black (the 2 in stock are white), so they are built: 12 `MINI-COVER`
+   in black, 10 in stock in black.
+
+   > **Claude:** For 12 black mini lamps I need 12 black heads (none in stock, I would build them) and so 12 black
+   > front covers: 10 in stock, 2 short. Shall I plan the build as `Colour: black`?
+
+3. After a yes: `plan_build({ "ref": "LAMP-MINI", "qty": 12, "options": { "Colour": "black" } })`. The result has the
+   build number, `options` and the undo link.
+4. `get_shortages({})`: `MINI-COVER` in black, net 2, ordered 20 (MOQ 20, Lumen Parts Co, 14 days). The white covers
+   in stock are not counted.
+
+   > **Claude:** Order 20 black front covers from Lumen Parts Co (MOQ 20). Draft PO?
+
+5. After a yes: `create_draft_pos({})`; the line of the PO shows `options` `{"Colour": "black"}`. When the covers
+   arrive, `receive_po({ "number": "PO-0003", "lines": [{ "ref": "MINI-COVER", "options": { "Colour": "black" }, "qty": "20" }] })`
+   puts them in the black stock only.

@@ -9,6 +9,14 @@ import { formatCentsInput, formatQtyInput } from "../lib/units";
 
 const snake = (key: string) => key.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
 
+/**
+ * Keys whose value is an option name → value name record (D178): `options: {"Colour": "white"}`, and a line's
+ * `fixed: {"Colour": "white"}`. The names are the workshop's own words, so they are copied as they are (snake-casing
+ * would turn `Colour` into `_colour`). Arrays under the same key (a part's option definitions) still convert.
+ */
+const NAME_RECORDS = new Set(["options", "fixed"]);
+const isRecord = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v);
+
 /** Integer field suffixes, most specific first: the decimal key, whether it is money, and how to format it. */
 const SUFFIXES: { suffix: string; money: boolean; format: (n: number) => string }[] = [
 	{ suffix: "Millicents", money: true, format: (n) => formatCentsInput(centsOf(n)) },
@@ -30,7 +38,8 @@ function convert(value: unknown, hideCosts: boolean): unknown {
 			out[snake(key.slice(0, -field.suffix.length))] = typeof v === "number" ? field.format(v) : v;
 		} else if (key === RATE.key) {
 			if (!hideCosts) out[RATE.wire] = typeof v === "number" ? RATE.format(v) : v;
-		} else out[snake(key)] = convert(v, hideCosts);
+		} else if (NAME_RECORDS.has(key) && isRecord(v)) out[key] = v;
+		else out[snake(key)] = convert(v, hideCosts);
 	}
 	return out;
 }

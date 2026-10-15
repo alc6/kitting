@@ -206,7 +206,9 @@ describe("JSON backup and restore", () => {
 		const json = await backupRes.text();
 		const backup = JSON.parse(json);
 		expect(backup.format).toBe("kitting-backup");
-		expect(backup.tables.parts).toHaveLength(27);
+		expect(backup.tables.parts).toHaveLength(30);
+		expect(backup.tables.part_options).toHaveLength(3);
+		expect(backup.tables.part_option_values).toHaveLength(6);
 		expect(backup.tables.machine_types).toHaveLength(1);
 		expect(backup.tables.machines).toHaveLength(3);
 		expect(backup.tables.machine_rate_history).toHaveLength(1);
@@ -229,7 +231,8 @@ describe("JSON backup and restore", () => {
 		expect(await rows("SELECT ref, min_stock_milli FROM parts WHERE min_stock_milli IS NOT NULL ORDER BY ref")).toEqual(
 			minBefore,
 		);
-		expect(await one("SELECT count(*) AS n FROM assembly_lines")).toEqual({ n: 40 });
+		expect(await one("SELECT count(*) AS n FROM assembly_lines")).toEqual({ n: 49 });
+		expect(await one("SELECT count(*) AS n FROM part_option_values")).toEqual({ n: 6 });
 		expect(await one("SELECT machine_minutes FROM assemblies WHERE machine_type_id IS NOT NULL")).toEqual({
 			machine_minutes: 190,
 		});

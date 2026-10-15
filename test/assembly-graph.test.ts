@@ -209,7 +209,7 @@ describe("where-used and cycle check (recursive CTEs)", () => {
 		await loadDemo();
 		const rows = await whereUsed(testDb(), await partId("SCREW-M3X8"));
 		const direct = rows.filter((r) => r.depth === 1).map((r) => r.parentRef);
-		expect(direct.sort()).toEqual(["ARM-ASSY", "FIX-KIT-HEAD"]);
+		expect(direct.sort()).toEqual(["ARM-ASSY", "FIX-KIT-HEAD", "MINI-HEAD"]);
 		const indirect = rows
 			.filter((r) => r.depth === 2)
 			.map((r) => `${r.parentRef}/${r.code}/${r.revision} via ${r.viaRef}`);
@@ -218,6 +218,7 @@ describe("where-used and cycle check (recursive CTEs)", () => {
 			"HEAD-KIT-WW/std/Rev1 via FIX-KIT-HEAD",
 			"LAMP-DESK/std/Rev2 via ARM-ASSY",
 			"LAMP-DESK/warm/Rev1 via ARM-ASSY",
+			"LAMP-MINI/std/Rev1 via MINI-HEAD",
 		]);
 		const deepest = rows.filter((r) => r.depth === 3).map((r) => `${r.parentRef}/${r.code} via ${r.viaRef}`);
 		expect(deepest.sort()).toEqual(["LAMP-DESK/std via HEAD-KIT-CW", "LAMP-DESK/warm via HEAD-KIT-WW"]);

@@ -9,10 +9,13 @@ import { computeShortages } from "../src/domain/purchasing";
 import { revertChangeSet } from "../src/domain/revert";
 import { valuation } from "../src/domain/stock";
 import {
+	assemblyId,
 	importCsv,
 	insertPart,
 	insertSupplier,
+	loadDemo,
 	one,
+	partId,
 	postForm,
 	request,
 	returnedId,
@@ -547,5 +550,29 @@ describe("undo with option values", () => {
 			"parent_missing",
 			"part_option_values",
 		]);
+	});
+});
+
+describe("the mini lamp of examples/full", () => {
+	it("takes a white head from stock and builds a black one from a black cover", async () => {
+		await loadDemo();
+		const plan = async (colour: string) => {
+			const res = await postForm("/builds", {
+				part_id: String(await partId("LAMP-MINI")),
+				assembly_id: String(await assemblyId("LAMP-MINI")),
+				qty: "1",
+				serial: "",
+				planned_for: "",
+				notes: "",
+				when: "done",
+				[`option:${await optionId("LAMP-MINI")}`]: String(await valueId("LAMP-MINI", colour)),
+			});
+			return ok(res);
+		};
+		await plan("white");
+		await plan("black");
+		expect([await stockOf("MINI-HEAD", "white"), await stockOf("MINI-HEAD", "black")]).toEqual([1000, 0]);
+		expect([await stockOf("MINI-COVER", "white"), await stockOf("MINI-COVER", "black")]).toEqual([6000, 9000]);
+		expect([await stockOf("LAMP-MINI", "white"), await stockOf("LAMP-MINI", "black")]).toEqual([1000, 1000]);
 	});
 });

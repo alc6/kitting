@@ -6,6 +6,7 @@ import smallSuppliers from "../examples/demo/suppliers.csv?raw";
 import demoAssemblies from "../examples/full/assemblies.csv?raw";
 import demoMachineTypes from "../examples/full/machine_types.csv?raw";
 import demoMachines from "../examples/full/machines.csv?raw";
+import demoPartOptions from "../examples/full/part_options.csv?raw";
 import demoOffers from "../examples/full/part_suppliers.csv?raw";
 import demoParts from "../examples/full/parts.csv?raw";
 import demoStock from "../examples/full/stock.csv?raw";
@@ -199,11 +200,11 @@ describe("parts import", () => {
 		const exported = await res.text();
 		expect(exported.startsWith("ref,name,kind,unit,cost,sale_price,supplier")).toBe(true);
 		const html = await (await preview("parts", exported)).text();
-		expect(html).toContain("0 to create, 0 to update, 27 unchanged.");
+		expect(html).toContain("0 to create, 0 to update, 30 unchanged.");
 		// French export uses semicolons and decimal commas, and re-imports cleanly too.
 		const fr = await (await request("/import/parts/export.csv", { headers: { Cookie: "kitting_lang=fr" } })).text();
 		expect(fr).toContain("LED-5W-CW;LED module 5W cool white;buy;pcs;4,20;;Lumen Parts Co");
-		expect(await (await preview("parts", fr)).text()).toContain("0 to create, 0 to update, 27 unchanged.");
+		expect(await (await preview("parts", fr)).text()).toContain("0 to create, 0 to update, 30 unchanged.");
 	});
 
 	it("serves templates", async () => {
@@ -285,15 +286,16 @@ describe("full dataset", () => {
 	it("imports cleanly in order", async () => {
 		await importOk("suppliers", demoSuppliers);
 		await importOk("parts", demoParts);
+		await importOk("part_options", demoPartOptions);
 		await importOk("part_suppliers", demoOffers);
 		await importOk("machine_types", demoMachineTypes);
 		await importOk("machines", demoMachines);
 		await importOk("assemblies", demoAssemblies);
 		await importOk("stock", demoStock);
 		expect(await one("SELECT count(*) AS n FROM suppliers")).toEqual({ n: 7 });
-		expect(await one("SELECT count(*) AS n FROM parts")).toEqual({ n: 27 });
-		// 18 preferred offers from parts.csv plus 4 alternatives from part_suppliers.csv.
-		expect(await one("SELECT count(*) AS n FROM part_suppliers")).toEqual({ n: 22 });
+		expect(await one("SELECT count(*) AS n FROM parts")).toEqual({ n: 30 });
+		// 19 preferred offers from parts.csv plus 4 alternatives from part_suppliers.csv.
+		expect(await one("SELECT count(*) AS n FROM part_suppliers")).toEqual({ n: 23 });
 		// The printed cable clip: 24 per plate, 190 minutes on an FDM printer (3 h 10).
 		expect(
 			await one(

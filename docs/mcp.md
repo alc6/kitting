@@ -52,6 +52,10 @@ the corresponding page.
 | `purchasing:read` | `get_shortages`, `list_purchase_orders`, `get_purchase_order` |
 | `purchasing:write` | `create_draft_pos`, `update_draft_po`, `mark_po_sent`, `receive_po`, `cancel_po`, `close_po`, `record_po_shipment` |
 
+Parts with options (a colour, a size) are handled by the same tools: they take and return `options` as option
+name → value, such as `{"Colour": "white"}`, for stock, builds, shortages and purchase orders (D178). Defining a part's
+options is done in the app.
+
 Some things are never available to an assistant: permanent deletes, undoing changes, managing users, backups,
 CSV imports and photo uploads. Assemblies only change through draft revisions, so an active assembly stays as it
 is until someone activates the new revision.

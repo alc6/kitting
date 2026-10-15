@@ -115,7 +115,7 @@ describe("supplier offers import", () => {
 		const exported = await (await request("/import/part_suppliers/export.csv")).text();
 		expect(exported).toContain("DRV-12V,Lumen Parts Co,DRV-700-12,6.60,5,,21,yes,Price list 2026");
 		expect(await (await preview("part_suppliers", exported)).text()).toContain(
-			"0 to create, 0 to update, 22 unchanged.",
+			"0 to create, 0 to update, 23 unchanged.",
 		);
 	});
 });
@@ -288,7 +288,7 @@ describe("backup", () => {
 	it("includes offers and price history", async () => {
 		await loadDemo({ stock: false });
 		const json = await (await request("/import/backup.json")).json<{ tables: Record<string, unknown[]> }>();
-		expect(json.tables.part_suppliers).toHaveLength(22);
+		expect(json.tables.part_suppliers).toHaveLength(23);
 		expect((json.tables.price_history ?? []).length).toBeGreaterThan(0);
 		expect(DEMO.part_suppliers).toContain("Quickparts Express");
 	});
