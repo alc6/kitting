@@ -215,6 +215,9 @@ function pages(s: Awaited<ReturnType<typeof seed>>): string[] {
 		"/import/price_history/export.csv",
 		"/import/price_history/template.csv",
 		"/import/machine_types/export.csv",
+		// Part options (D183, D192): no amount on them, listed so a future one is caught.
+		`/parts/${s.box}/options`,
+		"/import/part_options/export.csv",
 		`/margins/assemblies/${s.clipAssembly}`,
 		"/import/backup.json",
 		`/files/${s.file}/edit`,

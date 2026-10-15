@@ -53,6 +53,7 @@ describe("machine time arithmetic", () => {
 		costCents,
 		trackSerial: false,
 		archived: false,
+		options: [],
 	});
 	/** A plate of 24 clips: 260 g of PLA and 3 h 10 on a printer; a kit of 4 clips; a holder made of 2 clips. */
 	const graph = (rate: number | null) =>
@@ -111,7 +112,7 @@ describe("machine time arithmetic", () => {
 		expect(minutes(explode(g, 11, 6000))).toEqual({ "FDM printer": 190_000 });
 		// 12 holders: 60 min on the bench, and 24 clips printed unless they come from stock.
 		expect(minutes(explode(g, 12, 12_000))).toEqual({ "Assembly bench": 60_000, "FDM printer": 190_000 });
-		expect(minutes(explode(g, 12, 12_000, { stock: new Map([[2, 24_000]]) }))).toEqual({ "Assembly bench": 60_000 });
+		expect(minutes(explode(g, 12, 12_000, { stock: new Map([["2", 24_000]]) }))).toEqual({ "Assembly bench": 60_000 });
 	});
 
 	it("replays rate changes in the planned margin history", () => {

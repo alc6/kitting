@@ -29,6 +29,8 @@ import {
 	poUnitPrice,
 	setPreferredStatement,
 } from "../domain/offers";
+import { keyLabel, type OptionDef, type OptionKey } from "../domain/option-keys";
+import { optionsOf } from "../domain/options";
 import {
 	archivePartStatement,
 	checkPart,
@@ -52,7 +54,7 @@ import {
 } from "../domain/past-prices";
 import { can } from "../domain/permissions";
 import { lastPaidBySupplier, paidPrices, partPriceHistory } from "../domain/prices";
-import { averageCosts } from "../domain/stock";
+import { averageCosts, stockByKey } from "../domain/stock";
 import { getSupplier } from "../domain/suppliers";
 import { errorText, fmt } from "../i18n";
 import { cn } from "../lib/cn";
@@ -67,6 +69,7 @@ import { useApp } from "../views/context";
 import { FilesCard, uploadErrorText } from "../views/files";
 import { Icon, type IconNode, icons } from "../views/icons";
 import { Duration } from "../views/machines";
+import { OptionValues } from "../views/options";
 import { idParam, notFound, nowIso, page, redirectOk, saveChanges, translateErrors } from "../views/render";
 import {
 	Alert,
@@ -499,6 +502,12 @@ function PartHeader(props: { part: Part; active: PartTab; imagesEnabled: boolean
 						) : null}
 						<MoreMenu
 							items={[
+								stocked &&
+									can(view, "parts.edit") && {
+										label: t.options.edit,
+										icon: icons.options,
+										href: `/parts/${p.id}/options`,
+									},
 								canUpload && hasImage && { label: t.parts.changeImage, icon: icons.imageUp, dialog: IMAGE_DIALOG },
 								can(view, "parts.archive") &&
 									(p.archived
@@ -572,6 +581,9 @@ function OverviewTab(props: {
 	usedIn: WhereUsedRow[];
 	imagesEnabled: boolean;
 	files: FileRow[];
+	/** The part's options (D183) and its stock per values. */
+	options: OptionDef[];
+	stockByValue: { optionValues: OptionKey; qty: number }[];
 	err?: string | undefined;
 }) {
 	const view = useApp();
@@ -620,6 +632,7 @@ function OverviewTab(props: {
 					{figures}
 				</div>
 			) : null}
+			{props.options.length > 0 ? <OptionsCard part={p} options={props.options} stock={props.stockByValue} /> : null}
 			{p.kind === "make" || p.kind === "kit" ? <HowItsMade part={p} summary={props.assemblySummary} /> : null}
 			<div class={cn("grid gap-4", seeCosts && "lg:grid-cols-2")}>
 				<Card>
@@ -734,6 +747,7 @@ function StockTab(props: {
 	part: Part;
 	moves: (typeof stockMoves.$inferSelect)[];
 	builds: Awaited<ReturnType<typeof listBuilds>>;
+	options: OptionDef[];
 }) {
 	const view = useApp();
 	const { t } = view;
@@ -745,7 +759,7 @@ function StockTab(props: {
 					<CardTitle>{t.parts.history}</CardTitle>
 				</CardHeader>
 				<CardContent class="px-2">
-					<MovesTable moves={props.moves} unit={p.unit} />
+					<MovesTable moves={props.moves} unit={p.unit} options={props.options} />
 				</CardContent>
 			</Card>
 			{p.kind === "make" ? (
@@ -766,6 +780,64 @@ function StockTab(props: {
 				</Card>
 			) : null}
 		</div>
+	);
+}
+
+/** A part's options (D183): their values, the default marked, and the stock in each values. */
+function OptionsCard(props: { part: Part; options: OptionDef[]; stock: { optionValues: OptionKey; qty: number }[] }) {
+	const view = useApp();
+	const { t } = view;
+	const p = props.part;
+	const stock = props.stock.filter((r) => r.qty !== 0 && r.optionValues !== null);
+	return (
+		<Card id="options">
+			<CardHeader>
+				<CardTitle icon={icons.options}>{t.options.title}</CardTitle>
+				<CardDescription>{t.options.intro}</CardDescription>
+				{can(view, "parts.edit") ? (
+					<CardAction>
+						<Button href={`/parts/${p.id}/options`} variant="outline" size="sm" icon={icons.pencil}>
+							{t.options.edit}
+						</Button>
+					</CardAction>
+				) : null}
+			</CardHeader>
+			<CardContent class="flex flex-col gap-4">
+				<DetailList
+					items={props.options.map((o) => ({
+						label: o.name,
+						value: (
+							<span class="flex flex-wrap gap-1">
+								{o.values.map((v) => (
+									<Badge variant={v.isDefault ? "secondary" : "outline"}>
+										{v.isDefault ? `${v.name} · ${t.options.default}` : v.name}
+									</Badge>
+								))}
+							</span>
+						),
+					}))}
+				/>
+				<div class="flex flex-col gap-2">
+					<h3 class="text-sm font-medium">{t.options.stockByValue}</h3>
+					{stock.length === 0 ? (
+						<p class="text-sm text-muted-foreground">{t.options.noStockByValue}</p>
+					) : (
+						<Table>
+							<TableBody>
+								{stock.map((r) => (
+									<TableRow>
+										<TableCell>{keyLabel(props.options, r.optionValues)}</TableCell>
+										<TableCell class="text-right">
+											<Qty milli={r.qty} unit={p.unit} />
+										</TableCell>
+									</TableRow>
+								))}
+							</TableBody>
+						</Table>
+					)}
+				</div>
+			</CardContent>
+		</Card>
 	);
 }
 
@@ -1685,8 +1757,14 @@ function WhereUsed(props: { rows: WhereUsedRow[] }) {
 	);
 }
 
-export function MovesTable(props: { moves: (typeof stockMoves.$inferSelect)[]; unit: string }) {
+export function MovesTable(props: {
+	moves: (typeof stockMoves.$inferSelect)[];
+	unit: string;
+	/** The part's options: a column shows the values of each move. */
+	options?: OptionDef[];
+}) {
 	const { t } = useApp();
+	const options = props.options ?? [];
 	if (props.moves.length === 0) return <CardEmpty icon={icons.history}>{t.common.noResults}</CardEmpty>;
 	return (
 		<Table>
@@ -1694,6 +1772,7 @@ export function MovesTable(props: { moves: (typeof stockMoves.$inferSelect)[]; u
 				<TableRow>
 					<TableHead>{t.stock.at}</TableHead>
 					<TableHead>{t.stock.reason}</TableHead>
+					{options.length ? <TableHead>{t.options.title}</TableHead> : null}
 					<TableHead class="text-right">{t.stock.qty}</TableHead>
 					<TableHead>{t.stock.serial}</TableHead>
 					<TableHead>{t.stock.by}</TableHead>
@@ -1707,6 +1786,11 @@ export function MovesTable(props: { moves: (typeof stockMoves.$inferSelect)[]; u
 						<TableCell>
 							<MoveReference reason={m.reason} refType={m.refType} refId={m.refId} />
 						</TableCell>
+						{options.length ? (
+							<TableCell>
+								<OptionValues options={options} values={m.optionValues} class="text-sm text-foreground" />
+							</TableCell>
+						) : null}
 						<TableCell class="text-right">
 							<Qty milli={m.qtyMilli} unit={props.unit} />
 						</TableCell>
@@ -1723,20 +1807,23 @@ export function MovesTable(props: { moves: (typeof stockMoves.$inferSelect)[]; u
 /** What the Overview tab shows, loaded together. */
 async function overviewTab(c: Context<AppEnv>, part: Part, imagesEnabled: boolean) {
 	const db = c.var.db;
-	const [supplierRows, onHand, assemblySummary, usedIn, offers, average, files] = await Promise.all([
-		part.supplierId
-			? db
-					.select({ id: suppliers.id, name: suppliers.name, email: suppliers.email, phone: suppliers.phone })
-					.from(suppliers)
-					.where(eq(suppliers.id, part.supplierId))
-			: Promise.resolve([]),
-		onHandOf(db, part.id),
-		partAssemblySummary(db, part.id),
-		whereUsed(db, part.id),
-		c.var.seeCosts ? partOffers(db, part.id) : Promise.resolve([]),
-		isStocked(part.kind) ? averageCosts(db).then((a) => a.costs.get(part.id)) : Promise.resolve(undefined),
-		partFiles(db, part.id),
-	]);
+	const [supplierRows, onHand, assemblySummary, usedIn, offers, average, files, options, stockByValue] =
+		await Promise.all([
+			part.supplierId
+				? db
+						.select({ id: suppliers.id, name: suppliers.name, email: suppliers.email, phone: suppliers.phone })
+						.from(suppliers)
+						.where(eq(suppliers.id, part.supplierId))
+				: Promise.resolve([]),
+			onHandOf(db, part.id),
+			partAssemblySummary(db, part.id),
+			whereUsed(db, part.id),
+			c.var.seeCosts ? partOffers(db, part.id) : Promise.resolve([]),
+			isStocked(part.kind) ? averageCosts(db).then((a) => a.costs.get(part.id)) : Promise.resolve(undefined),
+			partFiles(db, part.id),
+			optionsOf(db, part.id),
+			stockByKey(db, null, part.id),
+		]);
 	return (
 		<OverviewTab
 			part={part}
@@ -1748,6 +1835,8 @@ async function overviewTab(c: Context<AppEnv>, part: Part, imagesEnabled: boolea
 			usedIn={usedIn}
 			imagesEnabled={imagesEnabled}
 			files={files}
+			options={options}
+			stockByValue={stockByValue}
 			err={c.req.query("err")}
 		/>
 	);
@@ -1784,7 +1873,7 @@ async function pricesTab(c: Context<AppEnv>, part: Part, pastPrice?: { values: F
 /** What the Stock tab shows. */
 async function stockTab(c: Context<AppEnv>, part: Part) {
 	const db = c.var.db;
-	const [moves, builds] = await Promise.all([
+	const [moves, builds, options] = await Promise.all([
 		db
 			.select()
 			.from(stockMoves)
@@ -1792,8 +1881,9 @@ async function stockTab(c: Context<AppEnv>, part: Part) {
 			.orderBy(desc(stockMoves.at), desc(stockMoves.id))
 			.limit(100),
 		part.kind === "make" ? listBuilds(db, { status: "all", partId: part.id, limit: 10 }) : Promise.resolve([]),
+		optionsOf(db, part.id),
 	]);
-	return <StockTab part={part} moves={moves} builds={builds} />;
+	return <StockTab part={part} moves={moves} builds={builds} options={options} />;
 }
 
 /**

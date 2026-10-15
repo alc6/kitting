@@ -7,6 +7,7 @@ import type { BatchResponse } from "drizzle-orm/batch";
 import { AUDIT_COLUMNS } from "../db/history-sql";
 import {
 	assemblies,
+	builds,
 	CHANGE_SOURCES,
 	type ChangeLogRow,
 	type ChangeOp,
@@ -16,6 +17,8 @@ import {
 	changeLog,
 	changeSets,
 	machineTypes,
+	partOptions,
+	partOptionValues,
 	parts,
 	purchaseOrders,
 	suppliers,
@@ -23,6 +26,7 @@ import {
 import { runBatch, type Statement } from "../lib/db";
 import { chunks, likePattern } from "../lib/sql";
 import type { Db } from "../types";
+import { idsOf } from "./option-keys";
 import { type Access, type Action, redactCosts } from "./permissions";
 
 /** Who changes what, and how to describe it in the history. */
@@ -214,12 +218,18 @@ export async function changeSetUsers(db: Db): Promise<string[]> {
 /** The objects that have a History tab, and the child rows shown with them. */
 export type HistoryTarget = { kind: "part" | "supplier" | "assembly" | "po"; id: number };
 
-const TARGETS: Record<HistoryTarget["kind"], { table: string; children: { table: string; column: string }[] }> = {
+const TARGETS: Record<
+	HistoryTarget["kind"],
+	{ table: string; children: { table: string; column: string; via?: { table: string; column: string } }[] }
+> = {
 	part: {
 		table: "parts",
 		children: [
 			{ table: "part_suppliers", column: "part_id" },
 			{ table: "files", column: "part_id" },
+			{ table: "part_options", column: "part_id" },
+			// A value names its option: those of the part's current options (D183).
+			{ table: "part_option_values", column: "option_id", via: { table: "part_options", column: "part_id" } },
 		],
 	},
 	supplier: { table: "suppliers", children: [{ table: "part_suppliers", column: "supplier_id" }] },
@@ -245,8 +255,11 @@ export async function objectHistory(db: Db, target: HistoryTarget, limit = 500) 
 	const conds: SQL[] = [and(eq(changeLog.tableName, def.table), eq(changeLog.rowId, target.id)) as SQL];
 	for (const child of def.children) {
 		const path = `$.${child.column}`;
+		const value = sql`COALESCE(json_extract(${changeLog.newRow}, ${path}), json_extract(${changeLog.oldRow}, ${path}))`;
 		conds.push(
-			sql`(${changeLog.tableName} = ${child.table} AND COALESCE(json_extract(${changeLog.newRow}, ${path}), json_extract(${changeLog.oldRow}, ${path})) = ${target.id})`,
+			child.via
+				? sql`(${changeLog.tableName} = ${child.table} AND ${value} IN (SELECT id FROM ${sql.identifier(child.via.table)} WHERE ${sql.identifier(child.via.column)} = ${target.id}))`
+				: sql`(${changeLog.tableName} = ${child.table} AND ${value} = ${target.id})`,
 		);
 	}
 	const rows = await db
@@ -282,6 +295,10 @@ const HIDDEN_FIELDS: Record<string, readonly string[]> = {
 	part_suppliers: ["part_id", "supplier_id"],
 	// The owner is in the file's name; the hash and the object key say nothing to a person (size and date do).
 	files: ["part_id", "assembly_id", "sha256", "object_key"],
+	// Their part, option or build is in their name.
+	part_options: ["part_id"],
+	part_option_values: ["option_id"],
+	build_option_choices: ["build_id", "part_id"],
 };
 
 export type FieldChange = { column: string; before: unknown; after: unknown };
@@ -341,7 +358,25 @@ export const REFERENCE_COLUMNS: Record<string, string> = {
 	assembly_id: "assemblies",
 	po_id: "purchase_orders",
 	machine_type_id: "machine_types",
+	option_id: "part_options",
+	build_id: "builds",
 };
+
+/** Columns holding option keys (D184): value ids, or option ids for the options chosen per build. */
+export const KEY_COLUMNS: Record<string, "part_option_values" | "part_options"> = {
+	option_values: "part_option_values",
+	fixed_option_values: "part_option_values",
+	chosen_option_ids: "part_options",
+};
+
+/** A key as names: "Colour: white · Size: L" (values), or "Colour · Size" (options). */
+export function keyLabelOf(labels: Labels, column: string, key: unknown): string {
+	const table = KEY_COLUMNS[column];
+	if (!table || typeof key !== "string") return "";
+	return idsOf(key)
+		.map((id) => labelOf(labels, table, id))
+		.join(" · ");
+}
 
 /** Labels of referenced rows, keyed "table:id" (from referenceLabels). */
 export type Labels = Map<string, string>;
@@ -381,6 +416,12 @@ export function rowName(table: string, row: Snapshot | null, labels: Labels): st
 		case "machine_types":
 		case "machines":
 			return s("name");
+		case "part_options":
+			return `${s("name")} (${labelOf(labels, "parts", row.part_id)})`;
+		case "part_option_values":
+			return `${s("name")} (${labelOf(labels, "part_options", row.option_id)})`;
+		case "build_option_choices":
+			return `${labelOf(labels, "parts", row.part_id)} (${labelOf(labels, "builds", row.build_id)})`;
 		case "files":
 			return `${s("name")} (${
 				row.part_id !== null && row.part_id !== undefined
@@ -400,6 +441,9 @@ export async function referenceLabels(db: Db, views: EntryView[]): Promise<Map<s
 		assemblies: new Set(),
 		purchase_orders: new Set(),
 		machine_types: new Set(),
+		part_options: new Set(),
+		part_option_values: new Set(),
+		builds: new Set(),
 	};
 	for (const v of views) {
 		for (const [col, table] of Object.entries(REFERENCE_COLUMNS)) {
@@ -409,6 +453,9 @@ export async function referenceLabels(db: Db, views: EntryView[]): Promise<Map<s
 		for (const f of v.fields) {
 			const table = REFERENCE_COLUMNS[f.column];
 			for (const id of [f.before, f.after]) if (table && typeof id === "number") ids[table]?.add(id);
+			const keyTable = KEY_COLUMNS[f.column];
+			for (const key of [f.before, f.after])
+				if (keyTable && typeof key === "string") for (const id of idsOf(key)) ids[keyTable]?.add(id);
 		}
 		if (v.table in ids) ids[v.table]?.add(v.rowId);
 	}
@@ -436,6 +483,18 @@ export async function referenceLabels(db: Db, views: EntryView[]): Promise<Map<s
 				.select({ id: machineTypes.id, label: machineTypes.name })
 				.from(machineTypes)
 				.where(inArray(machineTypes.id, part)),
+		part_options: (part) =>
+			db.select({ id: partOptions.id, label: partOptions.name }).from(partOptions).where(inArray(partOptions.id, part)),
+		part_option_values: (part) =>
+			db
+				.select({
+					id: partOptionValues.id,
+					label: sql<string>`${partOptions.name} || ': ' || ${partOptionValues.name}`,
+				})
+				.from(partOptionValues)
+				.innerJoin(partOptions, eq(partOptionValues.optionId, partOptions.id))
+				.where(inArray(partOptionValues.id, part)),
+		builds: (part) => db.select({ id: builds.id, label: builds.number }).from(builds).where(inArray(builds.id, part)),
 	};
 	for (const [table, query] of Object.entries(queries)) {
 		for (const part of chunks([...(ids[table] ?? [])])) {

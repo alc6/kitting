@@ -17,6 +17,7 @@ import { imageRoutes } from "./routes/images";
 import { importRoutes } from "./routes/import";
 import { machineRoutes } from "./routes/machines";
 import { marginRoutes } from "./routes/margins";
+import { partOptionRoutes } from "./routes/part-options";
 import { pickerRoutes } from "./routes/part-picker";
 import { partRoutes } from "./routes/parts";
 import { purchasingRoutes } from "./routes/purchasing";
@@ -88,6 +89,7 @@ export function createApp() {
 	app.route("/machines", machineRoutes);
 	app.route("/parts/pick", pickerRoutes);
 	app.route("/parts", imageRoutes);
+	app.route("/parts", partOptionRoutes);
 	app.route("/parts", partRoutes);
 	app.route("/builds", buildRoutes);
 	app.route("/assemblies", assemblyRoutes);

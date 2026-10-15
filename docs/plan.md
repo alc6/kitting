@@ -213,10 +213,36 @@ Carrier and tracking number of the parcels a supplier sent, on the PO, for the w
 - [x] Tracking column on the PO list and the dashboard; a tracking number finds its PO in the searches
 - [x] `get_purchase_order` lists shipments; `record_po_shipment` adds or updates one over MCP
 
+## M18: Part options ✅
+
+A part comes in values (a front cover in white or black) counted apart in stock, while it stays one part in the
+catalogue and in recipes (D183–D193).
+
+- [x] Options per part, several allowed, on bought and made parts: ordered values, one default; edited on the part
+      (migration 0011: `part_options`, `part_option_values`, tracked) (D183)
+- [x] A key of value ids on stock moves, as-built lines, PO lines, builds and recipe lines; the integrity a foreign key
+      would give checked by the app and by undo (D184)
+- [x] Builds choose their product's values; components follow them by option name down the explosion, through
+      sub-assemblies built now; a value a component lacks blocks the build (D185)
+- [x] Recipe lines per option: follows the build, always one value, or chosen when planned and stored on the build
+      (D186, D187)
+- [x] Adding an option to a stocked part puts its stock and open orders on the default value (D188)
+- [x] Stock, counts, adjustments and valuation per value; a sub-assembly taken from stock must exist in its value
+      (D189, D190)
+- [x] Shortages, production requirements, draft POs (MOQ per value) and receipts per value; prices stay per part (D191)
+- [x] CSV: `part_options.csv` and `options` columns; MCP tools take and return `options` (D192, D193)
+- [x] A mini lamp in two colours in `examples/full`
+
 ## After v1 (ideas, not planned)
 
 - Shipments, beyond M17: carriers with a tracking URL pattern entered by an administrator (a link from the number
   alone), which receipt came with which shipment.
+- Substitute parts: a recipe line that takes one part or another (a 2 GB or a 4 GB board), chosen per build, with
+  stock and shortages counted for whichever is chosen.
+- A product configurator: choosing a product's values (and its substitutes) on one page with prices, then planning the
+  build.
+- Part options, beyond M18: a price, standard cost or supplier reference per value; defining options over MCP; a shared
+  catalogue of options when many parts repeat the same values.
 - MCP: Client ID Metadata Documents (needs the `global_fetch_strictly_public` compatibility flag, D123).
 - Serial inventory (which serials are in stock) enforced at build time, if the shop starts scanning receipts.
 - Reservations of stock for planned builds; build scheduling.

@@ -2,9 +2,18 @@
 import { z } from "zod";
 import { BUILD_STATUSES, type FileRow, MOVE_REASONS, PART_KINDS, PO_STATUSES } from "../db/schema";
 import { loadGraph, partAssemblySummary, whereUsed } from "../domain/assemblies";
-import { CostCalculator, centsOf, type ExplodedNode, explode, type MachineNeed } from "../domain/assembly-graph";
+import {
+	type AssemblyGraph,
+	CostCalculator,
+	centsOf,
+	type ExplodedNode,
+	explode,
+	type GraphLine,
+	type MachineNeed,
+} from "../domain/assembly-graph";
 import {
 	buildPickList,
+	buildPicks,
 	getBuildLines,
 	getBuildMachineTimes,
 	listBuilds,
@@ -14,9 +23,11 @@ import {
 import { assemblyFiles, partFiles } from "../domain/files";
 import { listMachines, listMachineTypes } from "../domain/machines";
 import { partOffers } from "../domain/offers";
-import { listParts, onHandMap, onHandOf } from "../domain/parts";
+import { defaultValue, type OptionDef, stockKey } from "../domain/option-keys";
+import { loadOptions, optionsOf } from "../domain/options";
+import { listParts, onHandOf } from "../domain/parts";
 import { computeShortages, getPoLines, getPoShipments, listPos } from "../domain/purchasing";
-import { belowMinimum, isStocked, listMoves, onHandAt } from "../domain/stock";
+import { belowMinimum, isStocked, listMoves, onHandByKey, stockByKey } from "../domain/stock";
 import { lineCostCents, MILLI, machineMillicents, roundDiv } from "../lib/units";
 import {
 	assemblySelector,
@@ -34,6 +45,7 @@ import {
 	type ToolSpec,
 	tool,
 } from "./kit";
+import { choicesView, optionsInput, optionsView, rulesView, stockByOptionsView, valueIdsOf } from "./options";
 
 // ---------------------------------------------------------------------------
 // catalog:read
@@ -106,17 +118,19 @@ const getPartTool = tool({
 	name: "get_part",
 	title: "Part details",
 	description:
-		"One part: details, standard cost and selling price, supplier offers (preferred first), on-hand quantity, its assemblies with their unit cost, where it is used (directly or through sub-assemblies), and its own files (drawings, datasheets…; a revision's files are in get_assembly).",
+		"One part: details, standard cost and selling price, supplier offers (preferred first), on-hand quantity, its assemblies with their unit cost, where it is used (directly or through sub-assemblies), and its own files (drawings, datasheets…; a revision's files are in get_assembly). A part with options lists them (values in order, default) and its stock per values (stockByOptions).",
 	rule: { scope: "catalog:read" },
 	input: z.object({ ref: partRef }),
 	run: async (a, { db, origin }) => {
 		const part = await partByRef(db, a.ref);
-		const [onHand, summary, used, offers, files] = await Promise.all([
+		const [onHand, summary, used, offers, files, defs, stockRows] = await Promise.all([
 			onHandOf(db, part.id),
 			partAssemblySummary(db, part.id),
 			whereUsed(db, part.id),
 			partOffers(db, part.id),
 			partFiles(db, part.id),
+			optionsOf(db, part.id),
+			stockByKey(db, null, part.id),
 		]);
 		const ref = (id: number) => summary.refs.get(id) ?? String(id);
 		return {
@@ -130,6 +144,11 @@ const getPartTool = tool({
 				notes: part.notes,
 				minStockMilli: part.minStockMilli,
 				onHandMilli: onHand,
+				// Options (D183): the values of each, in order, and the default; the stock counted per values.
+				options: defs.length
+					? defs.map((o) => ({ name: o.name, values: o.values.map((v) => v.name), default: defaultValue(o)?.name }))
+					: undefined,
+				stockByOptions: defs.length ? stockByOptionsView(defs, stockRows) : undefined,
 				standardCostCents: part.costCents,
 				salePriceCents: part.salePriceCents,
 			},
@@ -176,13 +195,28 @@ const getPartTool = tool({
 	},
 });
 
-function treeNode(n: ExplodedNode, calc: CostCalculator): Record<string, unknown> {
+/** A line's option rules (fixed values, options chosen when planned) and the values it resolves to (D185, D186). */
+function lineOptions(n: ExplodedNode, line: GraphLine | undefined) {
+	if (n.part.options.length === 0) return {};
+	return {
+		options: optionsView(n.part.options, n.optionValues),
+		...(line ? rulesView(n.part.options, line.fixedValueIds, line.chosenOptionIds) : {}),
+		missingValues: n.missingValues.length ? n.missingValues : undefined,
+	};
+}
+
+/** Every recipe line of the graph by id: an exploded node carries its line's id. */
+const linesOf = (graph: AssemblyGraph) =>
+	new Map([...graph.assemblies.values()].flatMap((a) => a.lines.map((l) => [l.id, l] as const)));
+
+function treeNode(n: ExplodedNode, calc: CostCalculator, lines: Map<number, GraphLine>): Record<string, unknown> {
 	const cost = calc.part(n.part.id);
 	return {
 		ref: n.part.ref,
 		name: n.part.name,
 		kind: n.part.kind,
 		unit: n.part.unit,
+		...lineOptions(n, lines.get(n.lineId)),
 		perParentMilli: n.perParentMilli,
 		parentBatchMilli: n.parentBatchMilli !== MILLI ? n.parentBatchMilli : undefined,
 		qtyMilli: n.qtyMilli,
@@ -191,7 +225,7 @@ function treeNode(n: ExplodedNode, calc: CostCalculator): Record<string, unknown
 		extendedCostCents: centsOf(calc.extended(n.part.id, n.qtyMilli)),
 		costIncomplete: cost.incomplete,
 		notes: n.notes || undefined,
-		children: n.children.length ? n.children.map((c) => treeNode(c, calc)) : undefined,
+		children: n.children.length ? n.children.map((c) => treeNode(c, calc, lines)) : undefined,
 	};
 }
 
@@ -199,7 +233,7 @@ const getAssemblyTool = tool({
 	name: "get_assembly",
 	title: "Assembly tree",
 	description:
-		"The full structure of an assembly as a tree: per line the quantity per parent (per_parent: per batch of the parent when it makes batches, parent_batch units at a time) and the cumulative quantity for the requested quantity (qty), with unit and extended costs and the cost roll-up per unit. Sub-assemblies (make) and kits are expanded through their active assemblies. Also the files of this revision (print files, assembly instructions…).",
+		"The full structure of an assembly as a tree: per line the quantity per parent (per_parent: per batch of the parent when it makes batches, parent_batch units at a time) and the cumulative quantity for the requested quantity (qty), with unit and extended costs and the cost roll-up per unit. Sub-assemblies (make) and kits are expanded through their active assemblies. A component with options shows the values it takes here (options) and its line's rules: fixed (always this value), choose (asked when a build is planned); an option in neither follows the build. Also the files of this revision (print files, assembly instructions…).",
 	rule: { scope: "catalog:read" },
 	input: z.object({ ...assemblySelector, qty: quantity.optional().describe('How many to build (default "1").') }),
 	run: async (a, { db, origin }) => {
@@ -209,6 +243,7 @@ const getAssemblyTool = tool({
 		const calc = new CostCalculator(graph);
 		const ex = exploding(() => explode(graph, assembly.id, qty));
 		const unit = calc.assembly(assembly.id);
+		const lineById = linesOf(graph);
 		const machine = assembly.machineTypeId === null ? undefined : graph.machineTypes.get(assembly.machineTypeId);
 		return {
 			assembly: {
@@ -221,6 +256,7 @@ const getAssemblyTool = tool({
 				batchMilli: assembly.batchQtyMilli,
 				machineType: machine?.name ?? null,
 				machineMinutes: machine ? assembly.machineMinutes : 0,
+				options: optionsView(graph.parts.get(part.id)?.options ?? [], ex.optionValues),
 			},
 			qtyMilli: qty,
 			cost: {
@@ -232,7 +268,7 @@ const getAssemblyTool = tool({
 					...(unit.missingMachines ?? []).map((id) => graph.machineTypes.get(id)?.name ?? String(id)),
 				],
 			},
-			lines: ex.tree.map((n) => treeNode(n, calc)),
+			lines: ex.tree.map((n) => treeNode(n, calc, lineById)),
 			machineTime: machineTimeView(ex.machines, calc),
 			files: filesView(await assemblyFiles(db, assembly.id), origin),
 		};
@@ -243,28 +279,40 @@ const explodeAssembly = tool({
 	name: "explode_assembly",
 	title: "Explode an assembly",
 	description:
-		"The flat list of components needed to build a quantity of an assembly, with on-hand and shortfall per component. With use_stock, sub-assemblies already in stock are taken from stock instead of being built (their components are then not needed). Fee lines are listed separately (cost only).",
+		"The flat list of components needed to build a quantity of an assembly, with on-hand and shortfall per component. With use_stock, sub-assemblies already in stock are taken from stock instead of being built (their components are then not needed). Fee lines are listed separately (cost only). Components with options are listed per values, with the stock of those values; options sets the values of the product (defaults otherwise).",
 	rule: { scope: "catalog:read" },
-	input: z.object({ ...assemblySelector, qty: quantity, use_stock: z.boolean().default(false) }),
+	input: z.object({
+		...assemblySelector,
+		qty: quantity,
+		options: optionsInput(
+			"the part the assembly builds",
+			"Options left out take their default value; every level follows the values of its parent.",
+		),
+		use_stock: z.boolean().default(false),
+	}),
 	run: async (a, { db }) => {
-		const [graph, stock] = await Promise.all([loadGraph(db), onHandMap(db)]);
+		const [graph, stock] = await Promise.all([loadGraph(db), onHandByKey(db)]);
 		const { assembly, part } = await resolveAssembly(db, graph, a);
+		const rootOptions = graph.parts.get(part.id)?.options ?? [];
+		const values = valueIdsOf(rootOptions, a.options, `${part.ref} options`);
 		const calc = new CostCalculator(graph);
-		const ex = exploding(() => explode(graph, assembly.id, a.qty, a.use_stock ? { stock } : {}));
+		const ex = exploding(() => explode(graph, assembly.id, a.qty, { ...(a.use_stock ? { stock } : {}), values }));
 		let total = 0;
 		const line = (r: (typeof ex.requirements)[number], withStock: boolean) => {
 			const cost = calc.part(r.part.id);
 			const extended = calc.extended(r.part.id, r.qtyMilli);
 			total += extended;
-			const onHand = stock.get(r.part.id) ?? 0;
+			const onHand = stock.get(stockKey(r.part.id, r.optionValues)) ?? 0;
 			return {
 				ref: r.part.ref,
 				name: r.part.name,
 				kind: r.part.kind,
 				unit: r.part.unit,
+				options: optionsView(r.part.options, r.optionValues),
 				qtyMilli: r.qtyMilli,
 				...(withStock ? { onHandMilli: onHand, shortMilli: Math.max(0, r.qtyMilli - Math.max(0, onHand)) } : {}),
 				missingAssembly: r.missingAssembly || undefined,
+				missingValue: r.missingValue ?? undefined,
 				unitCostCents: centsOf(cost.millicents),
 				extendedCostCents: centsOf(extended),
 				costIncomplete: cost.incomplete,
@@ -283,6 +331,7 @@ const explodeAssembly = tool({
 				revision: assembly.revision,
 				status: assembly.status,
 				batchMilli: assembly.batchQtyMilli,
+				options: optionsView(rootOptions, ex.optionValues),
 			},
 			qtyMilli: a.qty,
 			useStock: a.use_stock,
@@ -332,7 +381,7 @@ const stockOnHand = tool({
 	name: "stock_on_hand",
 	title: "Stock on hand",
 	description:
-		"On-hand quantities of stocked parts (buy and make), with each part's minimum stock (null: none). Filters: below_zero (negative stock), below_min (under a set minimum stock), in_stock (positive).",
+		"On-hand quantities of stocked parts (buy and make), with each part's minimum stock (null: none). A part with options also lists its stock per values (byOptions). Filters: below_zero (negative stock, in any values), below_min (under a set minimum stock, on the total), in_stock (positive).",
 	rule: { scope: "stock:read" },
 	input: z.object({
 		query: z.string().trim().max(100).optional().describe("Text to look for in references and names."),
@@ -341,8 +390,12 @@ const stockOnHand = tool({
 	}),
 	run: async (a, { db }) => {
 		const rows = (await listParts(db, { q: a.query ?? "" })).filter((p) => isStocked(p.kind));
+		// Parts with options are counted per values (D184): the stock of each, and a negative one is below zero too.
+		const [options, stock] = await Promise.all([loadOptions(db), stockByKey(db)]);
+		const stockOf = (partId: number) => stock.filter((r) => r.partId === partId);
 		const kept = rows.filter((p) => {
-			if (a.filter === "below_zero") return p.onHandMilli < 0;
+			if (a.filter === "below_zero")
+				return p.onHandMilli < 0 || (options.has(p.id) && stockOf(p.id).some((r) => r.qty < 0));
 			if (a.filter === "below_min") return belowMinimum(p);
 			if (a.filter === "in_stock") return p.onHandMilli > 0;
 			return true;
@@ -358,6 +411,7 @@ const stockOnHand = tool({
 				unit: p.unit,
 				onHandMilli: p.onHandMilli,
 				minStockMilli: p.minStockMilli,
+				byOptions: options.has(p.id) ? stockByOptionsView(options.get(p.id) ?? [], stockOf(p.id)) : undefined,
 				preferredSupplier: p.supplierName,
 			})),
 		};
@@ -390,6 +444,9 @@ const listMovesTool = tool({
 			to: a.to ?? null,
 			limit: a.limit,
 		});
+		const options = await loadOptions(db, [
+			...new Set(rows.filter((r) => r.move.optionValues).map((r) => r.move.partId)),
+		]);
 		return {
 			count: rows.length,
 			moves: rows.map((r) => ({
@@ -397,6 +454,7 @@ const listMovesTool = tool({
 				ref: r.ref,
 				name: r.name,
 				unit: r.unit,
+				options: optionsView(options.get(r.move.partId) ?? [], r.move.optionValues),
 				qtyMilli: r.move.qtyMilli,
 				reason: r.move.reason,
 				serial: r.move.serial,
@@ -428,6 +486,7 @@ const listBuildsTool = tool({
 	run: async (a, { db }) => {
 		const status = a.status ?? (a.query ? "all" : "open");
 		const rows = await listBuilds(db, { q: a.query ?? "", status, limit: a.limit });
+		const options = await loadOptions(db, [...new Set(rows.filter((r) => r.optionValues).map((r) => r.partId))]);
 		return {
 			status,
 			count: rows.length,
@@ -439,6 +498,7 @@ const listBuildsTool = tool({
 				unit: b.unit,
 				qtyMilli: b.qtyMilli,
 				serial: b.serial,
+				options: optionsView(options.get(b.partId) ?? [], b.optionValues),
 				assembly: `${b.assemblyCode} ${b.assemblyRevision}`,
 				plannedFor: b.plannedFor,
 				doneAt: b.doneAt,
@@ -451,13 +511,14 @@ const getBuildTool = tool({
 	name: "get_build",
 	title: "Build details",
 	description:
-		"One build by number (e.g. B-0001). A done build returns its as-built record (consumed components with serials and frozen unit costs, and which build made each serial sub-assembly). An open build returns its pick list from current stock: components, shortfalls, serials to scan, sub-assemblies taken from stock or built, and problems blocking completion. Every build lists the files to make it: its assembly revision's, then the part's own.",
+		"One build by number (e.g. B-0001). A done build returns its as-built record (consumed components with serials and frozen unit costs, and which build made each serial sub-assembly). An open build returns its pick list from current stock: components, shortfalls, serials to scan, sub-assemblies taken from stock or built, and problems blocking completion. A build in options shows them (options, and choices for the components its recipe leaves to the build), as do its pick list and as-built lines. Every build lists the files to make it: its assembly revision's, then the part's own.",
 	rule: { scope: "builds:read" },
 	input: z.object({ number: z.string().trim().min(1).max(32).describe('The build number, e.g. "B-0001".') }),
 	run: async (a, { db, origin }) => {
 		const { build, part, assembly } = await buildByNumber(db, a.number);
 		const [revisionFiles, ownFiles] = await Promise.all([assemblyFiles(db, assembly.id), partFiles(db, part.id)]);
 		const files = [...filesView(revisionFiles, origin, "assembly"), ...filesView(ownFiles, origin, "part")];
+		const [graph, picks] = await Promise.all([loadGraph(db), buildPicks(db, build.id)]);
 		const header = {
 			number: build.number,
 			status: build.status,
@@ -466,6 +527,9 @@ const getBuildTool = tool({
 			unit: part.unit,
 			qtyMilli: build.qtyMilli,
 			serial: build.serial,
+			// The values it makes and the values chosen for the components its recipe leaves to the build (D185, D187).
+			options: optionsView(graph.parts.get(part.id)?.options ?? [], build.optionValues),
+			choices: choicesView(graph.parts, picks),
 			assembly: { assemblyId: assembly.id, code: assembly.code, revision: assembly.revision },
 			plannedFor: build.plannedFor,
 			doneAt: build.doneAt,
@@ -490,6 +554,7 @@ const getBuildTool = tool({
 					name: l.name,
 					kind: l.kind,
 					unit: l.unit,
+					options: optionsView(graph.parts.get(l.line.partId)?.options ?? [], l.line.optionValues),
 					qtyMilli: l.line.qtyMilli,
 					serial: l.line.serial,
 					unitCostCents: l.line.unitCostCents,
@@ -502,17 +567,18 @@ const getBuildTool = tool({
 			};
 		}
 		if (build.status === "cancelled") return { build: header, files };
-		const [graph, onHand] = await Promise.all([loadGraph(db), onHandAt(db)]);
-		const pick = exploding(() => buildPickList(graph, onHand, build, part, {}, false));
+		const onHand = await onHandByKey(db);
+		const pick = exploding(() => buildPickList(graph, onHand, { ...build, picks }, part, {}, false));
 		return {
 			build: header,
 			pickList: pick.explosion.requirements.map((r) => {
-				const stock = onHand.get(r.part.id) ?? 0;
+				const stock = onHand.get(stockKey(r.part.id, r.optionValues)) ?? 0;
 				return {
 					ref: r.part.ref,
 					name: r.part.name,
 					kind: r.part.kind,
 					unit: r.part.unit,
+					options: optionsView(r.part.options, r.optionValues),
 					qtyMilli: r.qtyMilli,
 					onHandMilli: stock,
 					shortMilli: Math.max(0, r.qtyMilli - Math.max(0, stock)),
@@ -522,6 +588,7 @@ const getBuildTool = tool({
 			}),
 			subAssemblies: makeNodes(pick.explosion).map((n) => ({
 				ref: n.part.ref,
+				options: optionsView(n.part.options, n.optionValues),
 				// The node's path in the assembly tree: complete_build can take or build each one separately.
 				path: n.path,
 				qtyMilli: n.qtyMilli,
@@ -543,17 +610,22 @@ const getShortages = tool({
 	name: "get_shortages",
 	title: "Shortages",
 	description:
-		"What to make and what to buy for all planned and in-progress builds. to_make: made parts (sub-assemblies, printed parts) the builds need beyond stock and the builds already planned for them, deepest first (make them first), rounded up to whole runs, with their machine time. suppliers: per purchased part, need − on hand − on order, rounded up to the preferred supplier's MOQ and pack size, grouped by supplier. Also lists make or kit parts that must be built but have no active assembly, and the machine time the builds need per machine type (what is to make counted in whole runs), with the number of machines in service.",
+		"What to make and what to buy for all planned and in-progress builds. to_make: made parts (sub-assemblies, printed parts) the builds need beyond stock and the builds already planned for them, deepest first (make them first), rounded up to whole runs, with their machine time. suppliers: per purchased part, need − on hand − on order, rounded up to the preferred supplier's MOQ and pack size, grouped by supplier. A part with options is listed once per values (options), each rounded on its own; missingValues lists values a build asks of a component that does not come in them (nothing is ordered for those). Also lists make or kit parts that must be built but have no active assembly, and the machine time the builds need per machine type (what is to make counted in whole runs), with the number of machines in service.",
 	rule: { scope: "purchasing:read" },
 	input: z.object({}),
 	run: async (_a, { db }) => {
 		const s = await computeShortages(db);
+		// A missing assembly names its part by reference only (D191): its options come from the catalogue.
+		const optionsOfRef = new Map<string, OptionDef[]>();
+		if (s.missingAssemblies.some((m) => m.optionValues))
+			for (const p of (await loadGraph(db)).parts.values()) optionsOfRef.set(p.ref, p.options);
 		return {
 			openBuilds: s.buildCount,
 			toMake: s.toMake.map((l) => ({
 				ref: l.part.ref,
 				name: l.part.name,
 				unit: l.part.unit,
+				options: optionsView(l.part.options, l.optionValues),
 				shortMilli: l.shortMilli,
 				onHandMilli: l.onHandMilli,
 				plannedMilli: l.plannedMilli,
@@ -570,6 +642,7 @@ const getShortages = tool({
 					ref: l.part.ref,
 					name: l.part.name,
 					unit: l.part.unit,
+					options: optionsView(l.part.options, l.optionValues),
 					needMilli: l.needMilli,
 					onHandMilli: l.onHandMilli,
 					onOrderMilli: l.onOrderMilli,
@@ -586,7 +659,16 @@ const getShortages = tool({
 			missingAssemblies: s.missingAssemblies.map((m) => ({
 				ref: m.ref,
 				name: m.name,
+				options: optionsView(optionsOfRef.get(m.ref) ?? [], m.optionValues),
 				qtyMilli: m.qtyMilli,
+				builds: m.builds,
+			})),
+			// Values open builds ask of a component that does not come in them: nothing is ordered for those.
+			missingValues: s.missingValues.map((m) => ({
+				ref: m.ref,
+				name: m.name,
+				option: m.option,
+				value: m.value,
 				builds: m.builds,
 			})),
 			machineTime: s.machines.map((m) => ({
@@ -661,6 +743,7 @@ const getPurchaseOrder = tool({
 				ref: l.ref,
 				name: l.name,
 				unit: l.unit,
+				options: optionsView(l.options, l.line.optionValues),
 				supplierRef: l.supplierRef || undefined,
 				qtyMilli: l.line.qtyMilli,
 				receivedMilli: l.line.receivedQtyMilli,

@@ -3,6 +3,7 @@ import { assemblies, type Part, parts, stockMoves, suppliers } from "../../db/sc
 import { formatCentsInput, formatQtyInput } from "../../lib/units";
 import { validate } from "../../lib/validation";
 import { NO_TERMS, type OfferTerms, preferredTerms } from "../offers";
+import { loadOptions } from "../options";
 import {
 	type PartInput,
 	partInput,
@@ -82,12 +83,13 @@ export const partsImporter: Importer = {
 		const { errors, warnings } = checkHeader(this, table);
 		if (errors.length) return emptyPlan("parts", errors, warnings);
 
-		const [allParts, allSuppliers, withMoves, withAssemblies, offers] = await Promise.all([
+		const [allParts, allSuppliers, withMoves, withAssemblies, offers, options] = await Promise.all([
 			db.select().from(parts),
 			db.select({ id: suppliers.id, name: suppliers.name }).from(suppliers),
 			db.select({ partId: stockMoves.partId }).from(stockMoves).groupBy(stockMoves.partId),
 			db.select({ partId: assemblies.parentPartId }).from(assemblies).groupBy(assemblies.parentPartId),
 			preferredTerms(db),
+			loadOptions(db),
 		]);
 		const byRef = new Map(allParts.map((p) => [p.ref, p]));
 		const byLowerRef = new Map(allParts.map((p) => [p.ref.toLowerCase(), p]));
@@ -139,6 +141,7 @@ export const partsImporter: Importer = {
 					{
 						hasMoves: current ? hasMoves.has(current.id) : false,
 						hasAssemblies: current ? ownsAssemblies.has(current.id) : false,
+						hasOptions: current ? (options.get(current.id)?.length ?? 0) > 0 : false,
 					},
 				);
 				lineIssues.push(...fieldIssues(rec.line, rules, fieldToColumn));

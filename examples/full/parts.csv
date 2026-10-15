@@ -26,3 +26,6 @@ MANUAL,User manual (printed),buy,pcs,,,,,,,,,no,Cost not known yet: roll-ups sho
 FEE-WEEE,WEEE eco-fee,fee,pcs,0.25,,,,,,,,no,Counted in cost only
 PLA-BLACK,PLA filament black 1.75mm,buy,kg,20.00,,Filament Hub,PLA-175-BK,1,1,5,,no,Bought by the 1 kg spool
 LAMP-CLIP,Cable clip (3D printed),make,pcs,,2.00,,,,,,,no,"Printed in-house, 24 per plate; also sold as a spare"
+LAMP-MINI,Mini desk lamp,make,pcs,,39.00,,,,,,,no,"In white or black: its head and front cover follow the colour"
+MINI-HEAD,Mini lamp head,make,pcs,,,,,,,,,no,"Pre-built and stocked per colour"
+MINI-COVER,Mini lamp front cover,buy,pcs,1.40,,Lumen Parts Co,LM-MC60,20,10,14,,no,"Moulded, bought per colour"

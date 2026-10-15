@@ -107,6 +107,12 @@ const RESULT_FIELDS = [
 	"download_path",
 	"download_url",
 	"attached_to",
+	// Part options (D193).
+	"stock_by_options",
+	"by_options",
+	"missing_values",
+	"missing_value",
+	"total_on_hand",
 ];
 
 function inputFields(): Set<string> {

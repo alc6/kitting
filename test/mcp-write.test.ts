@@ -9,6 +9,8 @@ import { revertChangeSet } from "../src/domain/revert";
 import { TOOL_BY_NAME, TOOLS } from "../src/mcp/tools";
 import {
 	assemblyId,
+	insertPart,
+	insertSupplier,
 	loadDemo,
 	NOT_ADMIN,
 	one,
@@ -16,11 +18,14 @@ import {
 	postForm,
 	request,
 	rows,
+	seedSql,
 	setRole,
+	stmt,
 	TESTER,
 	testDb,
 } from "./helpers";
 import { callTool, connect, mcpPost, resetKv, rpc } from "./mcp-helpers";
+import { addOption, adjustViaForm, insertAssembly, nightLight, optionId, valueId } from "./mcp-options-fixture";
 
 const ADMIN: Access = { role: "admin", seeCosts: true };
 
@@ -1323,5 +1328,507 @@ describe("recent changes over MCP", () => {
 		expect(imports[0]).not.toHaveProperty("changes");
 		const mine = await callTool(token, "list_recent_changes", { source: "mcp", query: "BOX-LAMP" });
 		expect((mine.data.changes as Change[]).map((c) => c.summary)).toEqual(["Edit part BOX-LAMP"]);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Part options (D193)
+
+describe("tools with part options", () => {
+	/** On-hand of a part in one value of its Colour (the key is the value id), or in total. */
+	async function stockIn(ref: string, value?: string): Promise<number> {
+		const key = value === undefined ? null : String(await valueId(ref, value));
+		const r = await one<{ q: number | null }>(
+			`SELECT SUM(m.qty_milli) AS q FROM stock_moves m JOIN parts p ON p.id = m.part_id
+			 WHERE p.ref = ? AND (? IS NULL OR m.option_values = ?)`,
+			ref,
+			key,
+			key,
+		);
+		return r.q ?? 0;
+	}
+
+	/** Makes the head's cover line leave Colour to the build (chosen when planned), and lets the cover follow nothing. */
+	async function coverChosenWhenPlanned(n: Awaited<ReturnType<typeof nightLight>>) {
+		await seedSql(
+			stmt(
+				"UPDATE assembly_lines SET chosen_option_ids = ? WHERE assembly_id = ? AND component_part_id = ?",
+				String(await optionId("NL-COVER")),
+				n.headAssembly,
+				n.cover,
+			),
+		);
+	}
+
+	it("adjusts stock in a value, refusing a missing, unknown or misplaced option with the values that exist", async () => {
+		const n = await nightLight();
+		const token = await connect(["stock:write"]);
+		const r = await write(token, "adjust_stock", {
+			ref: "nl-cover",
+			options: { colour: " Black " },
+			qty: "4",
+			note: "Found",
+		});
+		expect(r.data).toMatchObject({
+			part: "NL-COVER",
+			options: { Colour: "black" },
+			qty: "4",
+			on_hand: "4",
+			total_on_hand: "4",
+		});
+		await write(token, "adjust_stock", { ref: "NL-COVER", options: { Colour: "white" }, qty: "3", note: "Found" });
+		const second = await write(token, "adjust_stock", {
+			ref: "NL-COVER",
+			options: { Colour: "black" },
+			qty: "-1",
+			note: "Scrapped",
+		});
+		expect(second.data).toMatchObject({ on_hand: "3", total_on_hand: "6" });
+		expect([await stockIn("NL-COVER", "black"), await stockIn("NL-COVER", "white")]).toEqual([3000, 3000]);
+		const move = await one<{ option_values: string }>("SELECT option_values FROM stock_moves ORDER BY id DESC LIMIT 1");
+		expect(move.option_values).toBe(String(await valueId("NL-COVER", "black")));
+
+		const refused = async (args: Record<string, unknown>, text: string) => {
+			const res = await callTool(token, "adjust_stock", { qty: "1", note: "x", ...args });
+			expect(res.isError, JSON.stringify(args)).toBe(true);
+			expect(res.text).toContain(text);
+		};
+		await refused(
+			{ ref: "NL-COVER" },
+			"NL-COVER options: Choose a value for Colour. Values: white, black (default white).",
+		);
+		await refused({ ref: "NL-COVER", options: {} }, "Choose a value for Colour.");
+		await refused({ ref: "NL-COVER", options: { Colour: "red" } }, "Colour has no value “red”. Values: white, black.");
+		await refused({ ref: "NL-COVER", options: { Size: "L" } }, "This part has no option “Size”. Options: Colour.");
+		await refused({ ref: "NL-SCREW", options: { Colour: "white" } }, "NL-SCREW options: This part has no options");
+		expect(await stockIn("NL-COVER")).toBe(6000);
+		// Undone by a reverse adjustment in the same value.
+		await write(token, "adjust_stock", { ref: "NL-COVER", options: { Colour: "white" }, qty: "-3", note: "Back out" });
+		expect(await stockIn("NL-COVER", "white")).toBe(0);
+		expect(n.cover).toBeGreaterThan(0);
+	});
+
+	it("counts a part per values: one entry for each, only those touched", async () => {
+		await nightLight();
+		await adjustViaForm("NL-COVER", "5", "white");
+		await adjustViaForm("NL-COVER", "3", "black");
+		const token = await connect(["stock:write"]);
+		const bad = await callTool(token, "count_stock", {
+			counts: [
+				{ ref: "NL-COVER", qty: "4" },
+				{ ref: "NL-COVER", options: { Colour: "white" }, qty: "4" },
+				{ ref: "nl-cover", options: { Colour: "white" }, qty: "1" },
+				{ ref: "NL-COVER", options: { Colour: "teal" }, qty: "1" },
+			],
+		});
+		expect(bad.isError).toBe(true);
+		expect(bad.text).toContain("line 1 (NL-COVER) options: Choose a value for Colour.");
+		expect(bad.text).toContain("line 3 (nl-cover): listed twice in these options.");
+		expect(bad.text).toContain("Colour has no value “teal”");
+		expect(await stockIn("NL-COVER")).toBe(8000);
+
+		const r = await write(token, "count_stock", {
+			counts: [
+				{ ref: "NL-COVER", options: { Colour: "white" }, qty: "4" },
+				{ ref: "NL-COVER", options: { Colour: "black" }, qty: "3" },
+			],
+		});
+		expect(r.data.adjusted).toBe(1);
+		expect(r.data.counts).toEqual([
+			{ ref: "NL-COVER", unit: "pcs", options: { Colour: "white" }, previous: "5", counted: "4", adjustment: "-1" },
+			{ ref: "NL-COVER", unit: "pcs", options: { Colour: "black" }, previous: "3", counted: "3", adjustment: "0" },
+		]);
+		expect([await stockIn("NL-COVER", "white"), await stockIn("NL-COVER", "black")]).toEqual([4000, 3000]);
+	});
+
+	it("plans a build in a value with the choices of its components, and stores both", async () => {
+		const n = await nightLight();
+		await coverChosenWhenPlanned(n);
+		const token = await connect(["builds:read", "builds:write"]);
+		const refused = async (args: Record<string, unknown>, text: string) => {
+			const res = await callTool(token, "plan_build", { ref: "NL-LIGHT", ...args });
+			expect(res.isError, JSON.stringify(args)).toBe(true);
+			expect(res.text).toContain(text);
+		};
+		const choices = [{ ref: "NL-COVER", options: { Colour: "black" } }];
+		await refused({ choices }, "NL-LIGHT options: Choose a value for Colour.");
+		await refused({ options: { Colour: "white" } }, "choices: NL-COVER needs a value for Colour");
+		await refused(
+			{ options: { Colour: "white" }, choices: [{ ref: "NL-COVER", options: {} }] },
+			"choices NL-COVER: Choose a value for Colour.",
+		);
+		await refused(
+			{ options: { Colour: "white" }, choices: [{ ref: "NL-COVER", options: { Colour: "red" } }] },
+			"choices NL-COVER: Colour has no value “red”",
+		);
+		await refused(
+			{ options: { Colour: "white" }, choices: [...choices, { ref: "NL-SCREW", options: { Colour: "red" } }] },
+			"choices NL-SCREW: no recipe line of this assembly leaves options of NL-SCREW to the build",
+		);
+		await refused(
+			{ options: { Colour: "white" }, choices: [...choices, ...choices] },
+			"choices NL-COVER: listed twice.",
+		);
+		await refused({ options: { Colour: "mauve" }, choices }, "Colour has no value “mauve”");
+		expect(await rows("SELECT id FROM builds")).toEqual([]);
+
+		const r = await write(token, "plan_build", { ref: "NL-LIGHT", qty: "2", options: { Colour: "white" }, choices });
+		expect(r.data.build).toMatchObject({
+			part: "NL-LIGHT",
+			qty: "2",
+			options: { Colour: "white" },
+			choices: [{ ref: "NL-COVER", options: { Colour: "black" } }],
+		});
+		const build = await one<{ id: number; option_values: string }>("SELECT id, option_values FROM builds");
+		expect(build.option_values).toBe(String(await valueId("NL-LIGHT", "white")));
+		expect(
+			await rows("SELECT p.ref, c.option_values FROM build_option_choices c JOIN parts p ON p.id = c.part_id"),
+		).toEqual([{ ref: "NL-COVER", option_values: String(await valueId("NL-COVER", "black")) }]);
+		// One change set for the build and its choices; undoing it removes both.
+		const sets = await rows<{ id: number }>("SELECT id FROM change_sets WHERE summary LIKE 'Plan build%'");
+		expect(sets).toHaveLength(1);
+		expect(await undo((sets[0] as { id: number }).id)).toMatchObject({ ok: true });
+		expect(await rows("SELECT id FROM builds")).toEqual([]);
+		expect(await rows("SELECT id FROM build_option_choices")).toEqual([]);
+	});
+
+	it("refuses a value a component does not come in, and options on a product that has none", async () => {
+		const n = await nightLight();
+		// A plain light whose only component is a cover that comes in white and grey.
+		const plain = await insertPart("NL-PLAIN", "make");
+		const coverWg = await insertPart("NL-COVER-WG", "buy");
+		await insertAssembly(plain, [[coverWg, 1000]]);
+		await addOption(plain, "Colour", ["white", "black"]);
+		await addOption(coverWg, "Colour", ["white", "grey"]);
+		const token = await connect(["builds:write"]);
+		const res = await callTool(token, "plan_build", { ref: "NL-PLAIN", options: { Colour: "black" } });
+		expect(res.isError).toBe(true);
+		expect(res.text).toContain("NL-COVER-WG does not come in Colour black.");
+		// A product without options takes none.
+		await seedSql(stmt("UPDATE parts SET kind = 'make' WHERE ref = 'NL-SCREW'"));
+		await insertAssembly(n.screw, [[n.cover, 1000]]);
+		const none = await callTool(token, "plan_build", { ref: "NL-SCREW", options: { Colour: "white" } });
+		expect(none.isError).toBe(true);
+		expect(none.text).toContain("NL-SCREW options: This part has no options");
+		const ok = await callTool(token, "plan_build", { ref: "NL-LIGHT", options: { Colour: "white" } });
+		expect(ok.isError).toBe(false);
+	});
+
+	it("records a build in a value: the stock of that value is consumed and produced", async () => {
+		const n = await nightLight();
+		await adjustViaForm("NL-COVER", "3", "black");
+		await adjustViaForm("NL-COVER", "3", "white");
+		await adjustViaForm("NL-SCREW", "10");
+		const token = await connect(["builds:write"]);
+		const missing = await callTool(token, "record_build", { ref: "NL-LIGHT" });
+		expect(missing.text).toContain("NL-LIGHT options: Choose a value for Colour.");
+		const r = await write(token, "record_build", { ref: "NL-LIGHT", qty: "2", options: { Colour: "black" } });
+		expect(r.data.build).toMatchObject({ part: "NL-LIGHT", status: "done", qty: "2", options: { Colour: "black" } });
+		expect(r.data.as_built).toContainEqual(
+			expect.objectContaining({ ref: "NL-COVER", options: { Colour: "black" }, qty: "2" }),
+		);
+		// The heads were built now in black: only the white cover is left untouched.
+		expect(JSON.stringify(r.data.as_built)).not.toContain("white");
+		expect([await stockIn("NL-COVER", "black"), await stockIn("NL-COVER", "white")]).toEqual([1000, 3000]);
+		expect([await stockIn("NL-LIGHT", "black"), await stockIn("NL-LIGHT", "white")]).toEqual([2000, 0]);
+		expect(n.light).toBeGreaterThan(0);
+	});
+
+	it("completes a build with serials of a part used in several values, matched by ref and options", async () => {
+		const n = await nightLight();
+		// The light also takes two serial-tracked LEDs: one that follows the light's colour, one always black.
+		const led = await insertPart("NL-LED", "buy", { trackSerial: true });
+		await addOption(led, "Colour", ["white", "black"]);
+		await seedSql(
+			stmt(
+				"INSERT INTO assembly_lines (assembly_id, component_part_id, qty_milli, position, created_by, updated_by) VALUES (?, ?, 1000, 3, 'seed', 'seed')",
+				n.lightAssembly,
+				led,
+			),
+			stmt(
+				"INSERT INTO assembly_lines (assembly_id, component_part_id, qty_milli, position, fixed_option_values, created_by, updated_by) VALUES (?, ?, 1000, 4, ?, 'seed', 'seed')",
+				n.lightAssembly,
+				led,
+				String(await valueId("NL-LED", "black")),
+			),
+		);
+		await adjustViaForm("NL-COVER", "2", "white");
+		await adjustViaForm("NL-SCREW", "10");
+		await adjustViaForm("NL-LED", "1", "white", "W-1");
+		await adjustViaForm("NL-LED", "1", "black", "B-1");
+		const token = await connect(["builds:read", "builds:write"]);
+		const planned = await write(token, "plan_build", { ref: "NL-LIGHT", options: { Colour: "white" } });
+		const number = (planned.data.build as { number: string }).number;
+		const pick = await callTool(token, "get_build", { number });
+		const leds = (
+			pick.data.pick_list as { ref: string; options?: Record<string, string>; serials_to_scan?: number }[]
+		).filter((l) => l.ref === "NL-LED");
+		expect(leds).toEqual([
+			expect.objectContaining({ options: { Colour: "white" }, serials_to_scan: 1 }),
+			expect.objectContaining({ options: { Colour: "black" }, serials_to_scan: 1 }),
+		]);
+
+		const ambiguous = await callTool(token, "complete_build", {
+			number,
+			serials: [{ ref: "NL-LED", serials: ["W-1"] }],
+		});
+		expect(ambiguous.isError).toBe(true);
+		expect(ambiguous.text).toContain(
+			"Serials of NL-LED: there are several, with options (Colour: white) or (Colour: black)",
+		);
+		const wrong = await callTool(token, "complete_build", {
+			number,
+			serials: [{ ref: "NL-LED", options: { Colour: "white" }, serials: ["W-1", "W-2"] }],
+		});
+		expect(wrong.text).toContain("NL-LED (Colour: white): 2 serials given, 1 needed.");
+		expect(wrong.text).toContain("NL-LED (Colour: black) serial 1: Serial required.");
+		const twice = await callTool(token, "complete_build", {
+			number,
+			serials: [
+				{ ref: "NL-LED", options: { Colour: "white" }, serials: ["W-1"] },
+				{ ref: "NL-LED", options: { Colour: "white" }, serials: ["W-1"] },
+			],
+		});
+		expect(twice.text).toContain("Serials of NL-LED are listed twice in these options.");
+
+		const done = await write(token, "complete_build", {
+			number,
+			serials: [
+				{ ref: "NL-LED", options: { Colour: "white" }, serials: ["W-1"] },
+				{ ref: "NL-LED", options: { Colour: "black" }, serials: ["B-1"] },
+			],
+		});
+		expect(done.data.build).toMatchObject({ status: "done", options: { Colour: "white" } });
+		expect(done.data.as_built).toContainEqual(
+			expect.objectContaining({ ref: "NL-LED", options: { Colour: "black" }, serial: "B-1" }),
+		);
+		expect(done.data.as_built).toContainEqual(
+			expect.objectContaining({ ref: "NL-LED", options: { Colour: "white" }, serial: "W-1" }),
+		);
+		expect(await stockIn("NL-LIGHT", "white")).toBe(1000);
+		expect(await stockIn("NL-LED")).toBe(0);
+	});
+
+	it("drafts POs per values, orders one from another supplier by options, and edits and receives by ref and options", async () => {
+		const n = await nightLight();
+		const other = await insertSupplier("Other Works");
+		await seedSql(
+			stmt(
+				"INSERT INTO part_suppliers (part_id, supplier_id, price_cents, moq_milli, pack_size_milli, created_by, updated_by) VALUES (?, ?, 170, 1000, 0, 'seed', 'seed')",
+				n.cover,
+				other,
+			),
+		);
+		await adjustViaForm("NL-SCREW", "100");
+		const token = await connect(["builds:read", "builds:write", "purchasing:read", "purchasing:write"]);
+		for (const colour of ["white", "black"])
+			await write(token, "plan_build", { ref: "NL-LIGHT", qty: "3", options: { Colour: colour } });
+		const short = await callTool(token, "get_shortages", {});
+		const cover = (
+			short.data.suppliers as { lines: { ref: string; options: Record<string, string>; order: string }[] }[]
+		)
+			.flatMap((g) => g.lines)
+			.filter((l) => l.ref === "NL-COVER");
+		// 3 per colour, rounded to the MOQ of 5 on its own.
+		expect(cover.map((l) => [l.options.Colour, l.order])).toEqual([
+			["white", "5"],
+			["black", "5"],
+		]);
+
+		const unclear = await callTool(token, "create_draft_pos", {
+			order_from: [{ ref: "NL-COVER", supplier: "Other Works" }],
+		});
+		expect(unclear.text).toContain(
+			"NL-COVER to order: there are several, with options (Colour: white) or (Colour: black).",
+		);
+		const notShort = await callTool(token, "create_draft_pos", {
+			order_from: [{ ref: "NL-COVER", options: { Colour: "teal" }, supplier: "Other Works" }],
+		});
+		expect(notShort.text).toContain("Colour has no value “teal”");
+		const drafted = await write(token, "create_draft_pos", {
+			order_from: [{ ref: "NL-COVER", options: { Colour: "black" }, supplier: "Other Works" }],
+		});
+		type Draft = {
+			purchase_order: { number: string; supplier: string };
+			lines: { ref: string; options?: { Colour: string }; qty: string; unit_price?: string }[];
+		};
+		const pos = drafted.data.purchase_orders as Draft[];
+		const mainPo = pos.find((p) => p.purchase_order.supplier === "Cover Works") as Draft;
+		const otherPo = pos.find((p) => p.purchase_order.supplier === "Other Works") as Draft;
+		expect(mainPo.lines).toEqual([
+			expect.objectContaining({ ref: "NL-COVER", options: { Colour: "white" }, qty: "5" }),
+		]);
+		expect(otherPo.lines).toEqual([
+			expect.objectContaining({ ref: "NL-COVER", options: { Colour: "black" }, qty: "3", unit_price: "1.70" }),
+		]);
+
+		// A part on several lines: options say which; a new line needs a value of every option.
+		const number = mainPo.purchase_order.number;
+		const second = await write(token, "update_draft_po", {
+			number,
+			lines: [{ ref: "NL-COVER", options: { Colour: "black" }, qty: "5" }],
+		});
+		expect((second.data.lines as { options: { Colour: string } }[]).map((l) => l.options.Colour)).toEqual([
+			"white",
+			"black",
+		]);
+		const noOptions = await callTool(token, "update_draft_po", { number, lines: [{ ref: "NL-COVER", qty: "6" }] });
+		expect(noOptions.text).toContain(
+			"NL-COVER on " +
+				number +
+				": there are several, with options (Colour: white) or (Colour: black). Give options to say which.",
+		);
+		const changed = await write(token, "update_draft_po", {
+			number,
+			lines: [{ ref: "NL-COVER", options: { colour: "WHITE" }, qty: "6", price: "1.55" }],
+		});
+		expect(changed.data.lines).toContainEqual(
+			expect.objectContaining({ ref: "NL-COVER", options: { Colour: "white" }, qty: "6", unit_price: "1.55" }),
+		);
+		const removed = await write(token, "update_draft_po", {
+			number,
+			lines: [{ ref: "NL-COVER", options: { Colour: "black" }, qty: "0" }],
+		});
+		expect((removed.data.lines as unknown[]).length).toBe(1);
+		// On one line only, the options may be left out; a new line of a part with options needs a value of each.
+		const single = await write(token, "update_draft_po", { number, lines: [{ ref: "NL-COVER", qty: "7" }] });
+		expect(single.data.lines).toEqual([
+			expect.objectContaining({ ref: "NL-COVER", options: { Colour: "white" }, qty: "7" }),
+		]);
+		const missingValue = await callTool(token, "update_draft_po", {
+			number: otherPo.purchase_order.number,
+			lines: [{ ref: "NL-HEAD", qty: "1" }],
+		});
+		expect(missingValue.isError).toBe(true);
+		expect(missingValue.text).toContain("line 1 (NL-HEAD) options: Choose a value for Colour.");
+		const twice = await callTool(token, "update_draft_po", {
+			number,
+			lines: [
+				{ ref: "NL-COVER", options: { Colour: "white" }, qty: "2" },
+				{ ref: "NL-COVER", options: { Colour: "white" }, qty: "3" },
+			],
+		});
+		expect(twice.text).toContain("line 2 (NL-COVER): listed twice.");
+
+		// Receiving: the line is found by ref and options; the stock goes up in its values only.
+		await write(token, "mark_po_sent", { number });
+		const absent = await callTool(token, "receive_po", {
+			number,
+			lines: [{ ref: "NL-COVER", options: { Colour: "black" }, qty: "1" }],
+		});
+		expect(absent.isError).toBe(true);
+		expect(absent.text).toContain(`NL-COVER is not on ${number} in these options`);
+		// A part that has options but is not on the PO is not on it, whatever the options given.
+		const notOnPo = await callTool(token, "receive_po", {
+			number,
+			lines: [{ ref: "NL-HEAD", options: { Colour: "white" }, qty: "1" }],
+		});
+		expect(notOnPo.text).toContain(`NL-HEAD is not on ${number} in these options`);
+		const headNotShort = await callTool(token, "create_draft_pos", {
+			order_from: [{ ref: "NL-HEAD", options: { Colour: "white" }, supplier: "Other Works" }],
+		});
+		expect(headNotShort.text).toContain("NL-HEAD is not short in these options");
+		const received = await write(token, "receive_po", {
+			number,
+			lines: [{ ref: "NL-COVER", options: { Colour: "white" }, qty: "4" }],
+		});
+		expect(received.data.received).toEqual([{ ref: "NL-COVER", options: { Colour: "white" }, qty: "4" }]);
+		expect(received.data.lines).toContainEqual(
+			expect.objectContaining({ options: { Colour: "white" }, received: "4", remaining: "3" }),
+		);
+		expect([await stockIn("NL-COVER", "white"), await stockIn("NL-COVER", "black")]).toEqual([4000, 0]);
+		// The other PO has a black line only: its line is the only one, so options may be left out.
+		await write(token, "mark_po_sent", { number: otherPo.purchase_order.number });
+		const black = await write(token, "receive_po", {
+			number: otherPo.purchase_order.number,
+			lines: [{ ref: "NL-COVER", qty: "3" }],
+		});
+		expect(black.data.received).toEqual([{ ref: "NL-COVER", options: { Colour: "black" }, qty: "3" }]);
+		expect(await stockIn("NL-COVER", "black")).toBe(3000);
+	});
+
+	it("sets what a recipe line does with its component's options: fixed, chosen when planned, or follows", async () => {
+		const n = await nightLight();
+		const token = await connect(["catalog:read", "catalog:write"]);
+		const r = await write(token, "set_assembly_lines", {
+			assembly: "NL-HEAD",
+			lines: [
+				{ ref: "NL-COVER", qty: "1", fixed: { colour: "Black" } },
+				{ ref: "NL-SCREW", qty: "2" },
+			],
+		});
+		expect(r.data.lines).toEqual([
+			{ ref: "NL-COVER", qty: "1", fixed: { Colour: "black" } },
+			{ ref: "NL-SCREW", qty: "2" },
+		]);
+		expect(r.data.new_revision).toBe(true);
+		const draft = (r.data.assembly as { assembly_id: number }).assembly_id;
+		const stored = await one<{ fixed_option_values: string | null; chosen_option_ids: string | null }>(
+			"SELECT fixed_option_values, chosen_option_ids FROM assembly_lines WHERE assembly_id = ? AND component_part_id = ?",
+			draft,
+			n.cover,
+		);
+		expect(stored).toEqual({
+			fixed_option_values: String(await valueId("NL-COVER", "black")),
+			chosen_option_ids: null,
+		});
+
+		const chosen = await write(token, "set_assembly_lines", {
+			assembly: draft,
+			lines: [
+				{ ref: "NL-COVER", qty: "1", choose: ["Colour"] },
+				{ ref: "NL-SCREW", qty: "2" },
+			],
+		});
+		expect(chosen.data.lines).toEqual([
+			{ ref: "NL-COVER", qty: "1", choose: ["Colour"] },
+			{ ref: "NL-SCREW", qty: "2" },
+		]);
+		// Read back by get_assembly: the rule and the value the line resolves to (the default here, as a build is not planned).
+		await write(token, "activate_assembly", { assembly: draft });
+		const tree = await callTool(token, "get_assembly", { assembly: "NL-HEAD" });
+		expect((tree.data.lines as { ref: string }[])[0]).toMatchObject({
+			ref: "NL-COVER",
+			choose: ["Colour"],
+			options: { Colour: "white" },
+		});
+		// A line sent without rules keeps those of the line it replaces; empty rules make it follow the build again.
+		const kept = await write(token, "set_assembly_lines", {
+			assembly: "NL-HEAD",
+			lines: [
+				{ ref: "NL-COVER", qty: "1" },
+				{ ref: "NL-SCREW", qty: "2" },
+			],
+		});
+		expect((kept.data.lines as object[])[0]).toEqual({ ref: "NL-COVER", qty: "1", choose: ["Colour"] });
+		const kept2 = (kept.data.assembly as { revision: string }).revision;
+		const follows = await write(token, "set_assembly_lines", {
+			assembly: "NL-HEAD",
+			revision: kept2,
+			lines: [
+				{ ref: "NL-COVER", qty: "1", fixed: {}, choose: [] },
+				{ ref: "NL-SCREW", qty: "2" },
+			],
+		});
+		expect((follows.data.lines as object[])[0]).toEqual({ ref: "NL-COVER", qty: "1" });
+
+		const refused = async (line: Record<string, unknown>, text: string) => {
+			const res = await callTool(token, "set_assembly_lines", { assembly: "NL-HEAD", lines: [{ qty: "1", ...line }] });
+			expect(res.isError, JSON.stringify(line)).toBe(true);
+			expect(res.text).toContain("Refused, nothing was changed.");
+			expect(res.text).toContain(text);
+		};
+		await refused(
+			{ ref: "NL-COVER", fixed: { Colour: "red" } },
+			"line 1 (NL-COVER) fixed: Colour has no value “red”. Values: white, black.",
+		);
+		await refused({ ref: "NL-COVER", fixed: { Size: "L" } }, "This part has no option “Size”");
+		await refused({ ref: "NL-COVER", choose: ["Size"] }, "line 1 (NL-COVER) choose: This part has no option “Size”");
+		await refused(
+			{ ref: "NL-COVER", fixed: { Colour: "black" }, choose: ["Colour"] },
+			"Colour cannot be both fixed and chosen when planned.",
+		);
+		await refused({ ref: "NL-SCREW", fixed: { Colour: "black" } }, "line 1 (NL-SCREW) fixed: This part has no options");
+		await refused({ ref: "NL-SCREW", choose: ["Colour"] }, "line 1 (NL-SCREW) choose: This part has no options");
 	});
 });

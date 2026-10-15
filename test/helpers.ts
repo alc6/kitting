@@ -4,6 +4,7 @@ import { drizzle } from "drizzle-orm/d1";
 import demoAssemblies from "../examples/full/assemblies.csv?raw";
 import demoMachineTypes from "../examples/full/machine_types.csv?raw";
 import demoMachines from "../examples/full/machines.csv?raw";
+import demoPartOptions from "../examples/full/part_options.csv?raw";
 import demoOffers from "../examples/full/part_suppliers.csv?raw";
 import demoParts from "../examples/full/parts.csv?raw";
 import demoStock from "../examples/full/stock.csv?raw";
@@ -25,6 +26,7 @@ const TABLES = [
 	"settings",
 	"build_lines",
 	"build_machine_times",
+	"build_option_choices",
 	"builds",
 	"po_lines",
 	"po_shipments",
@@ -38,6 +40,8 @@ const TABLES = [
 	"machines",
 	"machine_rate_history",
 	"machine_types",
+	"part_option_values",
+	"part_options",
 	"parts",
 	"suppliers",
 ];
@@ -214,6 +218,7 @@ export async function insertMove(partId: number, qtyMilli: number, reason = "adj
 export const DEMO = {
 	suppliers: demoSuppliers,
 	parts: demoParts,
+	part_options: demoPartOptions,
 	part_suppliers: demoOffers,
 	machine_types: demoMachineTypes,
 	machines: demoMachines,
@@ -247,6 +252,7 @@ export async function importCsv(type: ImportType, csv: string): Promise<void> {
 export async function loadDemo(opts: { stock?: boolean } = {}): Promise<void> {
 	await importCsv("suppliers", DEMO.suppliers);
 	await importCsv("parts", DEMO.parts);
+	await importCsv("part_options", DEMO.part_options);
 	await importCsv("part_suppliers", DEMO.part_suppliers);
 	await importCsv("machine_types", DEMO.machine_types);
 	await importCsv("machines", DEMO.machines);

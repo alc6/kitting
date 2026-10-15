@@ -73,8 +73,8 @@ describe("More actions menu (D177)", () => {
 	});
 
 	it("is hidden when the role can use none of its actions", async () => {
-		const id = await insertPart("BOLT", "buy");
-		// Archive and delete are admin actions: a planner sees Edit but no menu.
+		// A kit (no options to edit, D183): archive and delete are admin actions, so a planner sees Edit but no menu.
+		const id = await insertPart("BOLT-KIT", "kit");
 		const planner = await html(`/parts/${id}`, await as("planner"));
 		expect(planner).toContain(`href="/parts/${id}/edit"`);
 		expect(planner).not.toContain(MORE);

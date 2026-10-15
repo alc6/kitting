@@ -88,6 +88,7 @@ import {
 	ShoppingCart,
 	Sigma,
 	Sun,
+	SwatchBook,
 	Tag,
 	Timer,
 	Trash2,
@@ -196,6 +197,8 @@ export const icons = {
 	shoppingCart: ShoppingCart,
 	sigma: Sigma,
 	sun: Sun,
+	/** Part options (D183). */
+	options: SwatchBook,
 	tag: Tag,
 	timer: Timer,
 	trash: Trash2,

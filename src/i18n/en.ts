@@ -186,6 +186,22 @@ export const en = {
 		file_type: "Use a STEP, 3MF, STL, PDF, DXF, JPEG, PNG or WebP file.",
 		file_upload: "The file did not arrive complete. Try again.",
 		files_disabled: "Files are not set up on this server.",
+		option_name_invalid: "Names may not contain =, | or *.",
+		option_values_required: "Keep or add at least one value.",
+		option_value_required: "Choose a value for {option}.",
+		option_value_unknown: "{option} has no value “{value}”.",
+		option_unknown: "This part has no option “{option}”.",
+		option_twice: "{option} is given twice.",
+		options_none: "This part has no options: leave the values empty.",
+		options_syntax: "Write the values as Option=value, separated by |.",
+		option_value_in_use: "This value is used by stock, orders or builds: it cannot be removed.",
+		option_in_use: "Values of this option are used by stock, orders or builds: it cannot be deleted.",
+		option_default_twice: "Only one value of an option can be the default.",
+		option_default_removed: "The default value cannot be removed: choose another default first.",
+		options_kind: "Only bought and made parts can have options.",
+		kind_has_options: "This part has options: it must stay a buy or make part.",
+		option_value_missing: "{ref} does not come in {option} {value}.",
+		option_stock_short: "{ref} ({values}) is short in stock: build it now, or record its stock first.",
 	},
 	margins: {
 		title: "Margins",
@@ -324,6 +340,48 @@ export const en = {
 		emptyFiltered: "No supplier matches this search.",
 		noParts: "No active part is bought from this supplier.",
 		offersHint: "Offers are added and edited from each part's page.",
+	},
+	options: {
+		title: "Options",
+		intro:
+			"Stock, receipts and builds are counted per value. In a build, components with an option of the same name follow the build's value.",
+		none: "No options. Add one when this part comes in several values counted apart in stock, such as colours.",
+		kindHint: "Only bought and made parts have options.",
+		add: "Add option",
+		edit: "Edit options",
+		editTitle: "Options of {ref}",
+		name: "Option",
+		values: "Values",
+		valuesHint: "One per line, in order. The first is the default value.",
+		value: "Value",
+		default: "Default",
+		newValues: "Add values",
+		newValuesHint: "One per line, added after the others.",
+		remove: "Remove",
+		inUse: "In use",
+		moveUp: "Move up",
+		moveDown: "Move down",
+		delete: "Delete option",
+		confirmDelete: "Delete this option and its values?",
+		added: "Option added.",
+		transferWarning:
+			"This part has stock or open orders and builds: they are put on the new option's default value, which cannot be undone. Count the stock per value afterwards.",
+		transferNote: "Option {option} added: stock put on {value}",
+		stockByValue: "Stock by value",
+		noStockByValue: "No stock in any value.",
+		renameHint:
+			"Renaming keeps stock and history. Components follow by name: rename the same option on the parts that follow it.",
+		// Rules of an assembly line on a component with options (D186)
+		rule: "Option values",
+		follows: "Follows the build",
+		followsHint: "The build's value of the same option, else {value}",
+		chosen: "Chosen when planned",
+		always: "Always {value}",
+		// Builds
+		buildValues: "Options",
+		chosenTitle: "Chosen when planned",
+		chosenHint: "Components whose assembly lines leave these options to each build.",
+		valuesOf: "{ref}: {values}",
 	},
 	parts: {
 		howItsMade: "Manufacturing",
@@ -680,6 +738,7 @@ export const en = {
 		builds: "Builds",
 		unassigned: "No preferred supplier: choose one per line, or set one on the part",
 		missingAssemblies: "Sub-assemblies to build that have no active assembly",
+		missingValues: "Values that components do not come in",
 		createDrafts: "Create draft POs",
 		createDraftsHint:
 			"One draft PO per supplier, at its offer price (else the standard cost). Review and send them afterwards.",
@@ -771,7 +830,7 @@ export const en = {
 		intro:
 			"Upload a CSV file (comma or semicolon separated, UTF-8). You always get a preview first; nothing is written until you confirm.",
 		order:
-			"Import in this order: suppliers, parts, supplier offers, past prices, machine types, machines, assemblies, stock.",
+			"Import in this order: suppliers, parts, part options, supplier offers, past prices, machine types, machines, assemblies, stock.",
 		file: "CSV file",
 		orPaste: "…or paste CSV text",
 		preview: "Preview",
@@ -793,6 +852,7 @@ export const en = {
 		types: {
 			suppliers: "Suppliers",
 			parts: "Parts",
+			part_options: "Part options",
 			part_suppliers: "Supplier offers",
 			price_history: "Past prices",
 			machine_types: "Machine types",
@@ -803,6 +863,8 @@ export const en = {
 		help: {
 			suppliers: "Upsert by name.",
 			parts: "Upsert by ref. Columns left out of the file keep their current values. Suppliers are matched by name.",
+			part_options:
+				"One row per value of an option, in order: ref, option, value, and default = yes on the default value. For each part in the file, the file replaces its options: those left out are removed (refused while stock, orders or builds use them), the others keep their records and take the file order. Adding an option to a part that has stock moves that stock onto its default value, and cannot be undone.",
 			part_suppliers:
 				"One row per part and supplier: their reference, price and ordering terms. Upsert by ref + supplier; preferred = yes makes it the supplier used for shortages.",
 			price_history:
@@ -810,13 +872,14 @@ export const en = {
 			machine_types: "Upsert by name. hourly_rate is the cost of one hour on a machine of the type (empty: unknown).",
 			machines: "Upsert by name. type is the name of a machine type; status is active, maintenance or retired.",
 			assemblies:
-				"One row per component of an assembly. Rows are grouped by parent_ref + code + revision; the components of each assembly are replaced.",
+				"One row per component of an assembly. Rows are grouped by parent_ref + code + revision; the components of each assembly are replaced. options sets the values of a component with options: Colour=black always, Size=* chosen when a build is planned, | between options; options left out follow the build. Without the column, the options of existing lines are kept.",
 			stock:
-				"Sets on-hand to the counted quantity by posting a count move for the difference. For serial-tracked parts, one row per serial.",
+				"Sets on-hand to the counted quantity by posting a count move for the difference. For serial-tracked parts, one row per serial. A part with options has one row per values, written in options (Colour=white|Size=L).",
 		},
 		summaries: {
 			suppliers: "Names and contact details.",
 			parts: "The catalogue: references, kinds, units, costs.",
+			part_options: "Options of parts and their values, such as colours.",
 			part_suppliers: "What each supplier offers: reference, price, terms.",
 			price_history: "Prices from before Kitting.",
 			machine_types: "Types of machine and their hourly rate.",
@@ -1214,6 +1277,9 @@ export const en = {
 			build_lines: "as-built records",
 			price_history: "the price history",
 			files: "File",
+			part_options: "Option",
+			part_option_values: "Option value",
+			build_option_choices: "Values chosen for a build",
 		},
 		fields: {
 			ref: "reference",
@@ -1271,6 +1337,12 @@ export const en = {
 			tracking_number: "tracking number",
 			tracking_url: "tracking link",
 			shipped_at: "shipped",
+			option_id: "option",
+			is_default: "default",
+			option_values: "option values",
+			fixed_option_values: "fixed option values",
+			chosen_option_ids: "options chosen when planned",
+			build_id: "build",
 		},
 		// Summaries stored with each change set, in the author's language (D110). Never put an amount here.
 		summaries: {
@@ -1348,6 +1420,11 @@ export const en = {
 			fileEdit: "Edit file {name} of {owner}",
 			fileReplace: "Replace file {name} of {owner}",
 			fileRemove: "Remove file {name} from {owner}",
+			optionAdd: "Add option {option} to {ref}",
+			optionEdit: "Edit option {option} of {ref}",
+			optionDelete: "Delete option {option} of {ref}",
+			optionMove: "Reorder the options of {ref}",
+			assemblyLineOptions: "Change the option values of {ref} in assembly {assembly}",
 		},
 	},
 };

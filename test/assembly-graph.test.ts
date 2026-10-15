@@ -11,7 +11,7 @@ import {
 	type GraphPart,
 	walkTree,
 } from "../src/domain/assembly-graph";
-import { onHandMap } from "../src/domain/parts";
+import { onHandByKey } from "../src/domain/stock";
 import { assemblyId, loadDemo, partId, testDb } from "./helpers";
 
 const part = (id: number, ref: string, kind: GraphPart["kind"], costCents: number | null = 100): GraphPart => ({
@@ -23,6 +23,7 @@ const part = (id: number, ref: string, kind: GraphPart["kind"], costCents: numbe
 	costCents,
 	trackSerial: false,
 	archived: false,
+	options: [],
 });
 
 const req = (e: ReturnType<typeof explode>) => Object.fromEntries(e.requirements.map((r) => [r.part.ref, r.qtyMilli]));
@@ -69,7 +70,7 @@ describe("explosion on the demo lamp", () => {
 	it("takes make parts from stock up to on-hand, then explodes the rest", async () => {
 		await loadDemo();
 		const db = testDb();
-		const [graph, stock] = await Promise.all([loadGraph(db), onHandMap(db)]);
+		const [graph, stock] = await Promise.all([loadGraph(db), onHandByKey(db)]);
 		const lamp = await assemblyId("LAMP-DESK");
 		const one = explode(graph, lamp, 1000, { stock });
 		expect(req(one)["ARM-ASSY"]).toBe(2000);
@@ -79,13 +80,13 @@ describe("explosion on the demo lamp", () => {
 		expect(req(three)["ARM-TUBE-300"]).toBe(4000); // 4 arms built
 		const arm = three.tree.find((n) => n.part.ref === "ARM-ASSY")!;
 		expect([arm.mode, arm.fromStockMilli, arm.toBuildMilli]).toEqual(["split", 2000, 4000]);
-		expect(stock.get(await partId("ARM-ASSY"))).toBe(2000); // input map untouched
+		expect(stock.get(String(await partId("ARM-ASSY")))).toBe(2000); // input map untouched
 	});
 
 	it("shares availability across several explosions", async () => {
 		await loadDemo();
 		const db = testDb();
-		const [graph, stock] = await Promise.all([loadGraph(db), onHandMap(db)]);
+		const [graph, stock] = await Promise.all([loadGraph(db), onHandByKey(db)]);
 		const lamp = await assemblyId("LAMP-DESK");
 		const available = new Map(stock);
 		const first = explode(graph, lamp, 1000, { available });
@@ -93,13 +94,13 @@ describe("explosion on the demo lamp", () => {
 		expect(req(first)["ARM-ASSY"]).toBe(2000);
 		expect(req(second)["ARM-ASSY"]).toBeUndefined(); // the 2 arms in stock are already taken
 		expect(req(second)["ARM-TUBE-300"]).toBe(2000);
-		expect(available.get(await partId("ARM-ASSY"))).toBe(0);
+		expect(available.get(String(await partId("ARM-ASSY")))).toBe(0);
 	});
 
 	it("honours per-line overrides", async () => {
 		await loadDemo();
 		const db = testDb();
-		const [graph, stock] = await Promise.all([loadGraph(db), onHandMap(db)]);
+		const [graph, stock] = await Promise.all([loadGraph(db), onHandByKey(db)]);
 		const lamp = await assemblyId("LAMP-DESK");
 		const base = explode(graph, lamp, 1000, { stock });
 		const armPath = base.tree.find((n) => n.part.ref === "ARM-ASSY")!.path;
@@ -126,7 +127,7 @@ describe("explosion edge cases", () => {
 				{ id: 110, assemblyId: 11, componentPartId: 4, qtyMilli: 1500, position: 1, notes: "" },
 			],
 		);
-		const e = explode(g, 10, 1000, { stock: new Map([[2, 2500]]) });
+		const e = explode(g, 10, 1000, { stock: new Map([["2", 2500]]) });
 		const nodes = [...walkTree(e.tree)];
 		expect(nodes.filter((n) => n.part.ref === "SUB").map((n) => [n.fromStockMilli, n.toBuildMilli])).toEqual([
 			[2000, 0],
@@ -208,7 +209,7 @@ describe("where-used and cycle check (recursive CTEs)", () => {
 		await loadDemo();
 		const rows = await whereUsed(testDb(), await partId("SCREW-M3X8"));
 		const direct = rows.filter((r) => r.depth === 1).map((r) => r.parentRef);
-		expect(direct.sort()).toEqual(["ARM-ASSY", "FIX-KIT-HEAD"]);
+		expect(direct.sort()).toEqual(["ARM-ASSY", "FIX-KIT-HEAD", "MINI-HEAD"]);
 		const indirect = rows
 			.filter((r) => r.depth === 2)
 			.map((r) => `${r.parentRef}/${r.code}/${r.revision} via ${r.viaRef}`);
@@ -217,6 +218,7 @@ describe("where-used and cycle check (recursive CTEs)", () => {
 			"HEAD-KIT-WW/std/Rev1 via FIX-KIT-HEAD",
 			"LAMP-DESK/std/Rev2 via ARM-ASSY",
 			"LAMP-DESK/warm/Rev1 via ARM-ASSY",
+			"LAMP-MINI/std/Rev1 via MINI-HEAD",
 		]);
 		const deepest = rows.filter((r) => r.depth === 3).map((r) => `${r.parentRef}/${r.code} via ${r.viaRef}`);
 		expect(deepest.sort()).toEqual(["LAMP-DESK/std via HEAD-KIT-CW", "LAMP-DESK/warm via HEAD-KIT-WW"]);

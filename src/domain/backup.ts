@@ -10,6 +10,7 @@ import {
 	assemblyLines,
 	buildLines,
 	buildMachineTimes,
+	buildOptionChoices,
 	builds,
 	changeLog,
 	changeSets,
@@ -17,6 +18,8 @@ import {
 	machineRateHistory,
 	machines,
 	machineTypes,
+	partOptions,
+	partOptionValues,
 	partSuppliers,
 	parts,
 	poLines,
@@ -35,6 +38,9 @@ export const BACKUP_VERSION = 1;
 const TABLES: SQLiteTable[] = [
 	suppliers,
 	parts,
+	// A part's options and their values (D183), before the records that name them.
+	partOptions,
+	partOptionValues,
 	// Machine types before the assemblies that name them (D147).
 	machineTypes,
 	machineRateHistory,
@@ -45,6 +51,7 @@ const TABLES: SQLiteTable[] = [
 	poLines,
 	poShipments,
 	builds,
+	buildOptionChoices,
 	buildLines,
 	buildMachineTimes,
 	stockMoves,

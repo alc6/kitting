@@ -66,7 +66,22 @@ async function fixtures() {
 			"INSERT INTO machine_types (name, created_by, updated_by) VALUES ('FDM printer', 'seed', 'seed') RETURNING id",
 		),
 	);
+	const [option] = await seedSql(
+		stmt(
+			"INSERT INTO part_options (part_id, name, created_by, updated_by) VALUES (?, 'Colour', 'seed', 'seed') RETURNING id",
+			buy,
+		),
+	);
+	const [build] = await seedSql(
+		stmt(
+			"INSERT INTO builds (number, part_id, assembly_id, created_by, updated_by) VALUES ('B-8000', ?, ?, 'seed', 'seed') RETURNING id",
+			make,
+			returnedId(assembly),
+		),
+	);
 	return {
+		option: returnedId(option),
+		build: returnedId(build),
 		supplier,
 		buy,
 		make,
@@ -187,6 +202,31 @@ const CASES: Record<string, { insert: (f: Fixtures) => D1PreparedStatement; upda
 				f.buy,
 			),
 		update: "UPDATE files SET name = 'BOLT M4.step', kind = 'drawing' WHERE id = ?",
+	},
+	part_options: {
+		insert: (f) =>
+			stmt(
+				"INSERT INTO part_options (part_id, name, created_by, updated_by) VALUES (?, 'Size', 'u', 'u') RETURNING id",
+				f.make,
+			),
+		update: "UPDATE part_options SET name = 'Length', position = 2 WHERE id = ?",
+	},
+	part_option_values: {
+		insert: (f) =>
+			stmt(
+				"INSERT INTO part_option_values (option_id, name, is_default, created_by, updated_by) VALUES (?, 'white', 1, 'u', 'u') RETURNING id",
+				f.option,
+			),
+		update: "UPDATE part_option_values SET name = 'ivory' WHERE id = ?",
+	},
+	build_option_choices: {
+		insert: (f) =>
+			stmt(
+				"INSERT INTO build_option_choices (build_id, part_id, option_values, created_by, updated_by) VALUES (?, ?, '5', 'u', 'u') RETURNING id",
+				f.build,
+				f.buy,
+			),
+		update: "UPDATE build_option_choices SET option_values = '6' WHERE id = ?",
 	},
 };
 
@@ -325,6 +365,7 @@ describe("change capture", () => {
 		expect(await rows("SELECT summary, revertible FROM change_sets WHERE source = 'import' ORDER BY id")).toEqual([
 			{ summary: "Import suppliers.csv", revertible: 1 },
 			{ summary: "Import parts.csv", revertible: 1 },
+			{ summary: "Import part_options.csv", revertible: 1 },
 			{ summary: "Import part_suppliers.csv", revertible: 1 },
 			{ summary: "Import machine_types.csv", revertible: 1 },
 			{ summary: "Import machines.csv", revertible: 1 },

@@ -5,6 +5,8 @@ import { type ChangeSet, HISTORY_TABLES } from "../db/schema";
 import {
 	type ChangeSetSummary,
 	type EntryView,
+	KEY_COLUMNS,
+	keyLabelOf,
 	type Labels,
 	labelOf,
 	REFERENCE_COLUMNS,
@@ -111,6 +113,7 @@ function FieldValue(props: { table: string; column: string; value: unknown; labe
 	if (BOOLEAN_COLUMNS.has(`${table}.${column}`)) return <span>{value ? t.common.yes : t.common.no}</span>;
 	const ref = REFERENCE_COLUMNS[column];
 	if (ref) return <span>{labelOf(props.labels, ref, value)}</span>;
+	if (KEY_COLUMNS[column]) return <span>{keyLabelOf(props.labels, column, value)}</span>;
 	const text = String(value);
 	if (table === "files") {
 		if (column === "kind") return <span>{(t.files.kinds as Record<string, string>)[text] ?? text}</span>;

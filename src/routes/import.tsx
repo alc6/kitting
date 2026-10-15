@@ -85,6 +85,7 @@ async function readCsvInput(c: Context<AppEnv>): Promise<string> {
 const TYPE_ICONS: Record<ImportType, IconNode> = {
 	suppliers: icons.factory,
 	parts: icons.package,
+	part_options: icons.options,
 	part_suppliers: icons.truck,
 	price_history: icons.history,
 	machine_types: icons.cog,

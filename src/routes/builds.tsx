@@ -1,19 +1,29 @@
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import type { Context } from "hono";
 import { Hono } from "hono";
 import type { Child } from "hono/jsx";
 import { BUILD_STATUSES, type BuildStatus, type Part, parts, stockMoves } from "../db/schema";
 import { loadGraph } from "../domain/assemblies";
-import { AssemblyCycleError, CostCalculator, centsOf, type ExplodedNode } from "../domain/assembly-graph";
+import {
+	AssemblyCycleError,
+	type AssemblyGraph,
+	CostCalculator,
+	centsOf,
+	type ExplodedNode,
+} from "../domain/assembly-graph";
 import {
 	buildableProduct,
+	buildChoicesStatements,
 	buildEditInput,
 	buildInput,
 	buildPickList,
+	buildPicks,
 	buildPlanErrors,
 	buildSerialTaken,
+	buildValueProblems,
 	cancelBuildStatement,
 	choiceField,
+	chosenComponents,
 	completionStatements,
 	createBuildStatement,
 	getBuild,
@@ -23,7 +33,11 @@ import {
 	makeNodes,
 	nextBuildNumber,
 	OPEN_STATUSES,
+	onHandOfReq,
+	optionField,
 	type PickList,
+	pickField,
+	readBuildValues,
 	recordProblems,
 	recordStatements,
 	serialCount,
@@ -34,9 +48,11 @@ import {
 } from "../domain/builds";
 import { assemblyFiles, filesBucket, partFiles } from "../domain/files";
 import { buildActualCost, marginOf, salePriceOf } from "../domain/margins";
+import { defaultValue, idsOf, keyLabel, type OptionDef, type OptionKey, stockKey } from "../domain/option-keys";
+import { loadOptions } from "../domain/options";
 import { can } from "../domain/permissions";
 import { computeShortages, type ToMakeLine } from "../domain/purchasing";
-import { onHandAt, serialsInStock } from "../domain/stock";
+import { onHandByKey, serialsInStock } from "../domain/stock";
 import { errorText, fmt } from "../i18n";
 import { cn } from "../lib/cn";
 import { isConstraintError } from "../lib/sql";
@@ -58,6 +74,7 @@ import { useApp } from "../views/context";
 import { BuildFilesCard } from "../views/files";
 import { Icon, icons } from "../views/icons";
 import { Duration, MachineLoadCard, MachineTimeCard } from "../views/machines";
+import { OptionSelects, OptionValues } from "../views/options";
 import { idParam, notFound, nowIso, page, redirectOk, saveChanges, translateErrors } from "../views/render";
 import {
 	Alert,
@@ -76,6 +93,7 @@ import {
 	FieldError,
 	FieldGroup,
 	FieldLabel,
+	FieldSet,
 	FieldWrap,
 	Flash,
 	type FormErrors,
@@ -164,11 +182,13 @@ export function BuildsTable(props: { rows: BuildRow[]; emptyClass?: string; comp
 									<span class={cn(CODE, "font-medium")}>{b.partRef}</span>{" "}
 									<span class="text-muted-foreground">{b.partName}</span>
 								</span>
+								{b.values ? <span class="block text-xs text-muted-foreground">{b.values}</span> : null}
 							</TableCell>
 						) : (
 							<TableCell>
 								<span class={cn(CODE, "font-medium")}>{b.partRef}</span>{" "}
 								<span class="text-muted-foreground">{b.partName}</span>
+								{b.values ? <span class="block text-xs text-muted-foreground">{b.values}</span> : null}
 							</TableCell>
 						)}
 						{props.compact ? null : (
@@ -201,6 +221,12 @@ function toMakeHref(l: ToMakeLine, when: "done" | "planned", locale: NumberLocal
 		qty: formatQtyInput(l.toMakeMilli, locale),
 		when,
 	});
+	// In the values to make (D191).
+	const ids = idsOf(l.optionValues);
+	for (const o of l.part.options) {
+		const v = o.values.find((x) => ids.includes(x.id));
+		if (v) q.set(optionField(o.id), String(v.id));
+	}
 	return `/builds/new?${q}`;
 }
 
@@ -254,6 +280,7 @@ function ToMakeCard(props: { lines: ToMakeLine[]; toBuy: number }) {
 									{l.part.ref}
 								</a>
 								<div class="text-xs text-muted-foreground">{l.part.name}</div>
+								<OptionValues options={l.part.options} values={l.optionValues} class="block" />
 							</TableCell>
 							<TableCell class="text-right whitespace-nowrap">
 								<div class="font-semibold">
@@ -461,11 +488,16 @@ function NewBuildForm(props: {
 	products: { id: number; ref: string; name: string }[];
 	product: Part | undefined;
 	assemblyOptions: AssemblyOption[];
+	graph: AssemblyGraph | undefined;
 }) {
 	const view = useApp();
 	const { t } = view;
 	const p = { values: props.values, errors: props.errors };
 	const base = "/builds/new";
+	// The values of the product's options, and of the options its lines leave to each build (D185, D187).
+	const productOptions = (props.product && props.graph?.parts.get(props.product.id)?.options) || [];
+	const assemblyId = Number(props.values.assembly_id);
+	const chosen = props.graph && assemblyId ? chosenComponents(props.graph, assemblyId) : [];
 	const reload = {
 		"hx-get": base,
 		"hx-include": "closest form",
@@ -599,6 +631,7 @@ function NewBuildForm(props: {
 											{...p}
 										/>
 									</div>
+									<BuildValueFields productOptions={productOptions} chosen={chosen} {...p} />
 									<TextArea name="notes" label={t.common.notes} {...p} />
 								</>
 							)
@@ -618,11 +651,86 @@ function NewBuildForm(props: {
 	);
 }
 
+/**
+ * The values of a build (D185, D187): one select per option of the product, then one per option its assembly lines
+ * leave to each build (`pick:<part>:<option>`), defaults preselected.
+ */
+function BuildValueFields(props: {
+	productOptions: OptionDef[];
+	chosen: { part: { id: number; ref: string }; options: OptionDef[] }[];
+	values: FormValues;
+	errors: FormErrors;
+}) {
+	const { t } = useApp();
+	if (props.productOptions.length === 0 && props.chosen.length === 0) return null;
+	const p = { values: props.values, errors: props.errors };
+	return (
+		<FieldSet legend={t.options.buildValues}>
+			<div class="grid gap-4 md:grid-cols-2">
+				<OptionSelects options={props.productOptions} name={(o) => optionField(o.id)} {...p} />
+				{props.chosen.map((c) => (
+					<OptionSelects
+						options={c.options}
+						name={(o) => pickField(c.part.id, o.id)}
+						label={(o) => fmt(t.options.valuesOf, { ref: c.part.ref, values: o.name })}
+						{...p}
+					/>
+				))}
+			</div>
+			{props.chosen.length ? <FieldDescription>{t.options.chosenHint}</FieldDescription> : null}
+		</FieldSet>
+	);
+}
+
+/** The form values of a build's stored values (D185, D187). */
+function buildValueForm(
+	graph: AssemblyGraph,
+	build: { partId: number; assemblyId: number; optionValues: OptionKey },
+	picks: Map<number, number[]>,
+): FormValues {
+	const values: FormValues = {};
+	const ids = idsOf(build.optionValues);
+	for (const o of graph.parts.get(build.partId)?.options ?? []) {
+		const v = o.values.find((x) => ids.includes(x.id)) ?? defaultValue(o);
+		if (v) values[optionField(o.id)] = String(v.id);
+	}
+	for (const c of chosenComponents(graph, build.assemblyId))
+		for (const o of c.options) {
+			const v = o.values.find((x) => (picks.get(c.part.id) ?? []).includes(x.id)) ?? defaultValue(o);
+			if (v) values[pickField(c.part.id, o.id)] = String(v.id);
+		}
+	return values;
+}
+
+/**
+ * The values a form chose and what is wrong with them: a value left out of the product's options is a field error,
+ * a value a component does not come in is a problem of the whole form (D185).
+ */
+function checkBuildValues(
+	graph: AssemblyGraph,
+	product: { id: number },
+	assemblyId: number,
+	qtyMilli: number,
+	body: Record<string, unknown>,
+) {
+	const values = readBuildValues(graph, product, assemblyId, body);
+	const errors: FieldErrors = {};
+	const vars: Record<string, string> = {};
+	if (values.missing) {
+		errors[optionField(values.missing.id)] = "option_value_required";
+		vars.option = values.missing.name;
+	}
+	const problems = buildValueProblems(graph, assemblyId, qtyMilli, { ...values, missing: null });
+	return { values, errors, vars, problems };
+}
+
 /** The new build page: the form, and why a build already made could not be recorded in one step (D152). */
 function NewBuildPage(props: {
 	values: FormValues;
 	errors: FormErrors;
 	problems?: string[];
+	/** The title of the problems: why recording was refused, else why planning was. */
+	problemsTitle?: string;
 	data: Awaited<ReturnType<typeof newBuildData>>;
 }) {
 	const { t } = useApp();
@@ -630,7 +738,7 @@ function NewBuildPage(props: {
 		<>
 			<PageHeader title={t.builds.new} subtitle={t.builds.newIntro} />
 			{props.problems?.length ? (
-				<Alert variant="destructive" title={t.builds.recordRefused}>
+				<Alert variant="destructive" title={props.problemsTitle ?? t.builds.recordRefused}>
 					<ul class="m-0 flex list-disc flex-col gap-1 pl-4">
 						{props.problems.map((p) => (
 							<li>{p}</li>
@@ -649,7 +757,10 @@ async function newBuildData(c: Context<AppEnv>, partId: number | null) {
 		.from(parts)
 		.where(and(eq(parts.kind, "make"), eq(parts.archived, false)))
 		.orderBy(asc(parts.ref));
-	return { products, ...(await buildableProduct(c.var.db, partId)) };
+	const product = await buildableProduct(c.var.db, partId);
+	// The graph gives the product's options and the options its lines leave to each build (D185, D187).
+	const graph = product.product ? await loadGraph(c.var.db) : undefined;
+	return { products, ...product, graph };
 }
 
 /** The form's first values: quantity 1 and the std variant (else the first active one), unless the query says. */
@@ -702,13 +813,20 @@ buildRoutes.post("/", requirePermission("builds.plan"), async (c) => {
 	const data = await newBuildData(c, partId);
 	const d = v.ok ? { ...v.data, qty: unitsToBuild(v.data, data.assemblyOptions) } : undefined;
 	if (d) Object.assign(errors, await buildPlanErrors(db, d, data.product, data.assemblyOptions));
-	if (!d || Object.keys(errors).length > 0 || !data.product) {
+	const checked =
+		d && data.product && data.graph && d.assembly_id && Object.keys(errors).length === 0
+			? checkBuildValues(data.graph, data.product, d.assembly_id, d.qty, body)
+			: undefined;
+	if (checked) Object.assign(errors, checked.errors);
+	if (!d || !checked || Object.keys(errors).length > 0 || checked.problems.length > 0 || !data.product) {
 		return page(
 			c,
 			t.builds.new,
 			<NewBuildPage
 				values={{ ...(body as FormValues), when: "planned" }}
-				errors={translateErrors(c, errors)}
+				errors={translateErrors(c, errors, checked?.vars)}
+				problems={checked?.problems.map((p) => errorText(t, p.key, p.vars))}
+				problemsTitle={t.common.fixErrors}
 				data={data}
 			/>,
 			422,
@@ -731,7 +849,15 @@ buildRoutes.post("/", requirePermission("builds.plan"), async (c) => {
 						serial: d.serial || null,
 						plannedFor: d.planned_for,
 						notes: d.notes,
+						optionValues: checked.values.optionValues,
 					},
+					user,
+					nowIso(),
+				),
+				...buildChoicesStatements(
+					db,
+					sql`(SELECT id FROM builds WHERE number = ${number})`,
+					checked.values.picks,
 					user,
 					nowIso(),
 				),
@@ -766,14 +892,19 @@ async function recordBuild(c: Context<AppEnv>, body: Record<string, unknown>) {
 			/>,
 			422,
 		);
-	if (!d || Object.keys(errors).length > 0 || !data.product) return refuse();
+	if (!d || Object.keys(errors).length > 0 || !data.product || !data.graph) return refuse();
 	const product = data.product;
 	const assemblyId = d.assembly_id as number;
-	const [graph, onHand] = await Promise.all([loadGraph(db), onHandAt(db)]);
+	const graph = data.graph;
+	const checked = checkBuildValues(graph, product, assemblyId, d.qty, body);
+	Object.assign(errors, checked.errors);
+	if (Object.keys(errors).length > 0) return refuse();
+	const onHand = await onHandByKey(db);
+	const { optionValues, picks } = checked.values;
 	const pick = buildPickList(
 		graph,
 		onHand,
-		{ assemblyId, qtyMilli: d.qty, serial: d.serial || null },
+		{ assemblyId, qtyMilli: d.qty, serial: d.serial || null, optionValues, picks },
 		product,
 		{},
 		true,
@@ -797,6 +928,8 @@ async function recordBuild(c: Context<AppEnv>, body: Record<string, unknown>) {
 						qtyMilli: d.qty,
 						serial: d.serial || null,
 						notes: d.notes,
+						optionValues,
+						picks,
 					},
 					pick,
 					c.var.user,
@@ -825,10 +958,11 @@ buildRoutes.post("/record", requirePermission("builds.complete"), async (c) => {
 // ---------------------------------------------------------------------------
 // Detail, pick list, completion
 
-function BuildHeader(props: { data: BuildData }) {
+function BuildHeader(props: { data: BuildData; options: OptionDef[] }) {
 	const view = useApp();
 	const { t } = view;
 	const { build, part, assembly } = props.data;
+	const values = keyLabel(props.options, build.optionValues);
 	const open = OPEN_STATUSES.includes(build.status) && can(view, "builds.plan");
 	return (
 		<PageHeader
@@ -844,6 +978,12 @@ function BuildHeader(props: { data: BuildData }) {
 							{assembly.code} ({assembly.revision})
 						</a>
 					</span>
+					{values ? (
+						<>
+							<span aria-hidden="true">·</span>
+							<span>{values}</span>
+						</>
+					) : null}
 				</span>
 			}
 			actions={
@@ -871,7 +1011,13 @@ function BuildHeader(props: { data: BuildData }) {
 }
 
 /** Collapsible edit form (a <details> card, so it needs no JavaScript). */
-function EditCard(props: { data: BuildData; values: FormValues; errors: FormErrors }) {
+function EditCard(props: {
+	data: BuildData;
+	values: FormValues;
+	errors: FormErrors;
+	productOptions: OptionDef[];
+	chosen: { part: { id: number; ref: string }; options: OptionDef[] }[];
+}) {
 	const { t } = useApp();
 	const p = { values: props.values, errors: props.errors };
 	return (
@@ -883,6 +1029,7 @@ function EditCard(props: { data: BuildData; values: FormValues; errors: FormErro
 						<TextField name="planned_for" label={t.builds.plannedFor} type="date" {...p} />
 					</div>
 					<TextArea name="notes" label={t.common.notes} {...p} />
+					<BuildValueFields productOptions={props.productOptions} chosen={props.chosen} {...p} />
 				</FieldGroup>
 				<div class="flex flex-wrap items-center gap-2">
 					<Button variant="outline" icon={icons.save}>
@@ -931,7 +1078,7 @@ function ChoiceRadios(props: { buildId: number; node: ExplodedNode; current: str
 
 /** Pick lines that need more than the stock on hand. */
 function shortLines(pick: PickList) {
-	return pick.explosion.requirements.filter((r) => r.qtyMilli > Math.max(0, pick.onHand.get(r.part.id) ?? 0));
+	return pick.explosion.requirements.filter((r) => r.qtyMilli > Math.max(0, onHandOfReq(pick.onHand, r)));
 }
 
 function SubAssemblies(props: { buildId: number; pick: PickList; values: Record<string, string> }) {
@@ -958,6 +1105,7 @@ function SubAssemblies(props: { buildId: number; pick: PickList; values: Record<
 										{n.part.ref}
 									</a>
 									<span class="text-muted-foreground">{n.part.name}</span>
+									<OptionValues options={n.part.options} values={n.optionValues} class="text-sm" />
 								</div>
 								<div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
 									<span>
@@ -968,7 +1116,10 @@ function SubAssemblies(props: { buildId: number; pick: PickList; values: Record<
 									</span>
 									<span>
 										{fmt(t.builds.available, {
-											n: formatQtyInput(Math.max(0, props.pick.onHand.get(n.part.id) ?? 0), locale),
+											n: formatQtyInput(
+												Math.max(0, props.pick.onHand.get(stockKey(n.part.id, n.optionValues)) ?? 0),
+												locale,
+											),
 										})}
 									</span>
 								</div>
@@ -988,7 +1139,8 @@ function SubAssemblies(props: { buildId: number; pick: PickList; values: Record<
 }
 
 function SerialInputs(props: {
-	partId: number;
+	/** The requirement's part and values (`stockKey`, D184). */
+	stockKey: string;
 	partRef: string;
 	count: number;
 	values: Record<string, string>;
@@ -996,13 +1148,14 @@ function SerialInputs(props: {
 	hints: string[];
 }) {
 	const { t } = useApp();
-	const listId = `serials-${props.partId}`;
+	const id = props.stockKey.replace(/[^0-9]+/g, "-");
+	const listId = `serials-${id}`;
 	return (
 		<div class="flex flex-wrap gap-2">
 			{Array.from({ length: props.count }, (_, i) => {
-				const name = serialField(props.partId, i);
+				const name = serialField(props.stockKey, i);
 				const error = props.errors[name];
-				const errorId = `e-serial-${props.partId}-${i}`;
+				const errorId = `e-serial-${id}-${i}`;
 				return (
 					<div data-slot="field" data-invalid={error ? "true" : undefined} class="flex flex-col gap-1">
 						<input
@@ -1090,15 +1243,16 @@ function PickListForm(props: {
 						</TableHeader>
 						<TableBody>
 							{requirements.map((r) => {
-								const onHand = pick.onHand.get(r.part.id) ?? 0;
+								const onHand = onHandOfReq(pick.onHand, r);
 								const short = r.qtyMilli - Math.max(0, onHand);
+								const key = stockKey(r.part.id, r.optionValues);
 								return (
 									<TableRow class="has-checked:bg-success/10 has-checked:hover:bg-success/15">
 										<TableCell class="w-px py-1 pr-0">
 											<label class="flex size-12 cursor-pointer items-center justify-center rounded-md hover:bg-muted">
 												<input
 													type="checkbox"
-													name={`picked:${r.part.id}`}
+													name={`picked:${key}`}
 													aria-label={`${t.builds.picked} ${r.part.ref}`}
 													class="size-6"
 												/>
@@ -1112,6 +1266,7 @@ function PickListForm(props: {
 												<span>{r.part.name}</span>
 												<KindBadge kind={r.part.kind} />
 											</div>
+											<OptionValues options={r.part.options} values={r.optionValues} class="text-sm" />
 										</TableCell>
 										<TableCell class="text-right text-base font-semibold">
 											<Qty milli={r.qtyMilli} unit={r.part.unit} />
@@ -1127,7 +1282,7 @@ function PickListForm(props: {
 										<TableCell>
 											{r.part.trackSerial ? (
 												<SerialInputs
-													partId={r.part.id}
+													stockKey={key}
 													partRef={r.part.ref}
 													count={serialCount(r)}
 													values={props.values}
@@ -1167,6 +1322,7 @@ function AsBuilt(props: {
 	lines: Awaited<ReturnType<typeof getBuildLines>>;
 	outputCost: number | null;
 	qtyMilli: number;
+	options: Map<number, OptionDef[]>;
 }) {
 	const { t, seeCosts } = useApp();
 	const incomplete = props.lines.some((l) => l.line.unitCostCents === null);
@@ -1206,6 +1362,11 @@ function AsBuilt(props: {
 										<span>{name}</span>
 										<KindBadge kind={kind} />
 									</div>
+									<OptionValues
+										options={props.options.get(line.partId) ?? []}
+										values={line.optionValues}
+										class="text-sm"
+									/>
 								</TableCell>
 								<TableCell>
 									<div class="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -1275,7 +1436,14 @@ async function renderBuild(
 	c: Context<AppEnv>,
 	data: BuildData,
 	form: Record<string, string>,
-	opts: { validate?: boolean; editErrors?: FieldErrors; editValues?: FormValues; status?: 200 | 422 } = {},
+	opts: {
+		validate?: boolean;
+		editErrors?: FieldErrors;
+		editVars?: Record<string, string>;
+		editProblems?: string[];
+		editValues?: FormValues;
+		status?: 200 | 422;
+	} = {},
 ) {
 	const t = c.var.t;
 	const db = c.var.db;
@@ -1313,9 +1481,10 @@ async function renderBuild(
 	);
 	let stats: Child;
 	let body: Child;
+	const options = await loadOptions(db);
 	if (open) {
-		const [graph, onHand] = await Promise.all([loadGraph(db), onHandAt(db)]);
-		const pick = buildPickList(graph, onHand, build, part, form, opts.validate ?? false);
+		const [graph, onHand, picks] = await Promise.all([loadGraph(db), onHandByKey(db), buildPicks(db, build.id)]);
+		const pick = buildPickList(graph, onHand, { ...build, picks }, part, form, opts.validate ?? false);
 		const calc = new CostCalculator(graph);
 		const tracked = pick.explosion.requirements.filter((r) => r.part.trackSerial);
 		const hints = new Map(
@@ -1338,6 +1507,11 @@ async function renderBuild(
 		);
 		body = (
 			<>
+				{opts.editProblems?.map((p) => (
+					<Alert variant="destructive" class="mb-0">
+						{p}
+					</Alert>
+				))}
 				{can(c.var, "builds.plan") ? (
 					<EditCard
 						data={data}
@@ -1346,9 +1520,12 @@ async function renderBuild(
 								serial: build.serial ?? "",
 								planned_for: build.plannedFor ?? "",
 								notes: build.notes,
+								...buildValueForm(graph, build, picks),
 							}
 						}
-						errors={translateErrors(c, opts.editErrors ?? {})}
+						errors={translateErrors(c, opts.editErrors ?? {}, opts.editVars)}
+						productOptions={graph.parts.get(part.id)?.options ?? []}
+						chosen={chosenComponents(graph, build.assemblyId)}
 					/>
 				) : null}
 				<PickListForm data={data} pick={pick} values={form} serialHints={hints} />
@@ -1460,7 +1637,7 @@ async function renderBuild(
 						</CardContent>
 					</Card>
 				) : null}
-				{done ? <AsBuilt lines={lines} outputCost={outputCost} qtyMilli={build.qtyMilli} /> : null}
+				{done ? <AsBuilt lines={lines} outputCost={outputCost} qtyMilli={build.qtyMilli} options={options} /> : null}
 				{machineTimes.length ? (
 					<MachineTimeCard
 						id="machine-time"
@@ -1483,7 +1660,7 @@ async function renderBuild(
 		c,
 		`${build.number} · ${part.ref}`,
 		<>
-			<BuildHeader data={data} />
+			<BuildHeader data={data} options={options.get(part.id) ?? []} />
 			<Flash message={flash} />
 			{c.req.query("err") ? <Alert variant="destructive">{errorText(t, c.req.query("err") ?? "")}</Alert> : null}
 			{/* A done build has up to six cards (costs and margin): three per row instead of four. */}
@@ -1529,17 +1706,39 @@ buildRoutes.post("/:id", requirePermission("builds.plan"), async (c) => {
 		if (v.data.serial && (await buildSerialTaken(c.var.db, part.id, v.data.serial, build.id)))
 			errors.serial = "build_serial_taken";
 	}
-	if (!v.ok || Object.keys(errors).length > 0) {
-		return renderBuild(c, data, {}, { editErrors: errors, editValues: body as FormValues, status: 422 });
+	// The values it makes and those chosen for it can change while it is open (D187).
+	const graph = await loadGraph(c.var.db);
+	const checked = checkBuildValues(graph, part, build.assemblyId, build.qtyMilli, body);
+	Object.assign(errors, checked.errors);
+	if (!v.ok || Object.keys(errors).length > 0 || checked.problems.length > 0) {
+		return renderBuild(
+			c,
+			data,
+			{},
+			{
+				editErrors: errors,
+				editVars: checked.vars,
+				editProblems: checked.problems.map((p) => errorText(c.var.t, p.key, p.vars)),
+				editValues: body as FormValues,
+				status: 422,
+			},
+		);
 	}
+	const now = nowIso();
 	await saveChanges(c, fmt(c.var.t.history.summaries.buildEdit, { number: build.number }), [
 		updateBuildStatement(
 			c.var.db,
 			build.id,
-			{ serial: v.data.serial || null, plannedFor: v.data.planned_for, notes: v.data.notes },
+			{
+				serial: v.data.serial || null,
+				plannedFor: v.data.planned_for,
+				notes: v.data.notes,
+				optionValues: checked.values.optionValues,
+			},
 			c.var.user,
-			nowIso(),
+			now,
 		),
+		...buildChoicesStatements(c.var.db, build.id, checked.values.picks, c.var.user, now),
 	]);
 	return redirectOk(c, `/builds/${build.id}`);
 });
@@ -1572,8 +1771,8 @@ buildRoutes.post("/:id/complete", requirePermission("builds.complete"), async (c
 	const form: Record<string, string> = {};
 	for (const [k, v] of Object.entries(body)) if (typeof v === "string") form[k] = v;
 	// Never trust client quantities: re-explode with current stock and the submitted choices.
-	const [graph, onHand] = await Promise.all([loadGraph(db), onHandAt(db)]);
-	const pick = buildPickList(graph, onHand, build, part, form, true);
+	const [graph, onHand, picks] = await Promise.all([loadGraph(db), onHandByKey(db), buildPicks(db, build.id)]);
+	const pick = buildPickList(graph, onHand, { ...build, picks }, part, form, true);
 	if (Object.keys(pick.errors).length > 0 || pick.problems.length > 0) {
 		return renderBuild(c, data, form, { validate: true, status: 422 });
 	}

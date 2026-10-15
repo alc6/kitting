@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { loadGraph } from "../src/domain/assemblies";
 import { buildPickList, completionStatements, getBuild } from "../src/domain/builds";
 import { runChangeSet } from "../src/domain/history";
-import { onHandAt } from "../src/domain/stock";
+import { onHandByKey } from "../src/domain/stock";
 import { assemblyId, insertMove, insertPart, loadDemo, one, partId, postForm, request, rows, testDb } from "./helpers";
 
 const onHand = async (ref: string) =>
@@ -196,7 +196,7 @@ describe("completing builds", () => {
 		const db = testDb();
 		const data = (await getBuild(db, id))!;
 		const graph = await loadGraph(db);
-		const pick = buildPickList(graph, await onHandAt(db), data.build, data.part, {}, true);
+		const pick = buildPickList(graph, await onHandByKey(db), data.build, data.part, {}, true);
 		const stmts = completionStatements(db, graph, data.build, pick, "racer@example.com", new Date().toISOString());
 		const meta = { user: "racer@example.com", source: "ui" as const, summary: "Complete build (race)" };
 		await expect(runChangeSet(db, meta, stmts)).rejects.toThrow(/UNIQUE constraint failed/);

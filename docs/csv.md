@@ -8,8 +8,8 @@ Files from French or English versions of Excel work as they are: the separator c
 tab, decimals can use a point or a comma, and the encoding can be UTF-8 or Windows-1252. Header names are not
 case-sensitive.
 
-Import the files in this order: suppliers, parts, supplier offers, past prices, machine types, machines, assemblies,
-stock.
+Import the files in this order: suppliers, parts, part options, supplier offers, past prices, machine types, machines,
+assemblies, stock.
 
 ## suppliers.csv
 
@@ -30,6 +30,29 @@ with just `ref,cost` updates standard costs and nothing else.
   Use `part_suppliers.csv` for more than one supplier per part.
 - `min_stock` is the part's minimum stock, in its unit (buy and make parts only). The dashboard and the stock page
   flag the part when its on-hand quantity falls below it; empty means no alert.
+
+## part_options.csv
+
+`ref,option,value,default`
+
+The options of parts (a colour, a size) and their values, one row per value, in order. Only bought and made parts
+have options. `default` is `yes` on the value that new records take when nothing else is said; leave the column out
+or empty to keep the current default, or the first value for a new option. At most one value per option is the
+default.
+
+For each part named in the file, the file **replaces its options**, as the Options page of the part would:
+
+- Options and values are matched by name, ignoring case. Those found keep their stock and records, take the order of
+  the file and the spelling of the file.
+- Options and values the file does not list are removed, unless stock, orders or builds name them: the file is then
+  refused, with the row of the option. Renaming a value (other than its case) is a removal plus an addition, so it is
+  refused while the old value is in use: rename it on the part's Options page instead.
+- New options and values are added. Adding an option to a part that has stock, open order lines or open builds
+  moves them onto the new option's default value, as on the Options page. Such an import cannot be undone.
+- Parts the file does not name are not touched.
+
+Names may not contain `=`, `|` or `*`, which are the syntax of the `options` columns below. The export lists every
+value of every part, `default` being `yes` on the default value, and imports back as unchanged.
 
 ## part_suppliers.csv
 
@@ -83,7 +106,7 @@ The machines the workshop owns, matched by name. `type` is the name of a machine
 ## assemblies.csv
 
 `parent_ref,code,revision,status,component_ref,qty`, plus the optional `sale_price`, `batch_qty`, `machine`,
-`machine_minutes` and `notes`
+`machine_minutes`, `notes` and `options`
 
 One row per component. Rows are grouped by `parent_ref`, `code` and `revision`, and each assembly in the file ends
 up with exactly the components listed for it.
@@ -96,10 +119,20 @@ up with exactly the components listed for it.
   change an assembly that is already active.
 - `machine` and `machine_minutes`, one value per assembly, are the machine time of one batch: the name of a machine
   type and whole minutes (190 for 3 h 10). Give both, or neither. They follow the same rule as `batch_qty`.
+- `options`, per row, is the rule of the line for a component that has options: `Colour=black` always takes that
+  value, `Size=*` is chosen when a build is planned, and `|` separates options (`Colour=black|Size=*`). An option the
+  cell does not name follows the build, like an empty cell. Names are matched ignoring case; an unknown option or value
+  is an error on that row. Without the `options` column, a replaced line keeps the rule of the line of the same
+  component in the assembly (the first line of the component keeps the first one's, the second the second's), and a new
+  line follows the build. A change of rule shows as an update in the preview.
 
 ## stock.csv
 
-`ref,qty,serial,unit_cost`
+`ref,qty,serial,unit_cost`, plus the optional `options`
 
 Sets the quantity on hand to the counted `qty`, with a count movement for the difference. For serial-numbered
 parts that have no stock yet, use one row per serial with a `qty` of 1.
+
+A part with options is counted per values: `options` is required for it, and names one value of each option
+(`Colour=white|Size=L`, or just `white` for a part with a single option). One row per values, each counted on its own.
+The export has one row per values that have stock.

@@ -187,6 +187,25 @@ export const fr: Dict = {
 		file_type: "Utilisez un fichier STEP, 3MF, STL, PDF, DXF, JPEG, PNG ou WebP.",
 		file_upload: "Le fichier n’est pas arrivé en entier. Réessayez.",
 		files_disabled: "Les fichiers ne sont pas configurés sur ce serveur.",
+		option_name_invalid: "Les noms ne peuvent pas contenir =, | ou *.",
+		option_values_required: "Gardez ou ajoutez au moins une valeur.",
+		option_value_required: "Choisissez une valeur pour {option}.",
+		option_value_unknown: "{option} n’a pas de valeur « {value} ».",
+		option_unknown: "Cet article n’a pas d’option « {option} ».",
+		option_twice: "{option} est indiquée deux fois.",
+		options_none: "Cet article n’a pas d’options : laissez les valeurs vides.",
+		options_syntax: "Écrivez les valeurs sous la forme Option=valeur, séparées par |.",
+		option_value_in_use:
+			"Cette valeur est utilisée par du stock, des commandes ou des fabrications : elle ne peut pas être retirée.",
+		option_in_use:
+			"Des valeurs de cette option sont utilisées par du stock, des commandes ou des fabrications : elle ne peut pas être supprimée.",
+		option_default_twice: "Une seule valeur d’une option peut être la valeur par défaut.",
+		option_default_removed:
+			"La valeur par défaut ne peut pas être retirée : choisissez d’abord une autre valeur par défaut.",
+		options_kind: "Seuls les articles achetés et fabriqués peuvent avoir des options.",
+		kind_has_options: "Cet article a des options : il doit rester un article acheté ou fabriqué.",
+		option_value_missing: "{ref} n’existe pas en {option} {value}.",
+		option_stock_short: "{ref} ({values}) manque en stock : fabriquez-le maintenant, ou enregistrez d’abord son stock.",
 	},
 	margins: {
 		title: "Marges",
@@ -330,6 +349,46 @@ export const fr: Dict = {
 		emptyFiltered: "Aucun fournisseur ne correspond à cette recherche.",
 		noParts: "Aucun article actif n’est acheté chez ce fournisseur.",
 		offersHint: "Les offres s’ajoutent et se modifient depuis la fiche de chaque article.",
+	},
+	options: {
+		title: "Options",
+		intro:
+			"Le stock, les réceptions et les fabrications sont comptés par valeur. Dans une fabrication, les composants ayant une option du même nom suivent la valeur de la fabrication.",
+		none: "Pas d’options. Ajoutez-en une quand cet article existe en plusieurs valeurs suivies à part en stock, comme des couleurs.",
+		kindHint: "Seuls les articles achetés et fabriqués ont des options.",
+		add: "Ajouter une option",
+		edit: "Modifier les options",
+		editTitle: "Options de {ref}",
+		name: "Option",
+		values: "Valeurs",
+		valuesHint: "Une par ligne, dans l’ordre. La première est la valeur par défaut.",
+		value: "Valeur",
+		default: "Par défaut",
+		newValues: "Ajouter des valeurs",
+		newValuesHint: "Une par ligne, ajoutées après les autres.",
+		remove: "Retirer",
+		inUse: "Utilisée",
+		moveUp: "Monter",
+		moveDown: "Descendre",
+		delete: "Supprimer l’option",
+		confirmDelete: "Supprimer cette option et ses valeurs ?",
+		added: "Option ajoutée.",
+		transferWarning:
+			"Cet article a du stock, des commandes ou des fabrications en cours : ils passent sur la valeur par défaut de la nouvelle option, sans annulation possible. Inventoriez ensuite le stock par valeur.",
+		transferNote: "Option {option} ajoutée : stock passé sur {value}",
+		stockByValue: "Stock par valeur",
+		noStockByValue: "Aucun stock dans aucune valeur.",
+		renameHint:
+			"Renommer conserve le stock et l’historique. Les composants suivent par le nom : renommez la même option sur les articles qui la suivent.",
+		rule: "Valeurs d’option",
+		follows: "Suit la fabrication",
+		followsHint: "La valeur de la même option dans la fabrication, sinon {value}",
+		chosen: "Choisie à la planification",
+		always: "Toujours {value}",
+		buildValues: "Options",
+		chosenTitle: "Choisies à la planification",
+		chosenHint: "Composants dont les lignes d’assemblage laissent ces options au choix de chaque fabrication.",
+		valuesOf: "{ref} : {values}",
 	},
 	parts: {
 		howItsMade: "Fabrication",
@@ -695,6 +754,7 @@ export const fr: Dict = {
 		builds: "Fabrications",
 		unassigned: "Sans fournisseur préféré : choisissez-en un par ligne, ou renseignez-le sur l’article",
 		missingAssemblies: "Sous-ensembles à fabriquer sans assemblage actif",
+		missingValues: "Valeurs dans lesquelles des composants n’existent pas",
 		createDrafts: "Créer les commandes brouillon",
 		createDraftsHint:
 			"Une commande brouillon par fournisseur, au prix de son offre (sinon au coût standard). Vérifiez-les puis envoyez-les.",
@@ -787,7 +847,7 @@ export const fr: Dict = {
 		intro:
 			"Envoyez un fichier CSV (séparateur virgule ou point-virgule, UTF-8). Un aperçu s’affiche toujours d’abord ; rien n’est écrit avant votre confirmation.",
 		order:
-			"Importez dans cet ordre : fournisseurs, articles, offres fournisseurs, anciens prix, types de machines, machines, assemblages, stock.",
+			"Importez dans cet ordre : fournisseurs, articles, options des articles, offres fournisseurs, anciens prix, types de machines, machines, assemblages, stock.",
 		file: "Fichier CSV",
 		orPaste: "…ou collez le texte CSV",
 		preview: "Aperçu",
@@ -809,6 +869,7 @@ export const fr: Dict = {
 		types: {
 			suppliers: "Fournisseurs",
 			parts: "Articles",
+			part_options: "Options des articles",
 			part_suppliers: "Offres fournisseurs",
 			price_history: "Anciens prix",
 			machine_types: "Types de machines",
@@ -820,6 +881,8 @@ export const fr: Dict = {
 			suppliers: "Mise à jour ou création par nom.",
 			parts:
 				"Mise à jour ou création par ref. Les colonnes absentes du fichier gardent leur valeur actuelle. Les fournisseurs sont reconnus par leur nom.",
+			part_options:
+				"Une ligne par valeur d’une option, dans l’ordre : ref, option, value, et default = oui sur la valeur par défaut. Pour chaque article du fichier, le fichier remplace ses options : celles qui manquent sont retirées (refusé tant que du stock, des commandes ou des fabrications les utilisent), les autres gardent leurs enregistrements et prennent l’ordre du fichier. Ajouter une option à un article qui a du stock fait passer ce stock sur sa valeur par défaut, sans annulation possible.",
 			part_suppliers:
 				"Une ligne par article et fournisseur : sa référence, son prix et ses conditions. Mise à jour par réf. + fournisseur ; preferred = oui en fait le fournisseur utilisé pour les manquants.",
 			price_history:
@@ -829,14 +892,15 @@ export const fr: Dict = {
 			machines:
 				"Mise à jour ou création par nom. type est le nom d’un type de machine ; status vaut active, maintenance ou retired.",
 			assemblies:
-				"Une ligne par composant. Les lignes sont regroupées par parent_ref + code + revision ; les composants de chaque assemblage sont remplacés.",
+				"Une ligne par composant. Les lignes sont regroupées par parent_ref + code + revision ; les composants de chaque assemblage sont remplacés. options fixe les valeurs d’un composant qui a des options : Couleur=noir toujours, Taille=* choisie à la planification d’une fabrication, | entre les options ; les options absentes suivent la fabrication. Sans cette colonne, les options des lignes existantes sont conservées.",
 			stock:
-				"Fixe le stock à la quantité comptée en créant un mouvement d’inventaire pour l’écart. Articles suivis par n° de série : une ligne par numéro.",
+				"Fixe le stock à la quantité comptée en créant un mouvement d’inventaire pour l’écart. Articles suivis par n° de série : une ligne par numéro. Un article avec options a une ligne par valeurs, écrites dans options (Couleur=blanc|Taille=L).",
 		},
 		summaries: {
 			suppliers: "Noms et coordonnées.",
 			parts: "Le catalogue : références, types, unités, coûts.",
 			part_suppliers: "Ce que propose chaque fournisseur : référence, prix, conditions.",
+			part_options: "Options des articles et leurs valeurs, comme des couleurs.",
 			price_history: "Prix d’avant Kitting.",
 			machine_types: "Types de machine et leur taux horaire.",
 			machines: "Les machines de chaque type.",
@@ -1247,6 +1311,9 @@ export const fr: Dict = {
 			build_lines: "des relevés de fabrication",
 			price_history: "l’historique des prix",
 			files: "Fichier",
+			part_options: "Option",
+			part_option_values: "Valeur d’option",
+			build_option_choices: "Valeurs choisies pour une fabrication",
 		},
 		fields: {
 			ref: "référence",
@@ -1304,6 +1371,12 @@ export const fr: Dict = {
 			tracking_number: "numéro de suivi",
 			tracking_url: "lien de suivi",
 			shipped_at: "expédié le",
+			option_id: "option",
+			is_default: "par défaut",
+			option_values: "valeurs d’option",
+			fixed_option_values: "valeurs d’option fixes",
+			chosen_option_ids: "options choisies à la planification",
+			build_id: "fabrication",
 		},
 		// Résumés enregistrés avec chaque modification, dans la langue de son auteur (D110). Jamais de montant.
 		summaries: {
@@ -1382,6 +1455,11 @@ export const fr: Dict = {
 			fileEdit: "Modification du fichier {name} de {owner}",
 			fileReplace: "Remplacement du fichier {name} de {owner}",
 			fileRemove: "Retrait du fichier {name} de {owner}",
+			optionAdd: "Ajout de l’option {option} à {ref}",
+			optionEdit: "Modification de l’option {option} de {ref}",
+			optionDelete: "Suppression de l’option {option} de {ref}",
+			optionMove: "Réordonnancement des options de {ref}",
+			assemblyLineOptions: "Modification des valeurs d’option de {ref} dans l’assemblage {assembly}",
 		},
 	},
 };
