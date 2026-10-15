@@ -47,7 +47,8 @@ worked conversations in [references/examples.md](references/examples.md).
   the `download_url`: it opens in the app, you cannot download it. Uploading, renaming or removing files is done in
   the app only.
 - **Purchase orders** `PO-0001`: draft, sent, partial, received, cancelled. Kitting does not email suppliers:
-  "sent" means the user sent it.
+  "sent" means the user sent it. A sent PO lists its shipments (carrier, tracking number, tracking link) in
+  `get_purchase_order`, for the team to follow; Kitting never contacts the carrier.
 - **Costs** (standard cost, roll-ups, prices, margins) may be hidden for the user's role: the result then says
   `costs_hidden: true` and has no amounts. Never estimate one.
 - **Roles and scopes.** Roles: viewer < operator < planner < admin. A tool exists for you only if the connection
@@ -93,6 +94,9 @@ worked conversations in [references/examples.md](references/examples.md).
    supplier that has an offer). Review with `get_purchase_order`; adjust with `update_draft_po` (quantity `"0"`
    removes a line).
 6. When the user has sent the order to the supplier: confirm, then `mark_po_sent`.
+   When the supplier gives tracking details (a shipping notice, an email the user shares): confirm, then
+   `record_po_shipment` with the carrier, `tracking_number` and, only if the supplier gave one, `tracking_url`
+   (one call per parcel; the same tracking number again updates it).
 7. Goods arrive: ask what was received, for serial-tracked parts which serials, confirm, then `receive_po`
    (partial deliveries are fine; `close_po` if the rest will never come, `cancel_po` if nothing came).
 

@@ -1,20 +1,24 @@
 import { and, asc, eq, inArray } from "drizzle-orm";
 import type { Context } from "hono";
 import { Hono } from "hono";
-import { PO_STATUSES, type PoStatus, parts, poLines, suppliers } from "../db/schema";
+import { PO_STATUSES, type PoShipment, type PoStatus, parts, poLines, suppliers } from "../db/schema";
 import { getOffer, poUnitPrice } from "../domain/offers";
 import { can } from "../domain/permissions";
 import {
 	addPoLineStatement,
+	addShipmentStatement,
 	cancelPoStatement,
 	closePoStatement,
 	computeShortages,
 	createPoStatement,
 	deletePoLineStatement,
 	deletePoStatement,
+	deleteShipmentStatement,
 	draftPoStatements,
 	getPo,
 	getPoLines,
+	getPoShipments,
+	knownCarriers,
 	listPos,
 	nextPoNumbers,
 	OPEN_PO_STATUSES,
@@ -27,13 +31,19 @@ import {
 	receiptStatements,
 	receiveQtyField,
 	receiveSerialsField,
+	SHIPPING_PO_STATUSES,
 	type ShortageLine,
 	type ShortageOffer,
 	type Shortages,
 	type SupplierGroup,
 	sendPoStatement,
+	shipmentFormValues,
+	shipmentInput,
+	shipmentRuleErrors,
+	shipmentValues,
 	updatePoLineStatement,
 	updatePoStatement,
+	updateShipmentStatement,
 } from "../domain/purchasing";
 import { errorText, fmt } from "../i18n";
 import { cn } from "../lib/cn";
@@ -449,6 +459,8 @@ purchasingRoutes.get("/po", async (c) => {
 export function PoTable(props: { rows: Awaited<ReturnType<typeof listPos>>; today: string }) {
 	const { t, seeCosts } = useApp();
 	if (props.rows.length === 0) return <Empty>{t.purchasing.noPos}</Empty>;
+	// The tracking column only when some PO has a shipment.
+	const tracking = props.rows.some((po) => po.shipmentCount > 0);
 	return (
 		<Table>
 			<TableHeader>
@@ -457,6 +469,7 @@ export function PoTable(props: { rows: Awaited<ReturnType<typeof listPos>>; toda
 					<TableHead>{t.purchasing.supplier}</TableHead>
 					<TableHead>{t.purchasing.status}</TableHead>
 					<TableHead>{t.purchasing.expectedAt}</TableHead>
+					{tracking ? <TableHead>{t.purchasing.shipments.tracking}</TableHead> : null}
 					<TableHead class="text-right">{t.purchasing.lines}</TableHead>
 					{seeCosts ? <TableHead class="text-right">{t.purchasing.total}</TableHead> : null}
 				</TableRow>
@@ -466,7 +479,7 @@ export function PoTable(props: { rows: Awaited<ReturnType<typeof listPos>>; toda
 					const overdue = isOverdue(po.expectedAt, po.status, props.today);
 					return (
 						<TableRow>
-							<TableCell class="font-medium">
+							<TableCell class="font-medium whitespace-nowrap">
 								<a href={`/purchasing/po/${po.id}`}>{po.number}</a>
 							</TableCell>
 							<TableCell>{po.supplierName}</TableCell>
@@ -481,6 +494,21 @@ export function PoTable(props: { rows: Awaited<ReturnType<typeof listPos>>; toda
 									</Badge>
 								) : null}
 							</TableCell>
+							{tracking ? (
+								<TableCell class="whitespace-nowrap">
+									{po.trackingNumber !== null ? (
+										<span class="inline-flex items-center gap-2">
+											<span class="text-muted-foreground">{po.carrier}</span>
+											<TrackingLink number={po.trackingNumber} url={po.trackingUrl ?? ""} />
+											{po.shipmentCount > 1 ? (
+												<Badge variant="secondary">
+													{fmt(t.purchasing.shipments.more, { n: po.shipmentCount - 1 })}
+												</Badge>
+											) : null}
+										</span>
+									) : null}
+								</TableCell>
+							) : null}
 							<TableCell class="text-right tabular-nums">{po.lineCount}</TableCell>
 							{seeCosts ? (
 								<TableCell class="text-right">
@@ -1011,6 +1039,178 @@ function EditPo(props: { po: PoData["po"] }) {
 	);
 }
 
+/** A tracking number, linked to the carrier's page when the shipment has one (opened in a new tab). */
+function TrackingLink(props: { number: string; url: string }) {
+	const { t } = useApp();
+	if (!props.url) return <span class="font-medium">{props.number}</span>;
+	return (
+		<a
+			href={props.url}
+			target="_blank"
+			rel="noopener noreferrer"
+			title={t.purchasing.shipments.openTracking}
+			class="inline-flex items-center gap-1.5 font-medium underline-offset-4 hover:underline"
+		>
+			{props.number}
+			<Icon icon={icons.externalLink} class="size-3.5 text-muted-foreground" />
+		</a>
+	);
+}
+
+/**
+ * The parcels of a PO and, for planners on a sent or received PO, the form to add one or to edit the one chosen
+ * with ?shipment=<id> (D168).
+ */
+function ShipmentsCard(props: {
+	po: PoData["po"];
+	shipments: PoShipment[];
+	canEdit: boolean;
+	editing: PoShipment | undefined;
+	carriers: string[];
+	values: FormValues;
+	errors: FormErrors;
+}) {
+	const { t } = useApp();
+	const ts = t.purchasing.shipments;
+	const { po, editing } = props;
+	const base = `/purchasing/po/${po.id}`;
+	return (
+		<Card id="shipments" class="gap-4">
+			<CardHeader>
+				<CardTitle>{ts.title}</CardTitle>
+				<CardDescription>{ts.intro}</CardDescription>
+			</CardHeader>
+			<CardContent class="px-2">
+				{props.shipments.length === 0 ? (
+					<p class="px-4 text-sm text-muted-foreground">{ts.none}</p>
+				) : (
+					<Table>
+						<TableHeader>
+							<TableRow>
+								<TableHead>{ts.carrier}</TableHead>
+								<TableHead>{ts.trackingNumber}</TableHead>
+								<TableHead>{ts.shippedAt}</TableHead>
+								<TableHead>{t.common.notes}</TableHead>
+								{props.canEdit ? (
+									<TableHead class="w-px">
+										<span class="sr-only">{t.common.actions}</span>
+									</TableHead>
+								) : null}
+							</TableRow>
+						</TableHeader>
+						<TableBody>
+							{props.shipments.map((s) => (
+								<TableRow data-state={editing?.id === s.id ? "selected" : undefined}>
+									<TableCell>{s.carrier}</TableCell>
+									<TableCell class="whitespace-nowrap">
+										<TrackingLink number={s.trackingNumber} url={s.trackingUrl} />
+									</TableCell>
+									<TableCell class="whitespace-nowrap tabular-nums">{s.shippedAt ?? ""}</TableCell>
+									<TableCell class="text-muted-foreground">{s.notes}</TableCell>
+									{props.canEdit ? (
+										<TableCell class="w-px">
+											<div class="flex items-center justify-end gap-1">
+												<Button
+													href={`${base}?shipment=${s.id}#shipments`}
+													variant="ghost"
+													size="icon-sm"
+													icon={icons.pencil}
+													aria-label={`${t.common.edit} ${s.trackingNumber}`}
+													title={t.common.edit}
+												/>
+												<form
+													method="post"
+													action={`${base}/shipments/${s.id}/delete`}
+													class="inline"
+													data-confirm={fmt(ts.confirmRemove, { tracking: s.trackingNumber })}
+												>
+													<Button
+														variant="ghost"
+														size="icon-sm"
+														icon={icons.trash}
+														aria-label={`${ts.remove} ${s.trackingNumber}`}
+														title={ts.remove}
+													/>
+												</form>
+											</div>
+										</TableCell>
+									) : null}
+								</TableRow>
+							))}
+						</TableBody>
+					</Table>
+				)}
+			</CardContent>
+			{props.canEdit ? (
+				<CardFooter class="border-t">
+					<form
+						method="post"
+						action={editing ? `${base}/shipments/${editing.id}` : `${base}/shipments`}
+						class="flex w-full flex-col gap-4"
+					>
+						{editing ? (
+							<h3 class="text-sm font-medium">{fmt(ts.editTitle, { tracking: editing.trackingNumber })}</h3>
+						) : null}
+						<ErrorBanner show={Object.keys(props.errors).length > 0} />
+						<div class="grid gap-4 md:grid-cols-2">
+							<TextField
+								name="carrier"
+								label={ts.carrier}
+								list="carriers"
+								required
+								values={props.values}
+								errors={props.errors}
+							/>
+							<TextField
+								name="tracking_number"
+								label={ts.trackingNumber}
+								required
+								values={props.values}
+								errors={props.errors}
+							/>
+							<TextField
+								name="tracking_url"
+								label={ts.trackingUrl}
+								type="url"
+								hint={ts.trackingUrlHint}
+								values={props.values}
+								errors={props.errors}
+							/>
+							<TextField
+								name="shipped_at"
+								label={ts.shippedAt}
+								type="date"
+								values={props.values}
+								errors={props.errors}
+							/>
+							<div class="md:col-span-2">
+								<TextField name="notes" label={t.common.notes} values={props.values} errors={props.errors} />
+							</div>
+						</div>
+						<datalist id="carriers">
+							{props.carriers.map((name) => (
+								<option value={name} />
+							))}
+						</datalist>
+						<div class="flex flex-wrap items-center gap-2">
+							{editing ? (
+								<>
+									<Button icon={icons.save}>{t.common.save}</Button>
+									<Button href={`${base}#shipments`} variant="outline">
+										{t.common.cancel}
+									</Button>
+								</>
+							) : (
+								<Button icon={icons.plus}>{ts.add}</Button>
+							)}
+						</div>
+					</form>
+				</CardFooter>
+			) : null}
+		</Card>
+	);
+}
+
 async function renderPo(
 	c: Context<AppEnv>,
 	data: PoData,
@@ -1020,14 +1220,20 @@ async function renderPo(
 		lineVars?: Record<string, string>;
 		receiveValues?: FormValues;
 		receiveErrors?: FieldErrors;
+		/** The shipment form as posted, with its errors; `shipmentId` when it edited one. */
+		shipmentValues?: FormValues;
+		shipmentErrors?: FieldErrors;
+		shipmentId?: number;
 	} = {},
 	status: 200 | 422 = 200,
 ) {
 	const t = c.var.t;
 	const db = c.var.db;
 	const { po, supplier } = data;
-	const [lines, options] = await Promise.all([
+	const [lines, shipments, carriers, options] = await Promise.all([
 		getPoLines(db, po.id),
+		getPoShipments(db, po.id),
+		knownCarriers(db),
 		db
 			.select({ ref: parts.ref, name: parts.name })
 			.from(parts)
@@ -1043,6 +1249,8 @@ async function renderPo(
 					cancelled: t.purchasing.cancelledOk,
 					created: t.purchasing.createdOk,
 					closed: t.purchasing.closedOk,
+					shipment_saved: t.purchasing.shipments.savedOk,
+					shipment_removed: t.purchasing.shipments.removedOk,
 				} as Record<string, string>
 			)[ok]
 		: undefined;
@@ -1053,6 +1261,9 @@ async function renderPo(
 	const canEdit = can(c.var, "purchasing.order");
 	const canReceive = can(c.var, "purchasing.receive") && RECEIVABLE_PO_STATUSES.includes(po.status) && lines.length > 0;
 	const anyReceived = lines.some((l) => l.line.receivedQtyMilli > 0);
+	const canShip = canEdit && SHIPPING_PO_STATUSES.includes(po.status);
+	const editingId = form.shipmentId ?? Number(c.req.query("shipment") ?? Number.NaN);
+	const editing = canShip ? shipments.find((s) => s.id === editingId) : undefined;
 	return page(
 		c,
 		`${po.number} · ${supplier.name}`,
@@ -1151,6 +1362,17 @@ async function renderPo(
 						<ReadOnlyLines lines={lines} />
 					</>
 				)}
+				{canShip || shipments.length > 0 ? (
+					<ShipmentsCard
+						po={po}
+						shipments={shipments}
+						canEdit={canShip}
+						editing={editing}
+						carriers={carriers}
+						values={form.shipmentValues ?? (editing ? shipmentFormValues(editing) : {})}
+						errors={translateErrors(c, form.shipmentErrors ?? {})}
+					/>
+				) : null}
 				{canReceive ? (
 					<ReceiveForm po={po} lines={lines} values={form.receiveValues ?? {}} errors={form.receiveErrors ?? {}} />
 				) : null}
@@ -1207,6 +1429,74 @@ purchasingRoutes.post("/po/:id", requirePermission("purchasing.order"), async (c
 		]);
 	}
 	return redirectOk(c, `/purchasing/po/${data.po.id}`);
+});
+
+/** The shipment of the PO named by :shipmentId, with the PO and its other shipments. */
+async function loadShipment(c: Context<AppEnv>) {
+	const data = await loadPo(c);
+	const shipmentId = idParam(c, "shipmentId");
+	if (!data || !shipmentId) return undefined;
+	const shipments = await getPoShipments(c.var.db, data.po.id);
+	const shipment = shipments.find((s) => s.id === shipmentId);
+	return shipment ? { ...data, shipments, shipment } : undefined;
+}
+
+/** Validates a posted shipment form against the PO's rules; `selfId` when it edits that shipment. */
+async function shipmentForm(c: Context<AppEnv>, data: PoData, shipments: PoShipment[], selfId?: number) {
+	const body = await c.req.parseBody();
+	const v = validate(shipmentInput, body);
+	const errors: FieldErrors = v.ok ? shipmentRuleErrors(data.po, shipments, v.data.tracking_number, selfId) : v.errors;
+	return { body: body as FormValues, values: v.ok ? shipmentValues(v.data) : undefined, errors };
+}
+
+const shipmentsHref = (poId: number, ok: string) => `/purchasing/po/${poId}?ok=${ok}#shipments`;
+
+purchasingRoutes.post("/po/:id/shipments", requirePermission("purchasing.order"), async (c) => {
+	const data = await loadPo(c);
+	if (!data) return notFound(c);
+	if (!SHIPPING_PO_STATUSES.includes(data.po.status))
+		return c.redirect(`/purchasing/po/${data.po.id}?err=po_no_shipments`, 303);
+	const f = await shipmentForm(c, data, await getPoShipments(c.var.db, data.po.id));
+	if (!f.values || Object.keys(f.errors).length)
+		return renderPo(c, data, { shipmentValues: f.body, shipmentErrors: f.errors }, 422);
+	await saveChanges(
+		c,
+		fmt(c.var.t.history.summaries.poShipmentAdd, { tracking: f.values.trackingNumber, number: data.po.number }),
+		[addShipmentStatement(c.var.db, data.po.id, f.values, c.var.user, nowIso())],
+	);
+	return c.redirect(shipmentsHref(data.po.id, "shipment_saved"), 303);
+});
+
+purchasingRoutes.post("/po/:id/shipments/:shipmentId", requirePermission("purchasing.order"), async (c) => {
+	const data = await loadShipment(c);
+	if (!data) return notFound(c);
+	if (!SHIPPING_PO_STATUSES.includes(data.po.status))
+		return c.redirect(`/purchasing/po/${data.po.id}?err=po_no_shipments`, 303);
+	const f = await shipmentForm(c, data, data.shipments, data.shipment.id);
+	if (!f.values || Object.keys(f.errors).length)
+		return renderPo(c, data, { shipmentValues: f.body, shipmentErrors: f.errors, shipmentId: data.shipment.id }, 422);
+	await saveChanges(
+		c,
+		fmt(c.var.t.history.summaries.poShipmentEdit, { tracking: f.values.trackingNumber, number: data.po.number }),
+		[updateShipmentStatement(c.var.db, data.po.id, data.shipment.id, f.values, c.var.user, nowIso())],
+	);
+	return c.redirect(shipmentsHref(data.po.id, "shipment_saved"), 303);
+});
+
+purchasingRoutes.post("/po/:id/shipments/:shipmentId/delete", requirePermission("purchasing.order"), async (c) => {
+	const data = await loadShipment(c);
+	if (!data) return notFound(c);
+	if (!SHIPPING_PO_STATUSES.includes(data.po.status))
+		return c.redirect(`/purchasing/po/${data.po.id}?err=po_no_shipments`, 303);
+	await saveChanges(
+		c,
+		fmt(c.var.t.history.summaries.poShipmentRemove, {
+			tracking: data.shipment.trackingNumber,
+			number: data.po.number,
+		}),
+		[deleteShipmentStatement(c.var.db, data.po.id, data.shipment.id)],
+	);
+	return c.redirect(shipmentsHref(data.po.id, "shipment_removed"), 303);
 });
 
 purchasingRoutes.post("/po/:id/lines", requirePermission("purchasing.order"), async (c) => {

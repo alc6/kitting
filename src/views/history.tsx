@@ -77,6 +77,7 @@ function recordHref(table: string, rowId: number, row: Row): string | null {
 		case "purchase_orders":
 			return `/purchasing/po/${rowId}`;
 		case "po_lines":
+		case "po_shipments":
 			return num(row.po_id) ? `/purchasing/po/${row.po_id}` : null;
 		case "builds":
 			return `/builds/${rowId}`;

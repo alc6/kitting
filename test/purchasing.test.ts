@@ -262,6 +262,74 @@ describe("purchase orders", () => {
 		expect(plate?.netMilli).toBe(1000); // need 5 - on hand 4
 	});
 
+	it("records, edits and removes shipments on sent POs, listed and searchable by tracking number", async () => {
+		const id = await draftPo([["BOX-LAMP", "10"]]);
+		const shipment = { carrier: "Parcel Co", tracking_number: "PC123", tracking_url: "", shipped_at: "", notes: "" };
+		expect(await (await request(`/purchasing/po/${id}`)).text()).not.toContain('id="shipments"');
+		expect((await postForm(`/purchasing/po/${id}/shipments`, shipment)).headers.get("Location")).toBe(
+			`/purchasing/po/${id}?err=po_no_shipments`,
+		);
+		await postForm(`/purchasing/po/${id}/send`, {});
+
+		const bad = await postForm(`/purchasing/po/${id}/shipments`, {
+			...shipment,
+			carrier: "",
+			tracking_url: "javascript:alert(1)",
+		});
+		expect(bad.status).toBe(422);
+		const badHtml = await bad.text();
+		expect(badHtml).toContain("Required.");
+		expect(badHtml).toContain("Use a link starting with https:// or http://.");
+
+		const added = await postForm(`/purchasing/po/${id}/shipments`, {
+			...shipment,
+			tracking_url: "https://track.example/PC123",
+			shipped_at: "2026-10-14",
+		});
+		expect(added.headers.get("Location")).toBe(`/purchasing/po/${id}?ok=shipment_saved#shipments`);
+		const row = await one<{ id: number }>("SELECT * FROM po_shipments");
+		expect(row).toMatchObject({
+			po_id: id,
+			carrier: "Parcel Co",
+			tracking_number: "PC123",
+			tracking_url: "https://track.example/PC123",
+			shipped_at: "2026-10-14",
+		});
+		const pageHtml = await (await request(`/purchasing/po/${id}?ok=shipment_saved`)).text();
+		expect(pageHtml).toContain("Shipment saved.");
+		expect(pageHtml).toContain('href="https://track.example/PC123" target="_blank" rel="noopener noreferrer"');
+
+		const dup = await postForm(`/purchasing/po/${id}/shipments`, { ...shipment, tracking_number: "pc123" });
+		expect(dup.status).toBe(422);
+		expect(await dup.text()).toContain("This tracking number is already on this PO.");
+
+		const list = await (await request("/purchasing/po")).text();
+		expect(list).toContain("Tracking");
+		expect(list).toContain("PC123");
+		expect(await (await request("/purchasing/po?q=PC12&status=all")).text()).toContain(`href="/purchasing/po/${id}"`);
+		expect(await (await request("/search?q=PC123")).text()).toContain(`/purchasing/po/${id}`);
+
+		const edit = await (await request(`/purchasing/po/${id}?shipment=${row.id}`)).text();
+		expect(edit).toContain(`action="/purchasing/po/${id}/shipments/${row.id}"`);
+		expect(edit).toContain('value="https://track.example/PC123"');
+		await postForm(`/purchasing/po/${id}/shipments/${row.id}`, { ...shipment, notes: "2 boxes" });
+		expect(await one("SELECT tracking_url, notes FROM po_shipments")).toEqual({ tracking_url: "", notes: "2 boxes" });
+
+		await setRole("operator");
+		expect((await postForm(`/purchasing/po/${id}/shipments`, shipment, NOT_ADMIN)).status).toBe(403);
+		const seen = await (await request(`/purchasing/po/${id}`, {}, NOT_ADMIN)).text();
+		expect(seen).toContain("PC123");
+		expect(seen).not.toContain(`action="/purchasing/po/${id}/shipments"`);
+		await setRole("planner");
+
+		const removed = await postForm(`/purchasing/po/${id}/shipments/${row.id}/delete`, {});
+		expect(removed.headers.get("Location")).toBe(`/purchasing/po/${id}?ok=shipment_removed#shipments`);
+		expect(await rows("SELECT id FROM po_shipments")).toEqual([]);
+		const history = await (await request(`/purchasing/po/${id}/history`)).text();
+		expect(history).toContain("Remove shipment PC123 from PO");
+		expect(history).toContain("Add shipment PC123 to PO");
+	});
+
 	it("deletes drafts for admins only", async () => {
 		const id = await draftPo([["BOX-LAMP", "1"]]);
 		const deleteAction = `action="/purchasing/po/${id}/delete"`;

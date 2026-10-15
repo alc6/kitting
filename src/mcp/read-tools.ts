@@ -15,7 +15,7 @@ import { assemblyFiles, partFiles } from "../domain/files";
 import { listMachines, listMachineTypes } from "../domain/machines";
 import { partOffers } from "../domain/offers";
 import { listParts, onHandMap, onHandOf } from "../domain/parts";
-import { computeShortages, getPoLines, listPos } from "../domain/purchasing";
+import { computeShortages, getPoLines, getPoShipments, listPos } from "../domain/purchasing";
 import { isStocked, listMoves, onHandAt } from "../domain/stock";
 import { lineCostCents, MILLI, machineMillicents, roundDiv } from "../lib/units";
 import {
@@ -30,6 +30,7 @@ import {
 	quantity,
 	refsOf,
 	resolveAssembly,
+	shipmentViews,
 	type ToolSpec,
 	tool,
 } from "./kit";
@@ -633,12 +634,12 @@ const getPurchaseOrder = tool({
 	name: "get_purchase_order",
 	title: "Purchase order",
 	description:
-		"One purchase order by number (e.g. PO-0001): supplier, dates, and lines with ordered, received and remaining quantities and prices.",
+		"One purchase order by number (e.g. PO-0001): supplier, dates, lines with ordered, received and remaining quantities and prices, and the shipments the supplier sent (carrier, tracking number and link).",
 	rule: { scope: "purchasing:read" },
 	input: z.object({ number: z.string().trim().min(1).max(32).describe('The PO number, e.g. "PO-0001".') }),
 	run: async (a, { db }) => {
 		const found = await poByNumber(db, a.number);
-		const lines = await getPoLines(db, found.po.id);
+		const [lines, shipments] = await Promise.all([getPoLines(db, found.po.id), getPoShipments(db, found.po.id)]);
 		return {
 			purchaseOrder: {
 				number: found.po.number,
@@ -662,6 +663,7 @@ const getPurchaseOrder = tool({
 				lineTotalCents: lineCostCents(l.line.qtyMilli, l.line.unitPriceCents),
 			})),
 			totalCents: lines.reduce((s, l) => s + lineCostCents(l.line.qtyMilli, l.line.unitPriceCents), 0),
+			shipments: shipmentViews(shipments),
 		};
 	},
 });

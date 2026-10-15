@@ -133,10 +133,10 @@ Purchase orders, newest first.
 - **Example:** `list_purchase_orders({ "status": "sent" })`
 
 ### `get_purchase_order`
-One PO with its lines.
+One PO with its lines and the shipments the supplier sent.
 - **Scope:** `purchasing:read` · **Permission:** none
 - **Inputs:** `number` (e.g. `PO-0001`).
-- **Returns:** `purchase_order` (`number`, `status`, `supplier`, `expected_at`, `notes`), `lines[]` (`ref`, `qty`, `received`, `remaining`, `unit_price`, `line_total`), `total`.
+- **Returns:** `purchase_order` (`number`, `status`, `supplier`, `expected_at`, `notes`), `lines[]` (`ref`, `qty`, `received`, `remaining`, `unit_price`, `line_total`), `total`, `shipments[]` (`carrier`, `tracking_number`, `tracking_url`, `shipped_at`, `notes`).
 - **Example:** `get_purchase_order({ "number": "PO-0001" })`
 
 ## Writing the catalogue: `catalog:write`
@@ -310,33 +310,40 @@ Turns the current shortages into draft POs, one per supplier, each line rounded 
 Edits a PO: expected date and notes (any open PO) and the lines of a draft. A line sets the quantity of a part: existing is changed, a new part is added, `"0"` removes it. Lines of a sent PO cannot change.
 - **Scope:** `purchasing:write` · **Permission:** `purchasing.order` (planner)
 - **Inputs:** `number`, `expected_at` (date or null), `notes`, `lines[]` of `ref`, `qty`, `price`.
-- **Returns:** the write envelope, `purchase_order`, `lines`, `total`.
+- **Returns:** the write envelope, `purchase_order`, `lines`, `total`, `shipments`.
 - **Example:** `update_draft_po({ "number": "PO-0002", "expected_at": "2026-11-10", "lines": [{ "ref": "PAD-FELT", "qty": "1000" }] })`
 
 ### `mark_po_sent`
 Marks a draft as sent. Kitting sends nothing itself: the user sends the order to the supplier. Lines freeze; it then waits for `receive_po`.
 - **Scope:** `purchasing:write` · **Permission:** `purchasing.order` (planner)
 - **Inputs:** `number`.
-- **Returns:** the write envelope, `purchase_order`, `lines`, `total`.
+- **Returns:** the write envelope, `purchase_order`, `lines`, `total`, `shipments`.
 - **Example:** `mark_po_sent({ "number": "PO-0002" })`
 
 ### `receive_po`
 Records goods received, per part, optionally with one serial per unit. Stock goes up at the PO's price; the PO becomes partial or received. More deliveries can follow. Writes the ledger: cannot be undone.
 - **Scope:** `purchasing:write` · **Permission:** `purchasing.receive` (operator)
 - **Inputs:** `number`, `lines[]` of `ref`, `qty` (received now), `serials`.
-- **Returns:** the write envelope, `received[]`, `purchase_order`, `lines`, `total`.
+- **Returns:** the write envelope, `received[]`, `purchase_order`, `lines`, `total`, `shipments`.
 - **Example:** `receive_po({ "number": "PO-0001", "lines": [{ "ref": "LED-5W-WW", "qty": "10", "serials": ["WW-24-0101", "WW-24-0102"] }] })`
 
 ### `cancel_po`
 Cancels a draft or sent PO that received nothing. A partly received PO is closed instead.
 - **Scope:** `purchasing:write` · **Permission:** `purchasing.order` (planner)
 - **Inputs:** `number`.
-- **Returns:** the write envelope, `purchase_order`, `lines`, `total`.
+- **Returns:** the write envelope, `purchase_order`, `lines`, `total`, `shipments`.
 - **Example:** `cancel_po({ "number": "PO-0003" })`
 
 ### `close_po`
 Closes a sent or partly received PO whose remaining quantities will not come: they are no longer on order. Nothing moves in stock.
 - **Scope:** `purchasing:write` · **Permission:** `purchasing.order` (planner)
 - **Inputs:** `number`.
-- **Returns:** the write envelope, `purchase_order`, `lines`, `total`.
+- **Returns:** the write envelope, `purchase_order`, `lines`, `total`, `shipments`.
 - **Example:** `close_po({ "number": "PO-0001" })`
+
+### `record_po_shipment`
+Records a parcel the supplier sent for a PO: carrier, tracking number, and optionally the carrier's tracking link, the shipping date and a note, so the whole team can follow it. Recording a tracking number already on the PO (any case) updates that shipment; fields left out keep their value, an empty `tracking_url` removes the link. Only on sent, partial and received POs. Kitting never contacts the carrier: take the details from what the supplier sent, never guess a link.
+- **Scope:** `purchasing:write` · **Permission:** `purchasing.order` (planner)
+- **Inputs:** `number`, `tracking_number`, `carrier` (required for a new shipment), `tracking_url` (`https://…`), `shipped_at` (date), `notes`.
+- **Returns:** the write envelope, `purchase_order`, `lines`, `total`, `shipments`.
+- **Example:** `record_po_shipment({ "number": "PO-0001", "carrier": "Parcel Co", "tracking_number": "PC123456789", "tracking_url": "https://track.example/PC123456789" })`

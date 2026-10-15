@@ -4,10 +4,12 @@ import { z } from "zod";
 import {
 	builds,
 	machines,
+	type PoShipment,
 	type PoStatus,
 	partSuppliers,
 	parts,
 	poLines,
+	poShipments,
 	purchaseOrders,
 	stockMoves,
 	suppliers,
@@ -546,6 +548,102 @@ export function deletePoStatement(db: Db, poId: number) {
 }
 
 // ---------------------------------------------------------------------------
+// Shipments (D168): the parcels a supplier sent for a PO, with their tracking numbers.
+
+/** POs that shipments are recorded on: the supplier has the order. */
+export const SHIPPING_PO_STATUSES: PoStatus[] = ["sent", "partial", "received"];
+
+export const shipmentInput = z.object({
+	carrier: field.required(100),
+	tracking_number: field.required(100),
+	tracking_url: field.url(),
+	shipped_at: field.date(),
+	notes: field.text(),
+});
+
+export type ShipmentValues = Pick<PoShipment, "carrier" | "trackingNumber" | "trackingUrl" | "shippedAt" | "notes">;
+
+export function shipmentValues(d: z.output<typeof shipmentInput>): ShipmentValues {
+	return {
+		carrier: d.carrier,
+		trackingNumber: d.tracking_number,
+		trackingUrl: d.tracking_url,
+		shippedAt: d.shipped_at,
+		notes: d.notes,
+	};
+}
+
+/** A shipment as its form shows it (to edit it, or to say what an MCP call would change). */
+export function shipmentFormValues(s: ShipmentValues): Record<string, string> {
+	return {
+		carrier: s.carrier,
+		tracking_number: s.trackingNumber,
+		tracking_url: s.trackingUrl,
+		shipped_at: s.shippedAt ?? "",
+		notes: s.notes,
+	};
+}
+
+/** The shipment of a PO with this tracking number (ignoring case), if any. */
+export function shipmentByTracking<T extends Pick<PoShipment, "trackingNumber">>(shipments: T[], tracking: string) {
+	const needle = tracking.trim().toLowerCase();
+	return shipments.find((s) => s.trackingNumber.toLowerCase() === needle);
+}
+
+/**
+ * Rules shared by the shipment form and record_po_shipment: only on a PO the supplier has (sent or received), and
+ * one shipment per tracking number on a PO (`selfId`: the shipment being edited).
+ */
+export function shipmentRuleErrors(
+	po: { status: PoStatus },
+	shipments: Pick<PoShipment, "id" | "trackingNumber">[],
+	trackingNumber: string,
+	selfId?: number,
+): FieldErrors {
+	if (!SHIPPING_PO_STATUSES.includes(po.status)) return { _: "po_no_shipments" };
+	const same = shipmentByTracking(shipments, trackingNumber);
+	return same && same.id !== selfId ? { tracking_number: "duplicate_tracking" } : {};
+}
+
+export async function getPoShipments(db: Db, poId: number) {
+	return db.select().from(poShipments).where(eq(poShipments.poId, poId)).orderBy(asc(poShipments.id));
+}
+
+/** Carriers already used, to suggest them in the form. */
+export async function knownCarriers(db: Db): Promise<string[]> {
+	const rows = await db
+		.selectDistinct({ carrier: poShipments.carrier })
+		.from(poShipments)
+		.orderBy(asc(poShipments.carrier))
+		.limit(100);
+	return rows.map((r) => r.carrier);
+}
+
+export function addShipmentStatement(db: Db, poId: number, s: ShipmentValues, user: string, now: string) {
+	return db
+		.insert(poShipments)
+		.values({ ...s, poId, createdBy: user, updatedBy: user, createdAt: now, updatedAt: now });
+}
+
+export function updateShipmentStatement(
+	db: Db,
+	poId: number,
+	shipmentId: number,
+	s: ShipmentValues,
+	user: string,
+	now: string,
+) {
+	return db
+		.update(poShipments)
+		.set({ ...s, updatedAt: now, updatedBy: user })
+		.where(and(eq(poShipments.id, shipmentId), eq(poShipments.poId, poId)));
+}
+
+export function deleteShipmentStatement(db: Db, poId: number, shipmentId: number) {
+	return db.delete(poShipments).where(and(eq(poShipments.id, shipmentId), eq(poShipments.poId, poId)));
+}
+
+// ---------------------------------------------------------------------------
 // PO lists and details
 
 export type PoFilters = { q?: string; status?: string };
@@ -554,7 +652,11 @@ export async function listPos(db: Db, f: PoFilters = {}) {
 	const conds: SQL[] = [];
 	if (f.q) {
 		const like = likePattern(f.q);
-		conds.push(sql`(${purchaseOrders.number} LIKE ${like} ESCAPE '\\' OR ${suppliers.name} LIKE ${like} ESCAPE '\\')`);
+		// A tracking number finds its PO too (pasted from a carrier's email into the search).
+		conds.push(
+			sql`(${purchaseOrders.number} LIKE ${like} ESCAPE '\\' OR ${suppliers.name} LIKE ${like} ESCAPE '\\'
+				OR EXISTS (SELECT 1 FROM po_shipments s WHERE s.po_id = ${purchaseOrders.id} AND s.tracking_number LIKE ${like} ESCAPE '\\'))`,
+		);
 	}
 	if (!f.status || f.status === "open") conds.push(inArray(purchaseOrders.status, OPEN_PO_STATUSES));
 	else if (f.status !== "all") conds.push(eq(purchaseOrders.status, f.status as PoStatus));
@@ -570,6 +672,17 @@ export async function listPos(db: Db, f: PoFilters = {}) {
 			supplierName: suppliers.name,
 			lineCount: sql<number>`(SELECT count(*) FROM po_lines l WHERE l.po_id = ${purchaseOrders.id})`,
 			totalCents: sql<number>`(SELECT COALESCE(SUM((l.qty_milli * l.unit_price_cents + 500) / 1000), 0) FROM po_lines l WHERE l.po_id = ${purchaseOrders.id})`,
+			// The shipment recorded last, for the list's tracking column.
+			shipmentCount: sql<number>`(SELECT count(*) FROM po_shipments s WHERE s.po_id = ${purchaseOrders.id})`,
+			carrier: sql<
+				string | null
+			>`(SELECT s.carrier FROM po_shipments s WHERE s.po_id = ${purchaseOrders.id} ORDER BY s.id DESC LIMIT 1)`,
+			trackingNumber: sql<
+				string | null
+			>`(SELECT s.tracking_number FROM po_shipments s WHERE s.po_id = ${purchaseOrders.id} ORDER BY s.id DESC LIMIT 1)`,
+			trackingUrl: sql<
+				string | null
+			>`(SELECT s.tracking_url FROM po_shipments s WHERE s.po_id = ${purchaseOrders.id} ORDER BY s.id DESC LIMIT 1)`,
 		})
 		.from(purchaseOrders)
 		.innerJoin(suppliers, eq(purchaseOrders.supplierId, suppliers.id))

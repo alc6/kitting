@@ -5,7 +5,7 @@
 import type { ToolAnnotations } from "@modelcontextprotocol/server";
 import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
-import { assemblies, builds, purchaseOrders } from "../db/schema";
+import { assemblies, builds, type PoShipment, purchaseOrders } from "../db/schema";
 import { getAssembly } from "../domain/assemblies";
 import { AssemblyCycleError, type AssemblyGraph, defaultAssembly } from "../domain/assembly-graph";
 import { getBuild } from "../domain/builds";
@@ -198,6 +198,17 @@ export async function poByNumber(db: Db, number: string) {
 	const found = hit[0] ? await getPo(db, hit[0].id) : undefined;
 	if (!found) throw new ToolError(`No purchase order numbered "${number}". Use list_purchase_orders to find it.`);
 	return found;
+}
+
+/** A PO's shipments as the tools return them (D168). */
+export function shipmentViews(shipments: PoShipment[]) {
+	return shipments.map((s) => ({
+		carrier: s.carrier,
+		trackingNumber: s.trackingNumber,
+		trackingUrl: s.trackingUrl || undefined,
+		shippedAt: s.shippedAt,
+		notes: s.notes || undefined,
+	}));
 }
 
 export function exploding<T>(fn: () => T): T {
