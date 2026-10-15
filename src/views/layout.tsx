@@ -291,7 +291,6 @@ function Header(props: { title: string }) {
 			<search class="ml-auto">
 				<form action="/search" method="get" class="flex items-center">
 					<label class="relative max-md:hidden">
-						<span class="sr-only">{t.common.search}</span>
 						<Icon
 							icon={icons.search}
 							class="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground"
@@ -300,7 +299,8 @@ function Header(props: { title: string }) {
 							type="search"
 							name="q"
 							id="global-search"
-							placeholder={t.app.searchAll}
+							placeholder={t.common.search}
+							aria-label={t.app.searchAll}
 							autocomplete="off"
 							class="h-(--control-h-sm) w-64 bg-muted/50 pr-12 pl-8 shadow-none lg:w-80"
 						/>
