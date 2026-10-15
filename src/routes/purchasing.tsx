@@ -76,6 +76,7 @@ import {
 	type FormValues,
 	LinkTabs,
 	Money,
+	MoreMenu,
 	PageHeader,
 	PostButton,
 	Qty,
@@ -1090,31 +1091,6 @@ async function renderPo(
 								{t.purchasing.exportCsv}
 							</Button>
 						) : null}
-						{canEdit && (po.status === "draft" || po.status === "sent") && !anyReceived ? (
-							<PostButton
-								action={`/purchasing/po/${po.id}/cancel`}
-								label={t.purchasing.cancelPo}
-								confirm={t.purchasing.confirmCancel}
-								icon={icons.ban}
-							/>
-						) : null}
-						{canEdit && (po.status === "sent" || po.status === "partial") ? (
-							<PostButton
-								action={`/purchasing/po/${po.id}/close`}
-								label={t.purchasing.closePo}
-								confirm={t.purchasing.confirmClose}
-								icon={icons.circleCheck}
-							/>
-						) : null}
-						{can(c.var, "purchasing.delete") && isDraft ? (
-							<PostButton
-								action={`/purchasing/po/${po.id}/delete`}
-								label={t.common.delete}
-								confirm={t.common.confirmDelete}
-								variant="destructive"
-								icon={icons.trash}
-							/>
-						) : null}
 						{canReceive ? (
 							<Button href="#receive" variant={isDraft ? "outline" : "default"} icon={icons.truck}>
 								{t.purchasing.receive}
@@ -1128,6 +1104,34 @@ async function renderPo(
 								icon={icons.send}
 							/>
 						) : null}
+						<MoreMenu
+							items={[
+								canEdit &&
+									(po.status === "draft" || po.status === "sent") &&
+									!anyReceived && {
+										label: t.purchasing.cancelPo,
+										icon: icons.ban,
+										action: `/purchasing/po/${po.id}/cancel`,
+										confirm: t.purchasing.confirmCancel,
+										destructive: true,
+									},
+								canEdit &&
+									(po.status === "sent" || po.status === "partial") && {
+										label: t.purchasing.closePo,
+										icon: icons.circleCheck,
+										action: `/purchasing/po/${po.id}/close`,
+										confirm: t.purchasing.confirmClose,
+									},
+								can(c.var, "purchasing.delete") &&
+									isDraft && {
+										label: t.common.delete,
+										icon: icons.trash,
+										action: `/purchasing/po/${po.id}/delete`,
+										confirm: t.common.confirmDelete,
+										destructive: true,
+									},
+							]}
+						/>
 					</>
 				}
 			/>

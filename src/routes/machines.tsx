@@ -44,8 +44,6 @@ import {
 	Card,
 	CardContent,
 	CardEmpty,
-	CardHeader,
-	CardTitle,
 	DecimalField,
 	DetailList,
 	EmptyState,
@@ -55,8 +53,8 @@ import {
 	type FormErrors,
 	type FormValues,
 	Money,
+	MoreMenu,
 	PageHeader,
-	PostButton,
 	Qty,
 	SelectField,
 	Table,
@@ -539,6 +537,10 @@ function MachineForm(props: {
 	errors: FormErrors;
 	submit: string;
 	types: { id: number; name: string }[];
+	/** Where Cancel leads: the machine's page, or the list for a new one. */
+	cancel?: string;
+	/** Focus the name field (a new machine only: an edit starts on the page the user came from). */
+	autofocus?: boolean;
 }) {
 	const { t } = useApp();
 	const p = { values: props.values, errors: props.errors };
@@ -550,7 +552,7 @@ function MachineForm(props: {
 					<form method="post" action={props.action} class="flex flex-col gap-6">
 						<FieldGroup>
 							<div class="grid gap-4 md:grid-cols-3">
-								<TextField name="name" label={t.machines.name} required autofocus {...p} />
+								<TextField name="name" label={t.machines.name} required autofocus={props.autofocus} {...p} />
 								<SelectField
 									name="machine_type_id"
 									label={t.machines.type}
@@ -570,7 +572,7 @@ function MachineForm(props: {
 						</FieldGroup>
 						<div class="flex flex-wrap items-center gap-2">
 							<Button>{props.submit}</Button>
-							<Button variant="outline" href="/machines">
+							<Button variant="outline" href={props.cancel ?? "/machines"}>
 								{t.common.cancel}
 							</Button>
 						</div>
@@ -596,6 +598,7 @@ machineRoutes.get("/new", requirePermission("machines.edit"), async (c) => {
 				errors={{}}
 				submit={t.common.create}
 				types={types}
+				autofocus
 			/>
 		</>,
 	);
@@ -618,6 +621,7 @@ machineRoutes.post("/", requirePermission("machines.edit"), async (c) => {
 					errors={translateErrors(c, errors)}
 					submit={t.common.create}
 					types={await machineTypeOptions(c.var.db)}
+					autofocus
 				/>
 			</>,
 			422,
@@ -634,10 +638,7 @@ machineRoutes.get("/:id", async (c) => {
 	const id = idParam(c);
 	const machine = id ? await getMachine(c.var.db, id) : undefined;
 	if (!machine) return notFound(c);
-	const [type, types] = await Promise.all([
-		getMachineType(c.var.db, machine.machineTypeId),
-		machineTypeOptions(c.var.db),
-	]);
+	const type = await getMachineType(c.var.db, machine.machineTypeId);
 	const canEdit = can(c.var, "machines.edit");
 	const ok = c.req.query("ok");
 	return page(
@@ -653,42 +654,66 @@ machineRoutes.get("/:id", async (c) => {
 					</span>
 				}
 				actions={
-					canEdit && machine.status !== "retired" ? (
-						<PostButton
-							action={`/machines/${machine.id}/retire`}
-							label={t.machines.retire}
-							confirm={t.machines.confirmRetire}
-							icon={icons.archive}
+					<>
+						{canEdit ? (
+							<Button href={`/machines/${machine.id}/edit`} variant="outline" icon={icons.pencil}>
+								{t.common.edit}
+							</Button>
+						) : null}
+						<MoreMenu
+							items={[
+								canEdit &&
+									machine.status !== "retired" && {
+										label: t.machines.retire,
+										icon: icons.archive,
+										action: `/machines/${machine.id}/retire`,
+										confirm: t.machines.confirmRetire,
+									},
+							]}
 						/>
-					) : undefined
+					</>
 				}
 			/>
 			<Flash ok={ok} message={ok === "retired" ? t.machines.retired : undefined} />
-			{canEdit ? (
-				<MachineForm
-					action={`/machines/${machine.id}`}
-					values={machineToForm(machine)}
-					errors={{}}
-					submit={t.common.save}
-					types={types}
-				/>
-			) : (
-				<Card>
-					<CardHeader>
-						<CardTitle>{t.machines.machines}</CardTitle>
-					</CardHeader>
-					<CardContent>
-						<DetailList
-							items={[
-								{ label: t.machines.type, value: type?.name ?? "" },
-								...(machine.notes
-									? [{ label: t.common.notes, value: <span class="whitespace-pre-wrap">{machine.notes}</span> }]
-									: []),
-							]}
-						/>
-					</CardContent>
-				</Card>
-			)}
+			<Card>
+				<CardContent>
+					<DetailList
+						items={[
+							{
+								label: t.machines.type,
+								value: type ? <a href={`/machines/types/${type.id}`}>{type.name}</a> : t.common.none,
+							},
+							{ label: t.machines.status, value: <MachineStatusBadge status={machine.status} /> },
+							{
+								label: t.common.notes,
+								value: machine.notes ? <span class="whitespace-pre-wrap">{machine.notes}</span> : t.common.none,
+							},
+						]}
+					/>
+				</CardContent>
+			</Card>
+		</>,
+	);
+});
+
+machineRoutes.get("/:id/edit", requirePermission("machines.edit"), async (c) => {
+	const t = c.var.t;
+	const id = idParam(c);
+	const machine = id ? await getMachine(c.var.db, id) : undefined;
+	if (!machine) return notFound(c);
+	return page(
+		c,
+		machine.name,
+		<>
+			<PageHeader title={machine.name} />
+			<MachineForm
+				action={`/machines/${machine.id}`}
+				values={machineToForm(machine)}
+				errors={{}}
+				submit={t.common.save}
+				types={await machineTypeOptions(c.var.db)}
+				cancel={`/machines/${machine.id}`}
+			/>
 		</>,
 	);
 });
@@ -713,6 +738,7 @@ machineRoutes.post("/:id", requirePermission("machines.edit"), async (c) => {
 					errors={translateErrors(c, errors)}
 					submit={t.common.save}
 					types={await machineTypeOptions(c.var.db)}
+					cancel={`/machines/${machine.id}`}
 				/>
 			</>,
 			422,

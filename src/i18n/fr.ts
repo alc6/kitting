@@ -42,6 +42,7 @@ export const fr: Dict = {
 		save: "Enregistrer",
 		cancel: "Annuler",
 		close: "Fermer",
+		moreActions: "Plus d’actions",
 		create: "Créer",
 		edit: "Modifier",
 		delete: "Supprimer",
@@ -546,6 +547,8 @@ export const fr: Dict = {
 		salePriceHint: "Laisser vide pour reprendre le prix du produit ({price}).",
 		salePriceHintNone: "Laisser vide pour reprendre le prix du produit (pas encore saisi).",
 		salePriceInherited: "prix du produit",
+		productionMachine: "Machine",
+		productionTime: "Temps machine",
 		batch: "Lot",
 		batchQty: "Taille de lot",
 		batchHint:
@@ -796,6 +799,18 @@ export const fr: Dict = {
 			stock:
 				"Fixe le stock à la quantité comptée en créant un mouvement d’inventaire pour l’écart. Articles suivis par n° de série : une ligne par numéro.",
 		},
+		summaries: {
+			suppliers: "Noms et coordonnées.",
+			parts: "Le catalogue : références, types, unités, coûts.",
+			part_suppliers: "Ce que propose chaque fournisseur : référence, prix, conditions.",
+			price_history: "Prix d’avant Kitting.",
+			machine_types: "Types de machine et leur taux horaire.",
+			machines: "Les machines de chaque type.",
+			assemblies: "Nomenclatures, une ligne par composant.",
+			stock: "Quantités comptées pour démarrer.",
+		},
+		importAction: "Importer…",
+		importTitle: "Importer : {type}",
 		noAdmin: "Seuls les administrateurs peuvent confirmer un import. L’aperçu reste possible.",
 		backupTitle: "Sauvegarde",
 		backupIntro:

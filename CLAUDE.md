@@ -153,7 +153,7 @@ was built with; `npx skills update` refreshes it.
   before custom classes. Never run `shadcn init`/`add` or add React/Radix: read a component's
   canonical recipe with `npx shadcn@latest view @shadcn/<name>` and port it to `src/views/ui.tsx`.
 - Components live in `src/views/ui.tsx` (Button, Badge, Card*, Table*, Field*, Alert, EmptyState,
-  LinkTabs, ToggleLinks, StatCard, DetailList, PageHeader…), icons in `src/views/icons.tsx`
+  LinkTabs, ToggleLinks, StatCard, DetailList, PageHeader, Dialog, MoreMenu, InlineEdit…), icons in `src/views/icons.tsx`
   (Lucide, imported by name). Pages compose them; avoid one-off styled `div`s.
 - Styling: Tailwind CSS v4. Tokens and the base layer are in `src/styles/app.css`;
   `npm run css` builds `public/static/app.css` (gitignored; `npm run dev` and deploy build it,
