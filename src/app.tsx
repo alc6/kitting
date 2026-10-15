@@ -11,6 +11,7 @@ import { assemblyRoutes } from "./routes/assemblies";
 import { buildRoutes } from "./routes/builds";
 import { authorizeRoutes, connectedAppRoutes } from "./routes/connect";
 import { dashboardRoutes } from "./routes/dashboard";
+import { attachRoutes, fileRoutes } from "./routes/files";
 import { historyRoutes } from "./routes/history";
 import { imageRoutes } from "./routes/images";
 import { importRoutes } from "./routes/import";
@@ -97,6 +98,8 @@ export function createApp() {
 	app.route("/search", searchRoutes);
 	app.route("/users", userRoutes);
 	app.route("/history", historyRoutes);
+	app.route("/files", fileRoutes);
+	app.route("/", attachRoutes);
 	// MCP (optional, D117): consent and connected apps, behind Access like every page.
 	app.route("/authorize", authorizeRoutes);
 	app.route("/connected-apps", connectedAppRoutes);

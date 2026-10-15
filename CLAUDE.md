@@ -54,6 +54,7 @@ was built with; `npx skills update` refreshes it.
   `stock.ts` (ledger, counts, valuation), `builds.ts` (pick list, completion batch),
   `purchasing.ts` (shortage engine, POs, receipts), `backup.ts` (JSON export/restore),
   `tree-layout.ts` (pure diagram layout), `search.ts` (global search), `offers.ts` (supplier offers),
+  `files.ts` (attached files: streamed storage, statements, revision copies), `file-types.ts` (formats from content),
   `prices.ts` (price history, dated standard costs), `costing.ts` (pure weighted average replay),
   `margins.ts` (planned and actual margins), `margin-history.ts` (margins over time, replayed from the
   price history), `images.ts` (product images in R2), `users.ts` (who has which role, cost visibility option),
@@ -65,12 +66,13 @@ was built with; `npx skills update` refreshes it.
   `src/domain/import/`: one importer per CSV type, all implementing `Importer`.
 - `src/routes/*.tsx`: one Hono router per area, with its page components.
 - `src/views/`: layout (sidebar, header), shadcn-style components (`ui.tsx`), icons (`icons.tsx`),
-  assembly diagram (`assembly-diagram.tsx`), time charts (`chart.tsx`), machine time tables (`machines.tsx`), render
+  assembly diagram (`assembly-diagram.tsx`), time charts (`chart.tsx`), machine time tables (`machines.tsx`), the Files cards (`files.tsx`), render
   helpers, view context (`useApp()`: locale, theme, sidebar…).
 - Part picker (D138): `PartPicker`/`PartPickerDialog` in `src/views/part-picker.tsx` (dialog after the form, scoped by
   `kinds`/`exclude` to what the form accepts), results from `GET /parts/pick` (`src/routes/part-picker.tsx`, `src/domain/part-picker.ts`).
 - `src/styles/app.css`: Tailwind source: shadcn tokens (light/dark), base layer, legacy classes.
-- `src/lib/`: units (fixed-point), CSV, validation (zod field builders), SQL helpers, batch.
+- `src/lib/`: units (fixed-point), CSV, validation (zod field builders), SQL helpers, batch, `multipart.ts` (streaming
+  reader of uploads, D161).
 - `src/i18n/`: `en.ts` defines the `Dict` type; `fr.ts` must match it (compile error otherwise).
 - `plugins/kitting/`: the Claude plugin (D132): `.claude-plugin/plugin.json`, `.mcp.json` (connector URL from
   `KITTING_MCP_URL`), the skill in `skills/kitting/` (`SKILL.md` + `references/`) and `evals/`. The repository's
@@ -120,6 +122,10 @@ was built with; `npx skills update` refreshes it.
   adds a row in the same batch (`priceRecordStatement`, or go through `savePartStatements`,
   `saveOfferStatements`, `setStandardCostStatements`, `assemblySalePriceStatements`). Prices paid are the receipt moves.
   Machine type rates follow the same rule in `machine_rate_history` (go through `saveMachineTypeStatements`).
+- Attached files (D159–D165) are rows of `files` (a part's or one assembly revision's) pointing at objects under
+  `files/` in the same bucket: go through `filesBucket(c.env)`. Read uploads with `readFileForm()` (streamed, never
+  `parseBody()`: a 100 MB body does not fit in memory), and never delete a file object: rows are detached, copied
+  into new revisions and restored by undo, and several rows can share one object.
 - Supplier terms live in `part_suppliers` (one offer per part and supplier); `parts.supplier_id` is the
   preferred one. `parts.supplier_ref/moq_milli/pack_size_milli/lead_days` are deprecated: never use them.
 - Product images live in the optional `IMAGES` R2 bucket: always go through `imagesBucket(c.env)` (null when
@@ -209,7 +215,7 @@ was built with; `npx skills update` refreshes it.
   result field to its list), or when `plugins/kitting/.claude-plugin/plugin.json`'s version differs from
   `package.json`'s, or when `SERVER_INFO.version` (`src/mcp/server.ts`) does: bump the three together. The skill's folder layout, the connector URL (`KITTING_MCP_URL`, never a
   real domain) and `npm run skill:zip` are described in D132–D135.
-- Never over MCP: permanent deletes, undo, user management, backups, imports, image uploads (`NEVER_OVER_MCP` and
+- Never over MCP: permanent deletes, undo, user management, backups, imports, image uploads, file uploads and edits (`NEVER_OVER_MCP` and
   the tool-name check in `test/mcp-scopes.test.ts`). Assemblies change only through draft revisions (D128).
 
 ## Tests

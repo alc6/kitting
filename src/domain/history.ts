@@ -215,9 +215,21 @@ export async function changeSetUsers(db: Db): Promise<string[]> {
 export type HistoryTarget = { kind: "part" | "supplier" | "assembly" | "po"; id: number };
 
 const TARGETS: Record<HistoryTarget["kind"], { table: string; children: { table: string; column: string }[] }> = {
-	part: { table: "parts", children: [{ table: "part_suppliers", column: "part_id" }] },
+	part: {
+		table: "parts",
+		children: [
+			{ table: "part_suppliers", column: "part_id" },
+			{ table: "files", column: "part_id" },
+		],
+	},
 	supplier: { table: "suppliers", children: [{ table: "part_suppliers", column: "supplier_id" }] },
-	assembly: { table: "assemblies", children: [{ table: "assembly_lines", column: "assembly_id" }] },
+	assembly: {
+		table: "assemblies",
+		children: [
+			{ table: "assembly_lines", column: "assembly_id" },
+			{ table: "files", column: "assembly_id" },
+		],
+	},
 	po: { table: "purchase_orders", children: [{ table: "po_lines", column: "po_id" }] },
 };
 
@@ -261,6 +273,8 @@ const HIDDEN_FIELDS: Record<string, readonly string[]> = {
 	assembly_lines: ["assembly_id"],
 	po_lines: ["po_id"],
 	part_suppliers: ["part_id", "supplier_id"],
+	// The owner is in the file's name; the hash and the object key say nothing to a person (size and date do).
+	files: ["part_id", "assembly_id", "sha256", "object_key"],
 };
 
 export type FieldChange = { column: string; before: unknown; after: unknown };
@@ -358,6 +372,12 @@ export function rowName(table: string, row: Snapshot | null, labels: Labels): st
 		case "machine_types":
 		case "machines":
 			return s("name");
+		case "files":
+			return `${s("name")} (${
+				row.part_id !== null && row.part_id !== undefined
+					? labelOf(labels, "parts", row.part_id)
+					: labelOf(labels, "assemblies", row.assembly_id)
+			})`;
 		default:
 			return `#${s("id")}`;
 	}

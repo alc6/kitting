@@ -57,6 +57,13 @@
       "when": 1791961808070,
       "tag": "0007_machines",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1792009319953,
+      "tag": "0008_files",
+      "breakpoints": true
     }
   ]
 }

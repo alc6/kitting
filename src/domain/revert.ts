@@ -39,6 +39,7 @@ export const TABLE_ACTIONS: Record<string, Action> = {
 	settings: "users.manage",
 	machine_types: "machines.edit",
 	machines: "machines.edit",
+	files: "files.edit",
 };
 
 /** Price columns whose changes the append-only price history must follow (CLAUDE.md, "Data rules"). */
@@ -308,7 +309,7 @@ function guard(db: Db, condition: SQL): Statement {
  */
 function matchesSnapshot(table: SQLiteTable, name: string, rowId: number, snapshot: Row) {
 	const checks = dataColumns(table, snapshot).map((c) => {
-		if (!/^[a-z_]+$/.test(c)) throw new Error(`unexpected column name ${c}`);
+		if (!/^[a-z_][a-z0-9_]*$/.test(c)) throw new Error(`unexpected column name ${c}`);
 		return sql`t.${sql.identifier(c)} IS json_extract(s.j, ${sql.raw(`'$.${c}'`)})`;
 	});
 	return sql`EXISTS (SELECT 1 FROM ${sql.identifier(name)} AS t, (SELECT ${JSON.stringify(snapshot)} AS j) AS s

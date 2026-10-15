@@ -11,6 +11,7 @@ import {
 	partId,
 	postForm,
 	request,
+	rows,
 	seedSql,
 	setRole,
 	stmt,
@@ -201,6 +202,57 @@ describe("read tools", () => {
 			"warm:active",
 		]);
 		expect(lamp.data.rolled_up_cost).toMatchObject({ unit_cost: "37.83", incomplete: true, missing_costs: ["MANUAL"] });
+	});
+
+	it("lists the files of a part, of an assembly revision and of a build, with their download links", async () => {
+		await loadDemo();
+		const lamp = await partId("LAMP-DESK");
+		const rev = await assemblyId("LAMP-DESK");
+		const file = (owner: string, id: number, name: string, kind: string, format: string) =>
+			stmt(
+				`INSERT INTO files (${owner}, name, kind, format, size_bytes, sha256, object_key, note, uploaded_at, uploaded_by,
+					created_by, updated_by) VALUES (?, ?, ?, ?, 2048, 'ab', 'files/k', '', '2026-03-02T10:00:00.000Z',
+					'designer@example.com', 'u', 'u')`,
+				id,
+				name,
+				kind,
+				format,
+			);
+		await changeSql(
+			"Attach files",
+			file("part_id", lamp, "lamp label.dxf", "drawing", "dxf"),
+			file("assembly_id", rev, "assembly guide.pdf", "instructions", "pdf"),
+		);
+		const [label, guide] = await rows<{ id: number }>("SELECT id FROM files ORDER BY id");
+		const token = await connect(["catalog:read", "builds:read"]);
+		const part = await callTool(token, "get_part", { ref: "LAMP-DESK" });
+		expect(part.data.files).toEqual([
+			{
+				name: "lamp label.dxf",
+				kind: "drawing",
+				format: "dxf",
+				size_bytes: 2048,
+				uploaded_at: "2026-03-02T10:00:00.000Z",
+				uploaded_by: "designer@example.com",
+				download_path: `/files/${label?.id}/download`,
+				download_url: `https://kitting.example.com/files/${label?.id}/download`,
+			},
+		]);
+		const tree = await callTool(token, "get_assembly", { assembly: "LAMP-DESK" });
+		expect(tree.data.files).toEqual([expect.objectContaining({ name: "assembly guide.pdf", kind: "instructions" })]);
+		const build = await callTool(token, "get_build", {
+			number: await buildNumber(await planBuild("LAMP-DESK", { serial: "L-9" })),
+		});
+		expect(
+			(build.data.files as { name: string; attached_to: string; download_path: string }[]).map((f) => [
+				f.name,
+				f.attached_to,
+				f.download_path,
+			]),
+		).toEqual([
+			["assembly guide.pdf", "assembly", `/files/${guide?.id}/download`],
+			["lamp label.dxf", "part", `/files/${label?.id}/download`],
+		]);
 	});
 
 	it("returns an assembly tree with per-parent and cumulative quantities and the cost roll-up", async () => {

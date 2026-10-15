@@ -186,13 +186,33 @@ Making something in-house as one flow, from the part outwards (D153–D157); no 
 - [x] A machine type and the machines owned in one form (D157)
 - [x] Manufacturing vocabulary on the pages (D158)
 
+## M16: Files ✅
+
+CAD models, print files, drawings, instructions and datasheets on parts and assembly revisions (D159–D165).
+
+- [x] `files` table (migration 0008, a new tracked table): a part's own files and each revision's, with a kind, a
+      detected format, size, who uploaded it when and a note (D159)
+- [x] Objects in the existing optional bucket under `files/`, identical content stored once; removing detaches and
+      can be undone; no bucket, no file controls (D160)
+- [x] Streamed uploads up to 100 MB (own multipart reader, R2 multipart upload), size checked before reading, from a
+      plain form and a tablet (D161)
+- [x] STEP, 3MF, STL, PDF, DXF, JPEG, PNG, WebP recognised from their content; SVG, HTML and scripts refused (D162)
+- [x] Downloads as attachments with nosniff and a sandbox policy; PDFs and images open inline (D163)
+- [x] New revisions and variants copy the files by reference; build pages list the revision's and the part's files
+      (D164)
+- [x] `files.edit` (planner); `get_part`, `get_assembly` and `get_build` list files over MCP, uploads stay in the app
+      (D165)
+
 ## After v1 (ideas, not planned)
 
 - MCP: Client ID Metadata Documents (needs the `global_fetch_strictly_public` compatibility flag, D123).
 - Serial inventory (which serials are in stock) enforced at build time, if the shop starts scanning receipts.
 - Reservations of stock for planned builds; build scheduling.
 - PDF purchase orders.
-- Product images in the assembly diagram and on build pick lists; a purge of images orphaned by a restore.
+- Product images in the assembly diagram and on build pick lists; a purge of the R2 objects no row references (photos
+  orphaned by a restore, removed or replaced files, D160).
+- Files, beyond M16: 3D previews in the browser, range requests for large PDFs, files of sub-assemblies built inside a
+  build on its page, a copy of a previous revision's files when `assemblies.csv` creates one.
 - A "plan all" button on the production requirements (D156 lists what to make; one build per row today, as build numbers are assigned
   one at a time).
 - Where-used diagram (the assembly diagram reversed) on the part page; SVG/PDF export of diagrams.
@@ -201,8 +221,7 @@ Making something in-house as one flow, from the part outwards (D153–D157); no 
 - Customer-specific prices, quotes (out of scope for v1).
 - History: prune or archive old change sets; undo a whole import from the import page.
 - In-house production, beyond M14: mixed plates and co-products (several parts from one run); scrap and yield
-  tracking; substitute materials (any colour of filament); print file (3MF) attachments on a recipe; counting filament
-  by weighing spools; printer scheduling.
+  tracking; substitute materials (any colour of filament); counting filament by weighing spools; printer scheduling.
 - Machines, beyond M14: several machine steps per recipe (a routing), today one sub-assembly per step; recording
   which machine ran a build (usage per machine); creating and editing machines over MCP; past machine rates entered
   as history (D142 for rates).

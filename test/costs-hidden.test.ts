@@ -118,6 +118,16 @@ async function seed() {
 		rate_cents: RATE,
 	});
 	const machine = (await one<{ id: number }>("SELECT id FROM machines WHERE name = 'PRINTER-1'")).id;
+	// A print file on the clip's recipe: listed on its assembly and build pages, edited on its own page.
+	await changeSql(
+		"Attach a file",
+		stmt(
+			`INSERT INTO files (assembly_id, name, kind, format, size_bytes, sha256, object_key, uploaded_at, uploaded_by,
+				created_by, updated_by) VALUES (?, 'clip plate.3mf', 'print', '3mf', 4096, 'ab', 'files/clip', '2026-01-01', 'seed', 'seed', 'seed')`,
+			clipAssembly,
+		),
+	);
+	const file = (await one<{ id: number }>("SELECT max(id) AS id FROM files")).id;
 	return {
 		box,
 		widget,
@@ -133,6 +143,7 @@ async function seed() {
 		clip,
 		clipAssembly,
 		clipBuild,
+		file,
 		machine,
 	};
 }
@@ -197,6 +208,7 @@ function pages(s: Awaited<ReturnType<typeof seed>>): string[] {
 		"/import/machine_types/export.csv",
 		`/margins/assemblies/${s.clipAssembly}`,
 		"/import/backup.json",
+		`/files/${s.file}/edit`,
 	];
 }
 

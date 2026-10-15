@@ -12,6 +12,8 @@ maintain, and a small workshop fits in the free plans.
 ## Features
 
 - Parts you buy, make or sell as kits, with units, standard costs, selling prices and photos.
+- Files on parts and on each assembly revision: CAD models (STEP), print files (3MF, STL), drawings, assembly
+  instructions and datasheets, listed on the build pages of the revision being made.
 - Suppliers, with several offers per part (price, MOQ, pack size, lead time) and a history of every price.
 - Assemblies (bills of materials) with variants and revisions, cost roll-up, a structure diagram and
   where-used. An assembly can make a batch (the 24 parts of a print plate) and take machine time.
@@ -55,8 +57,8 @@ part.
 
 You need a Cloudflare account with a domain on it. The short version:
 
-1. Create a D1 database. Optionally, create an R2 bucket for product photos and a KV namespace for the MCP
-   server.
+1. Create a D1 database. Optionally, create an R2 bucket for product photos and files, and a KV namespace for the
+   MCP server.
 2. Put Cloudflare Access in front of the hostname you'll use.
 3. Copy `wrangler.example.jsonc` to `wrangler.jsonc` and fill in the database ID, the hostname and the settings
    below.
