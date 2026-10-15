@@ -275,7 +275,8 @@ Short log of choices made where the brief left room. Newest at the bottom of eac
   "Use average as standard cost" (refused while the average is incomplete) and "Use preferred offer price
   as standard cost" write the history with a note in the user's language. The price chart is server-rendered
   SVG: standard cost as a step line, prices paid as dots.
-- **D98. Margin history is derived, never stored.** Each sellable item (`/margins/assemblies/:id`,
+- **D98. Margin history is derived, never stored.** *(Amended by D167: before a revision's own price history
+  starts, its selling price is its variant's, from the revision active then.)* Each sellable item (`/margins/assemblies/:id`,
   `/margins/parts/:id`) replays the price history (`src/domain/margin-history.ts`, pure core): one planned
   point per day on which the standard cost of a component of its roll-up (buy and fee parts, make and kit
   parts without an active assembly; a rolled-up sub-assembly's own standard cost does not count) or its selling
@@ -968,6 +969,39 @@ change (no migration).
   revision takes the price of its variant's active revision, else of its newest; with the column, the file decides
   (empty: none). The price is written in the change set that creates the revision, with a `price_history` row (kind
   `sale`, the new assembly, source `form` or `import`) as for any new assembly with a price; undoing the creation
-  removes both (the row cascades). MCP assembly results carry the variant's `sale_price`. Known limit: the margin
-  history of a revision replays only its own price rows, so before the revision existed it shows the part's price, and
-  a price change on the day it was created.
+  removes both (the row cascades). MCP assembly results carry the variant's `sale_price`. Known limit, lifted by D167:
+  the margin history of a revision replayed only its own price rows, so before the revision existed it showed the
+  part's price, and a price change on the day it was created.
+- **D167. Margin history follows the variant across its revisions** (amends D98 and D166). The planned series of a
+  revision replayed only its own selling price rows, so a revision created by D166 with its variant's price showed the
+  part's price before it existed, then a price change on its creation day that never happened. A revision's selling
+  price on a day is now (`revisionSalePriceAt`, `src/domain/margin-history.ts`): from its first own price row on, its
+  own as before (cleared: the part's, never an earlier revision's); before that row, the price of the variant's
+  revision that was active that day, at that revision's level (its own price, else the part's). Which revision was
+  active when is read from the change history: the `change_log` rows of the variant's assemblies whose status became
+  `active` (`variantActivations`, dated by their change set, UTC days like `valid_from`). The price rows cannot tell,
+  and the current status cannot either: a draft can be archived without ever being active, an archived revision can go
+  back to draft.
+  - *Kept prices.* A revision created with its variant's price shows no change; one created with another price
+    (copied from a repriced draft, or repriced since) shows the change on the day of its first own row.
+  - *Drafts.* A draft's price counts only from its activation, so repricing a draft moves nothing until it is
+    activated; a draft never activated, even archived since, never counts in another revision's history. An older
+    revision activated again counts again from that day.
+  - *Revisions without a price.* An active revision without a price of its own (created before D166, or by an import
+    with an empty `sale_price`) shows the part's price meanwhile, which is what Margins listed.
+  - *Before the history.* Before the first logged activation, the first revision activated applies (as a cost before
+    its history uses its first value, D98), so prices dated in the past (D142, or an import's rows) still follow the
+    variant. A revision older than the change history (its first logged change is not its insert, or it has none)
+    counts as active before it unless it was a draft then (its status before that first change, else today's): oldest
+    first, the one active when the history started last. A draft archived before the history started cannot be told
+    from a once-active one. With no activation at all, a revision's own rows apply as before. An activation before the
+    series starts adds no point.
+  - *Actual points are unchanged.* A build is priced by its own revision's rows on the day it was completed, and that
+    revision existed by then, with its price row from its first day since D166 (before, the part's price, which
+    applied to it). The history of a part sold without assembly is unchanged.
+  - *Code.* The pure core takes the activations and the revisions' current prices (`Variant`); `marginHistory` loads
+    them, one more query on `change_log` by row id.
+  - *Rejected.* The revision a new one was copied from (not stored); the newest earlier revision by id or by status
+    (an abandoned draft archived without activation would leak, and an older revision activated again would be
+    missed); merging the rows of every once-active revision (a draft's repricing would show before its activation, and
+    would hide a later change of the active one).
