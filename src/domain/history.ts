@@ -230,7 +230,13 @@ const TARGETS: Record<HistoryTarget["kind"], { table: string; children: { table:
 			{ table: "files", column: "assembly_id" },
 		],
 	},
-	po: { table: "purchase_orders", children: [{ table: "po_lines", column: "po_id" }] },
+	po: {
+		table: "purchase_orders",
+		children: [
+			{ table: "po_lines", column: "po_id" },
+			{ table: "po_shipments", column: "po_id" },
+		],
+	},
 };
 
 /** The changes of one object and its lines (or offers), grouped by change set, newest first. */
@@ -272,6 +278,7 @@ const HIDDEN_FIELDS: Record<string, readonly string[]> = {
 	parts: ["supplier_ref", "moq_milli", "pack_size_milli", "lead_days"],
 	assembly_lines: ["assembly_id"],
 	po_lines: ["po_id"],
+	po_shipments: ["po_id"],
 	part_suppliers: ["part_id", "supplier_id"],
 	// The owner is in the file's name; the hash and the object key say nothing to a person (size and date do).
 	files: ["part_id", "assembly_id", "sha256", "object_key"],
@@ -365,6 +372,8 @@ export function rowName(table: string, row: Snapshot | null, labels: Labels): st
 			return s("number");
 		case "po_lines":
 			return `${labelOf(labels, "parts", row.part_id)} (${labelOf(labels, "purchase_orders", row.po_id)})`;
+		case "po_shipments":
+			return `${s("carrier")} ${s("tracking_number")} (${labelOf(labels, "purchase_orders", row.po_id)})`;
 		case "users":
 			return s("email");
 		case "settings":

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { computeShortages } from "../src/domain/purchasing";
+import { revertChangeSet } from "../src/domain/revert";
 import {
 	assemblyId,
 	insertPart,
@@ -12,6 +13,7 @@ import {
 	request,
 	rows,
 	setRole,
+	TESTER,
 	testDb,
 } from "./helpers";
 
@@ -260,6 +262,164 @@ describe("purchase orders", () => {
 			.flatMap((g) => g.lines)
 			.find((l) => l.part.ref === "BASE-PLATE");
 		expect(plate?.netMilli).toBe(1000); // need 5 - on hand 4
+	});
+
+	it("records, edits and removes shipments on sent POs, listed and searchable by tracking number", async () => {
+		const id = await draftPo([["BOX-LAMP", "10"]]);
+		const shipment = {
+			carrier: "Parcel Co",
+			tracking_number: "PC123",
+			tracking_url: "",
+			shipped_at: "",
+			shipment_notes: "",
+		};
+		expect(await (await request(`/purchasing/po/${id}`)).text()).not.toContain('id="shipments"');
+		expect((await postForm(`/purchasing/po/${id}/shipments`, shipment)).headers.get("Location")).toBe(
+			`/purchasing/po/${id}?err=po_no_shipments`,
+		);
+		await postForm(`/purchasing/po/${id}/send`, {});
+
+		const bad = await postForm(`/purchasing/po/${id}/shipments`, {
+			...shipment,
+			carrier: "",
+			tracking_url: "javascript:alert(1)",
+		});
+		expect(bad.status).toBe(422);
+		const badHtml = await bad.text();
+		expect(badHtml).toContain("Required.");
+		expect(badHtml).toContain("Use a link starting with https:// or http://.");
+
+		const added = await postForm(`/purchasing/po/${id}/shipments`, {
+			...shipment,
+			tracking_url: "https://track.example/PC123",
+			shipped_at: "2026-10-14",
+		});
+		expect(added.headers.get("Location")).toBe(`/purchasing/po/${id}?ok=shipment_saved#shipments`);
+		const row = await one<{ id: number }>("SELECT * FROM po_shipments");
+		expect(row).toMatchObject({
+			po_id: id,
+			carrier: "Parcel Co",
+			tracking_number: "PC123",
+			tracking_url: "https://track.example/PC123",
+			shipped_at: "2026-10-14",
+		});
+		const pageHtml = await (await request(`/purchasing/po/${id}?ok=shipment_saved`)).text();
+		expect(pageHtml).toContain("Shipment saved.");
+		expect(pageHtml).toContain('href="https://track.example/PC123" target="_blank" rel="noopener noreferrer"');
+
+		const dup = await postForm(`/purchasing/po/${id}/shipments`, { ...shipment, tracking_number: "pc123" });
+		expect(dup.status).toBe(422);
+		expect(await dup.text()).toContain("This tracking number is already on this PO.");
+
+		const list = await (await request("/purchasing/po")).text();
+		expect(list).toContain("Tracking");
+		expect(list).toContain("PC123");
+		expect(await (await request("/purchasing/po?q=PC12&status=all")).text()).toContain(`href="/purchasing/po/${id}"`);
+		expect(await (await request("/search?q=PC123")).text()).toContain(`/purchasing/po/${id}`);
+
+		const edit = await (await request(`/purchasing/po/${id}?shipment=${row.id}`)).text();
+		expect(edit).toContain(`action="/purchasing/po/${id}/shipments/${row.id}"`);
+		expect(edit).toContain('value="https://track.example/PC123"');
+		await postForm(`/purchasing/po/${id}/shipments/${row.id}`, { ...shipment, shipment_notes: "2 boxes" });
+		expect(await one("SELECT tracking_url, notes FROM po_shipments")).toEqual({ tracking_url: "", notes: "2 boxes" });
+
+		await setRole("operator");
+		expect((await postForm(`/purchasing/po/${id}/shipments`, shipment, NOT_ADMIN)).status).toBe(403);
+		const seen = await (await request(`/purchasing/po/${id}`, {}, NOT_ADMIN)).text();
+		expect(seen).toContain("PC123");
+		expect(seen).not.toContain(`action="/purchasing/po/${id}/shipments"`);
+		await setRole("planner");
+
+		const removed = await postForm(`/purchasing/po/${id}/shipments/${row.id}/delete`, {});
+		expect(removed.headers.get("Location")).toBe(`/purchasing/po/${id}?ok=shipment_removed#shipments`);
+		expect(await rows("SELECT id FROM po_shipments")).toEqual([]);
+		const history = await (await request(`/purchasing/po/${id}/history`)).text();
+		expect(history).toContain("Remove shipment PC123 from PO");
+		expect(history).toContain("Add shipment PC123 to PO");
+	});
+
+	it("keeps shipments to their PO and status, one per tracking number ignoring case, undo included", async () => {
+		const first = await draftPo([["BOX-LAMP", "10"]]);
+		const other = poId(
+			await postForm("/purchasing/po", {
+				supplier_id: String(await supplierId("Lumen Parts Co")),
+				expected_at: "",
+				notes: "",
+			}),
+		);
+		await postForm(`/purchasing/po/${other}/lines`, { part: "BOX-LAMP", qty: "5", price: "" });
+		for (const id of [first, other]) await postForm(`/purchasing/po/${id}/send`, {});
+		const add = (id: number, tracking: string, url = "") =>
+			postForm(`/purchasing/po/${id}/shipments`, {
+				carrier: "Parcel Co",
+				tracking_number: tracking,
+				tracking_url: url,
+				shipped_at: "",
+				shipment_notes: "",
+			});
+		const shipmentId = async (tracking: string) =>
+			(await one<{ id: number }>("SELECT id FROM po_shipments WHERE tracking_number = ?", tracking)).id;
+
+		// The PO's own notes and the shipment's notes are two fields with two ids.
+		const page = await (await request(`/purchasing/po/${first}`)).text();
+		expect(page.match(/id="f-notes"/g)).toHaveLength(1);
+		expect(page.match(/id="f-shipment_notes"/g)).toHaveLength(1);
+
+		expect((await add(first, "AA-1", "http://track.example/AA-1")).status).toBe(303);
+		expect((await add(first, "BB-2")).status).toBe(303);
+		const bb = await shipmentId("BB-2");
+		const renamed = await postForm(`/purchasing/po/${first}/shipments/${bb}`, {
+			carrier: "Parcel Co",
+			tracking_number: "aa-1",
+			tracking_url: "",
+			shipped_at: "",
+			shipment_notes: "",
+		});
+		expect(renamed.status).toBe(422);
+		expect(await renamed.text()).toContain("This tracking number is already on this PO.");
+
+		// A shipment is reached through its own PO only.
+		expect(
+			(await postForm(`/purchasing/po/${other}/shipments/${bb}`, { carrier: "X", tracking_number: "X" })).status,
+		).toBe(404);
+		expect((await postForm(`/purchasing/po/${other}/shipments/${bb}/delete`, {})).status).toBe(404);
+		expect(await (await request(`/purchasing/po/${other}?shipment=${bb}`)).text()).not.toContain(`/shipments/${bb}"`);
+
+		// Removed, then entered again in another case: undoing the removal would make two.
+		expect((await postForm(`/purchasing/po/${first}/shipments/${bb}/delete`, {})).status).toBe(303);
+		const removal = (await one<{ id: number }>("SELECT max(id) AS id FROM change_sets")).id;
+		expect((await add(first, "bb-2")).status).toBe(303);
+		const undo = await revertChangeSet(testDb(), { role: "admin", seeCosts: true }, removal, {
+			user: TESTER,
+			summary: (s) => `Undo #${s.id}: ${s.summary}`,
+		});
+		expect(undo).toMatchObject({ ok: false, reason: "conflict" });
+		expect(await rows("SELECT tracking_number FROM po_shipments WHERE po_id = ? ORDER BY id", first)).toEqual([
+			{ tracking_number: "AA-1" },
+			{ tracking_number: "bb-2" },
+		]);
+
+		// A cancelled PO keeps its shipments, read-only.
+		await postForm(`/purchasing/po/${other}/shipments`, {
+			carrier: "Parcel Co",
+			tracking_number: "CC-3",
+			tracking_url: "",
+			shipped_at: "",
+			shipment_notes: "",
+		});
+		expect((await postForm(`/purchasing/po/${other}/cancel`, {})).status).toBe(303);
+		const cc = await shipmentId("CC-3");
+		expect(
+			(
+				await postForm(`/purchasing/po/${other}/shipments/${cc}`, { carrier: "X", tracking_number: "CC-3" })
+			).headers.get("Location"),
+		).toBe(`/purchasing/po/${other}?err=po_no_shipments`);
+		expect((await postForm(`/purchasing/po/${other}/shipments/${cc}/delete`, {})).headers.get("Location")).toBe(
+			`/purchasing/po/${other}?err=po_no_shipments`,
+		);
+		const cancelled = await (await request(`/purchasing/po/${other}`)).text();
+		expect(cancelled).toContain("CC-3");
+		expect(cancelled).not.toContain(`action="/purchasing/po/${other}/shipments`);
 	});
 
 	it("deletes drafts for admins only", async () => {

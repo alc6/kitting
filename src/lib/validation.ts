@@ -10,6 +10,16 @@ const issue = (ctx: z.RefinementCtx, message: string) => {
 
 export const REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.\-/]*$/;
 
+/** An absolute http:// or https:// URL with a host. */
+export function isHttpUrl(v: string): boolean {
+	try {
+		const u = new URL(v);
+		return (u.protocol === "https:" || u.protocol === "http:") && u.hostname !== "";
+	} catch {
+		return false;
+	}
+}
+
 export const field = {
 	text: (max = 2000) => z.string().trim().max(max, "too_long"),
 	required: (max = 200) => z.string().trim().min(1, "required").max(max, "too_long"),
@@ -99,6 +109,13 @@ export const field = {
 				if (v === "") return null;
 				return /^\d+$/.test(v) ? Number(v) : issue(ctx, "invalid");
 			}),
+	/** Optional http(s) link; empty -> "". Other schemes (javascript:, data:…) are refused: pages render it as a link. */
+	url: (max = 2000) =>
+		z
+			.string()
+			.trim()
+			.max(max, "too_long")
+			.refine((v) => v === "" || isHttpUrl(v), "invalid_url"),
 	/** Optional YYYY-MM-DD date; empty -> null. */
 	date: () =>
 		z

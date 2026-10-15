@@ -134,6 +134,14 @@ const CASES: Record<string, { insert: (f: Fixtures) => D1PreparedStatement; upda
 			),
 		update: "UPDATE po_lines SET qty_milli = 6000 WHERE id = ?",
 	},
+	po_shipments: {
+		insert: (f) =>
+			stmt(
+				"INSERT INTO po_shipments (po_id, carrier, tracking_number, created_by, updated_by) VALUES (?, 'Parcel Co', 'TRK-1', 'u', 'u') RETURNING id",
+				f.po,
+			),
+		update: "UPDATE po_shipments SET tracking_url = 'https://track.example/TRK-1' WHERE id = ?",
+	},
 	builds: {
 		insert: (f) =>
 			stmt(

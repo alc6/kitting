@@ -52,7 +52,7 @@ was built with; `npx skills update` refreshes it.
   `assembly-graph.ts` is pure (explosion, cost roll-up, cycle detection over an in-memory graph);
   `assemblies.ts` loads the graph and holds the recursive CTEs (where-used, cycle check on save).
   `stock.ts` (ledger, counts, valuation), `builds.ts` (pick list, completion batch),
-  `purchasing.ts` (shortage engine, POs, receipts), `backup.ts` (JSON export/restore),
+  `purchasing.ts` (shortage engine, POs, receipts, shipments), `backup.ts` (JSON export/restore),
   `tree-layout.ts` (pure diagram layout), `search.ts` (global search), `offers.ts` (supplier offers),
   `files.ts` (attached files: streamed storage, statements, revision copies), `file-types.ts` (formats from content),
   `prices.ts` (price history, dated standard costs), `costing.ts` (pure weighted average replay),

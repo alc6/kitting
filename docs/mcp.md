@@ -50,7 +50,7 @@ the corresponding page.
 | `builds:read` | `list_builds`, `get_build` |
 | `builds:write` | `plan_build`, `complete_build`, `record_build`, `cancel_build` |
 | `purchasing:read` | `get_shortages`, `list_purchase_orders`, `get_purchase_order` |
-| `purchasing:write` | `create_draft_pos`, `update_draft_po`, `mark_po_sent`, `receive_po`, `cancel_po`, `close_po` |
+| `purchasing:write` | `create_draft_pos`, `update_draft_po`, `mark_po_sent`, `receive_po`, `cancel_po`, `close_po`, `record_po_shipment` |
 
 Some things are never available to an assistant: permanent deletes, undoing changes, managing users, backups,
 CSV imports and photo uploads. Assemblies only change through draft revisions, so an active assembly stays as it
