@@ -657,7 +657,7 @@ Short log of choices made where the brief left room. Newest at the bottom of eac
   already restore an archived assembly ("Set back to draft", "Activate", `assemblies.edit`) and activating a revision
   archives the previous one, so assembly status changes keep using `assemblies.edit` through `TABLE_ACTIONS`. Adding another
   gated column is one line in `COLUMN_ACTIONS` (plus an `history.rights` label in both dictionaries).
-- **D137. The dashboard is a main column and an alerts rail.** Shortages, upcoming builds and open POs stack in a
+- **D137. The dashboard is a main column and an alerts rail** (builds table amended by D174). Shortages, upcoming builds and open POs stack in a
   two-thirds column; stock alerts sit in a one-third rail beside them (from `xl`, single column below). Side-by-side
   rows left a void under whichever card was shorter (an empty shortage list next to ten alerts). The rail starts at
   `xl` because at `lg` with the sidebar open it is too narrow for a part reference; alert rows stack the quantity
@@ -1130,3 +1130,24 @@ A survey of every page (before/after mockups approved by the user, P0–P13) led
   have one (`min_stock_kind`, like `serial_kind`: an explicit refusal rather than a silent drop). There is no CHECK
   constraint, as SQLite cannot add one to `parts` without a table rebuild: `field.optionalQty()` refuses negatives. The
   two example datasets carry a few minimums so the alerts show on first launch.
+- **D173. The margins table shows one cost group at a time.** Thirteen columns (price, then planned cost, margin, rate,
+  markup, then builds, actual cost, margin, rate) did not fit: the actual group hid behind a sideways scroll, invisible on
+  an iPad. A second `ToggleLinks` ("Planned cost" / "Actual cost", `?cost=actual`, default planned, any other value is
+  planned) beside the row filter chooses the group, so the table has eight columns either way and fits at 820 px and at
+  1280 px with the sidebar. The two controls are independent and every link keeps the other's value. The group header
+  row is gone (the switch says which group it is). The CSV is unchanged: every column, whichever group is shown.
+- **D174. The dashboard's builds table is a compact one** (amends D137). Beside the alerts rail the planned and
+  in-progress builds table wrapped product names over four lines and cut "Planned for". `BuildsTable` takes `compact`
+  for that dashboard card only: Number, Product (reference and name on one line, truncated, with the full text as a
+  tooltip; it takes the room the other columns leave), Quantity, Status and Planned for. Assembly and Serial number are
+  dropped there and stay on the build pages, the part page and the last-builds card. The card's own "New build" button
+  is removed: the page header already has one (D137 kept both).
+- **D175. The parts list shows an assembly roll-up where a made part has no standard cost.** Make and kit parts normally
+  have no standard cost (their cost is their assembly's), so the Standard cost column said "unknown" for them although
+  the cost was known. When `cost_cents` is NULL and the part has an active assembly, the cell now shows the roll-up of
+  its default assembly (the cost the part page and the margins use, `CostCalculator.part()`), muted, titled "Assembly
+  cost roll-up", with the usual `*` and missing-part list when incomplete, and a legend under the table when any row
+  does. A part with a standard cost of its own keeps it; a made part with no active assembly (draft only) stays
+  "unknown". `listRollupCosts()` (`src/domain/assemblies.ts`) computes the whole page in one pass: it loads the graph
+  once (four queries), reuses one memoizing `CostCalculator`, and is skipped when no listed part qualifies or the role
+  does not see costs. Never one query per row. The parts CSV still exports stored values only.

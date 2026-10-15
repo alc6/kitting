@@ -8,6 +8,7 @@ import {
 	DEFAULT_CODE,
 	DEFAULT_REVISION,
 	findAssembly,
+	listRollupCosts,
 	partAssemblySummary,
 	type WhereUsedRow,
 	whereUsed,
@@ -133,7 +134,12 @@ async function supplierOptions(c: Context<AppEnv>): Promise<SupplierOption[]> {
 	return c.var.db.select({ id: suppliers.id, name: suppliers.name }).from(suppliers).orderBy(asc(suppliers.name));
 }
 
-function PartsTable(props: { rows: PartRow[]; filtered: boolean; images: boolean }) {
+function PartsTable(props: {
+	rows: PartRow[];
+	filtered: boolean;
+	images: boolean;
+	rollups: Awaited<ReturnType<typeof listRollupCosts>>;
+}) {
 	const view = useApp();
 	const { t, seeCosts } = view;
 	// A thumbnail column only when images are set up and some listed part has one.
@@ -206,7 +212,13 @@ function PartsTable(props: { rows: PartRow[]; filtered: boolean; images: boolean
 							<TableCell class="text-muted-foreground">{p.supplierName ?? ""}</TableCell>
 							{seeCosts ? (
 								<TableCell class="text-right">
-									<Money cents={p.costCents} />
+									{props.rollups.costs.has(p.id) ? (
+										<span class="text-muted-foreground" title={t.parts.rollupTitle}>
+											<CostView cost={props.rollups.costs.get(p.id) as Cost} refs={props.rollups.refs} />
+										</span>
+									) : (
+										<Money cents={p.costCents} />
+									)}
 								</TableCell>
 							) : null}
 							<TableCell class="text-right">
@@ -314,6 +326,10 @@ partRoutes.get("/", async (c) => {
 	const supplierId = /^\d+$/.test(supplierParam) ? Number(supplierParam) : null;
 	const archived = c.req.query("archived") === "on";
 	const [rows, sups] = await Promise.all([listParts(c.var.db, { q, kind, supplierId, archived }), supplierOptions(c)]);
+	// Made parts without a standard cost show their assembly roll-up (D175): one pass, only for those who see costs.
+	const rollups = c.var.seeCosts
+		? await listRollupCosts(c.var.db, rows)
+		: { costs: new Map<number, Cost>(), refs: new Map<number, string>() };
 	return page(
 		c,
 		t.parts.title,
@@ -363,7 +379,9 @@ partRoutes.get("/", async (c) => {
 					rows={rows}
 					filtered={q !== "" || kind !== "" || supplierId !== null}
 					images={imagesBucket(c.env) !== null}
+					rollups={rollups}
 				/>
+				{rollups.costs.size > 0 ? <p class="mt-2 text-xs text-muted-foreground">{t.parts.rollupLegend}</p> : null}
 			</div>
 		</>,
 	);

@@ -235,19 +235,8 @@ dashboardRoutes.get("/", async (c) => {
 							</Table>
 						)}
 					</Section>
-					<Section
-						title={t.dashboard.upcoming}
-						href="/builds"
-						total={open.length}
-						action={
-							canBuild ? (
-								<Button href="/builds/new" variant="outline" size="sm" icon={icons.plus}>
-									{t.builds.new}
-								</Button>
-							) : undefined
-						}
-					>
-						<BuildsTable rows={[...open].reverse().slice(0, LIMIT)} />
+					<Section title={t.dashboard.upcoming} href="/builds" total={open.length}>
+						<BuildsTable rows={[...open].reverse().slice(0, LIMIT)} compact />
 					</Section>
 					<Section title={t.dashboard.openPos} href="/purchasing/po" total={openPos.length}>
 						<PoTable rows={openPos.slice(0, LIMIT)} today={today} />

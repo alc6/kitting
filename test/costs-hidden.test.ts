@@ -152,6 +152,8 @@ function pages(s: Awaited<ReturnType<typeof seed>>): string[] {
 	return [
 		"/",
 		"/parts",
+		// WIDGET has no standard cost: the list shows its assembly roll-up, which is BOX-LAMP's cost (D175).
+		"/parts?q=WIDGET",
 		`/parts/${s.box}`,
 		`/parts/${s.widget}`,
 		"/suppliers",
@@ -199,6 +201,7 @@ function pages(s: Awaited<ReturnType<typeof seed>>): string[] {
 		`/history/${s.rated}`,
 		// Closed to these roles: refused without leaking anything.
 		"/margins",
+		"/margins?cost=actual",
 		`/margins/assemblies/${s.lampAssembly}`,
 		"/stock/valuation",
 		`/purchasing/po/${s.poId}/export.csv`,
@@ -238,6 +241,7 @@ describe("cost visibility", () => {
 		expect(part).toContain("1,234.56");
 		expect(part).toContain("1,111.11");
 		expect(part).toContain("777.77");
+		expect(await (await request("/parts?q=WIDGET", {}, NOT_ADMIN)).text()).toContain("1,234.56");
 		expect(await (await request(`/purchasing/po/${s.poId}`, {}, NOT_ADMIN)).text()).toContain("987.65");
 		expect(await (await request("/stock/moves?format=csv", {}, NOT_ADMIN)).text()).toContain("987.65");
 		expect(await (await request(`/history/${s.priced}`, {}, NOT_ADMIN)).text()).toContain("1,234.56");
