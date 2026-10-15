@@ -319,7 +319,7 @@ stockRoutes.post("/adjust", requirePermission("stock.adjust"), async (c) => {
 			nowIso(),
 		),
 	]);
-	return c.redirect(`/parts/${part.id}?ok=adjusted`, 303);
+	return c.redirect(`/parts/${part.id}/stock?ok=adjusted`, 303);
 });
 
 // ---------------------------------------------------------------------------

@@ -395,6 +395,8 @@ export type MenuItem = {
 	confirm?: string;
 	/** Archive, delete, cancel: shown in the destructive colour, after a separator. */
 	destructive?: boolean;
+	/** Opens the dialog (popover) with this id instead of following a link or posting. */
+	dialog?: string;
 };
 
 const MENU_ITEM =
@@ -445,7 +447,11 @@ export function MoreMenu(props: { id?: string; items: (MenuItem | false | null |
 					return (
 						<>
 							{separator ? <hr data-slot="dropdown-menu-separator" class="-mx-1 my-1 h-px border-0 bg-border" /> : null}
-							{item.href !== undefined ? (
+							{item.dialog !== undefined ? (
+								<button type="button" popovertarget={item.dialog} data-slot="dropdown-menu-item" class={cls}>
+									{body}
+								</button>
+							) : item.href !== undefined ? (
 								<a href={item.href} data-slot="dropdown-menu-item" class={cls}>
 									{body}
 								</a>
@@ -825,13 +831,24 @@ export function StatCard(props: {
 // ---------------------------------------------------------------------------
 // Page furniture
 
-export function PageHeader(props: { title: string; subtitle?: Child; actions?: Child }) {
+/** `lead` is a small visual beside the title (a part's thumbnail). */
+export function PageHeader(props: { title: string; subtitle?: Child; actions?: Child; lead?: Child }) {
+	const heading = (
+		<div class="flex min-w-0 flex-col gap-1">
+			<h1 class="text-2xl font-semibold tracking-tight">{props.title}</h1>
+			{props.subtitle ? <p class="text-sm text-muted-foreground">{props.subtitle}</p> : null}
+		</div>
+	);
 	return (
 		<div class="mb-6 flex flex-wrap items-start justify-between gap-4">
-			<div class="flex min-w-0 flex-col gap-1">
-				<h1 class="text-2xl font-semibold tracking-tight">{props.title}</h1>
-				{props.subtitle ? <p class="text-sm text-muted-foreground">{props.subtitle}</p> : null}
-			</div>
+			{props.lead ? (
+				<div class="flex min-w-0 items-center gap-4">
+					{props.lead}
+					{heading}
+				</div>
+			) : (
+				heading
+			)}
 			{props.actions ? <div class="page-actions flex flex-wrap items-center gap-2">{props.actions}</div> : null}
 		</div>
 	);

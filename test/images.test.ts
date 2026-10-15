@@ -111,12 +111,9 @@ describe("product images", () => {
 		const none = { IMAGES: undefined };
 		const html = await (await request(`/parts/${id}`, {}, none)).text();
 		expect(html).not.toContain('enctype="multipart/form-data"');
-		expect(html).toContain("Images are not set up");
-		// The hint is for those who would upload (parts.edit), not for an operator.
-		await setRole("operator");
-		expect(await (await request(`/parts/${id}`, {}, { ...none, ...NOT_ADMIN })).text()).not.toContain(
-			"Images are not set up",
-		);
+		// No placeholder button and no dialog: there is nowhere to upload to (D180).
+		expect(html).not.toContain('popovertarget="image-upload"');
+		expect(html).not.toContain("Add image");
 		expect((await upload(id, PNG, "photo.png", none)).headers.get("Location")).toBe(`/parts/${id}?err=images_disabled`);
 		expect((await request(`/parts/${id}/image`, {}, none)).status).toBe(404);
 	});

@@ -55,7 +55,8 @@ describe("supplier offers on the part page", () => {
 		await loadDemo({ stock: false });
 		const id = await partId("DRV-12V");
 		const lumenId = await supplierId("Lumen Parts Co");
-		const html = await (await request(`/parts/${id}`)).text();
+		// The offers have their own tab (D181).
+		const html = await (await request(`/parts/${id}/prices`)).text();
 		const lumen = rowWith(html, `href="/suppliers/${lumenId}"`);
 		const quick = rowWith(html, `href="/suppliers/${await supplierId("Quickparts Express")}"`);
 		expect(lumen).toContain("€6.60");
@@ -69,7 +70,7 @@ describe("supplier offers on the part page", () => {
 		expect(lumen).toContain(`href="/parts/${id}/offers/${lumenId}"`);
 		// Only admins see the remove button.
 		expect(lumen).toContain(`action="/parts/${id}/offers/${lumenId}/delete"`);
-		const asUser = await (await request(`/parts/${id}`, {}, NOT_ADMIN)).text();
+		const asUser = await (await request(`/parts/${id}/prices`, {}, NOT_ADMIN)).text();
 		expect(asUser).not.toContain(`/offers/${lumenId}/delete`);
 		expect(asUser).toContain("Make preferred");
 	});
@@ -77,7 +78,7 @@ describe("supplier offers on the part page", () => {
 	it("shows the standard cost a PO would use when an offer has no price", async () => {
 		const s = await insertSupplier("Acme");
 		const id = await insertPart("P1", "buy", { costCents: 500, supplierId: s });
-		const row = rowWith(await (await request(`/parts/${id}`)).text(), `href="/suppliers/${s}"`);
+		const row = rowWith(await (await request(`/parts/${id}/prices`)).text(), `href="/suppliers/${s}"`);
 		expect(row).toContain("€5.00");
 		expect(row).toContain("standard cost used");
 	});
@@ -94,7 +95,7 @@ describe("supplier offers on the part page", () => {
 			offerForm({ supplier_id: String(other), supplier_ref: "OT-1", price: "4,20", moq: "10", lead_days: "5" }),
 		);
 		expect(res.status).toBe(303);
-		expect(res.headers.get("Location")).toBe(`/parts/${id}?ok=saved`);
+		expect(res.headers.get("Location")).toBe(`/parts/${id}/prices?ok=saved`);
 		expect(
 			await one(
 				"SELECT supplier_ref, price_cents, moq_milli, lead_days FROM part_suppliers WHERE supplier_id = ?",
@@ -165,9 +166,9 @@ describe("supplier offers on the part page", () => {
 		const id = await partId("DRV-12V");
 		const quick = await supplierId("Quickparts Express");
 		const res = await postForm(`/parts/${id}/offers/${quick}/prefer`, {});
-		expect(res.headers.get("Location")).toBe(`/parts/${id}?ok=saved`);
+		expect(res.headers.get("Location")).toBe(`/parts/${id}/prices?ok=saved`);
 		expect(await one("SELECT supplier_id FROM parts WHERE id = ?", id)).toEqual({ supplier_id: quick });
-		const row = rowWith(await (await request(`/parts/${id}`)).text(), `href="/suppliers/${quick}"`);
+		const row = rowWith(await (await request(`/parts/${id}/prices`)).text(), `href="/suppliers/${quick}"`);
 		expect(row).toMatch(/Preferred<\/span>/);
 	});
 
@@ -182,7 +183,7 @@ describe("supplier offers on the part page", () => {
 		await postForm(`/parts/${id}/offers/${other}/delete`, {});
 		expect(await one("SELECT supplier_id FROM parts WHERE id = ?", id)).toEqual({ supplier_id: acme });
 		const res = await postForm(`/parts/${id}/offers/${acme}/delete`, {});
-		expect(res.headers.get("Location")).toBe(`/parts/${id}?ok=deleted`);
+		expect(res.headers.get("Location")).toBe(`/parts/${id}/prices?ok=deleted`);
 		expect(await rows("SELECT id FROM part_suppliers")).toHaveLength(0);
 		expect(await one("SELECT supplier_id FROM parts WHERE id = ?", id)).toEqual({ supplier_id: null });
 	});
@@ -203,8 +204,8 @@ describe("prices on the part page", () => {
 		expect(html).toContain("Weighted average cost");
 		expect(html).toContain("€2.50");
 		expect(html).toContain("Use average as standard cost");
-		// The last price paid to S1 shows on its offer row.
-		expect(rowWith(html, `href="/suppliers/${s}"`)).toContain("€3.00");
+		// The last price paid to S1 shows on its offer row, on the Suppliers & prices tab.
+		expect(rowWith(await (await request(`/parts/${id}/prices`)).text(), `href="/suppliers/${s}"`)).toContain("€3.00");
 		const res = await postForm(`/parts/${id}/cost/average`, {});
 		expect(res.headers.get("Location")).toBe(`/parts/${id}?ok=saved`);
 		expect(await one("SELECT cost_cents, updated_by FROM parts WHERE id = ?", id)).toEqual({
@@ -260,7 +261,7 @@ describe("prices on the part page", () => {
 			notes: "",
 		});
 		const po = await receive(s, "P1", "4", "2.90");
-		const html = await (await request(`/parts/${id}`)).text();
+		const html = await (await request(`/parts/${id}/prices`)).text();
 		expect(html).toContain("Price history");
 		expect(html).toMatch(/<svg[^>]*role="img"/);
 		expect(html).toContain("stroke-chart-1");
@@ -274,7 +275,7 @@ describe("prices on the part page", () => {
 
 	it("shows an empty state when a part has no price yet", async () => {
 		const id = await insertPart("P1");
-		const html = await (await request(`/parts/${id}`)).text();
+		const html = await (await request(`/parts/${id}/prices`)).text();
 		expect(html).toContain("No price recorded yet.");
 		expect(html).not.toMatch(/<svg[^>]*role="img"/);
 	});

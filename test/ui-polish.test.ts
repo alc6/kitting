@@ -185,7 +185,7 @@ describe("forms folded in place (D177)", () => {
 
 	it("keeps Add a past price in the price history header, open when refused", async () => {
 		const id = await insertPart("BOLT", "buy", { costCents: 100 });
-		const page = await html(`/parts/${id}`);
+		const page = await html(`/parts/${id}/prices`);
 		const header = page.slice(page.indexOf('id="price-history"'));
 		expect(header).toMatch(/<details[^>]*data-slot="inline-edit"[^>]*>\s*<summary/);
 		expect(header).toContain("Add a past price");
@@ -196,7 +196,7 @@ describe("forms folded in place (D177)", () => {
 		const text = await refused.text();
 		expect(foldedOpen(text, 'id="price-history"')).toBe(true);
 		// No right to edit prices, no button and no form.
-		const viewer = await html(`/parts/${id}`, await as("viewer"));
+		const viewer = await html(`/parts/${id}/prices`, await as("viewer"));
 		expect(viewer).not.toContain("Add a past price");
 	});
 });

@@ -222,8 +222,9 @@ describe("parts", () => {
 		const id = await insertPart("P1");
 		await insertMove(id, 2500, "count");
 		await insertMove(id, -500, "adjust");
+		// The moves are on the Stock tab (D181).
+		expect(await (await request(`/parts/${id}/stock`)).text()).toContain("Inventory count");
 		const html = await (await request(`/parts/${id}`)).text();
-		expect(html).toContain("Inventory count");
 		// The "On hand" stat shows 2.5 - 0.5 = 2 (the first quantity after its label).
 		expect(html).toMatch(/data-slot="stat"/);
 		expect(html.match(/On hand<\/span>[\s\S]*?<span class="num">([^<]*)<\/span>/)?.[1]).toBe("2");

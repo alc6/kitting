@@ -65,7 +65,6 @@ import { CostView, StatusBadge } from "../views/assembly";
 import { StepChart } from "../views/chart";
 import { useApp } from "../views/context";
 import { FilesCard, uploadErrorText } from "../views/files";
-import { RecordTabs } from "../views/history";
 import { Icon, type IconNode, icons } from "../views/icons";
 import { Duration } from "../views/machines";
 import { idParam, notFound, nowIso, page, redirectOk, saveChanges, translateErrors } from "../views/render";
@@ -96,10 +95,10 @@ import {
 	type FormValues,
 	InlineEdit,
 	KindBadge,
+	LinkTabs,
 	Money,
 	MoreMenu,
 	PageHeader,
-	PostButton,
 	Qty,
 	SearchBar,
 	SelectField,
@@ -438,38 +437,46 @@ partRoutes.post("/", requirePermission("parts.edit"), async (c) => {
 	return redirectOk(c, `/parts/${row?.id}`);
 });
 
-function PartDetail(props: {
-	part: Part;
-	supplier: { id: number; name: string; email: string; phone: string } | undefined;
-	offers: PartOffer[];
-	lastPaid: LastPaid;
-	average: AverageCost | undefined;
-	history: HistoryRow[];
-	paid: PaidRow[];
-	today: string;
-	onHand: number;
-	moves: (typeof stockMoves.$inferSelect)[];
-	assemblySummary: Awaited<ReturnType<typeof partAssemblySummary>>;
-	usedIn: WhereUsedRow[];
-	builds: Awaited<ReturnType<typeof listBuilds>>;
-	imagesEnabled: boolean;
-	files: FileRow[];
-	/** The "Add a past price" form, for those who may edit prices and see costs. */
-	pastPrice?: PastPriceFormProps | undefined;
-	ok?: string | undefined;
-	err?: string | undefined;
-}) {
+type PartTab = "overview" | "prices" | "stock" | "history";
+
+/**
+ * The tabs a part page has (D181), each its own URL. Prices holds the supplier offers (buy and make parts) and the
+ * price history (who sees costs); Stock the moves and builds of a part that is stocked. A tab that could never have
+ * content for the part is not offered at all, and its URL goes back to the overview (`partHasTab`).
+ */
+function partTabs(kind: PartKind, seeCosts: boolean): PartTab[] {
+	return [
+		"overview",
+		...(isStocked(kind) || seeCosts ? (["prices"] as const) : []),
+		...(isStocked(kind) ? (["stock"] as const) : []),
+		"history",
+	];
+}
+
+const partHasTab = (part: Part, seeCosts: boolean, tab: PartTab) => partTabs(part.kind, seeCosts).includes(tab);
+
+/** The part's page header (thumbnail, title, actions), the upload dialog and the tabs, shared by every tab. */
+function PartHeader(props: { part: Part; active: PartTab; imagesEnabled: boolean; uploadError?: string | undefined }) {
 	const view = useApp();
 	const { t, seeCosts } = view;
-	const canEdit = can(view, "parts.edit");
-	const canArchive = can(view, "parts.archive");
-	const canDelete = can(view, "parts.delete");
 	const p = props.part;
 	const stocked = isStocked(p.kind);
-	const { rollup, refs } = props.assemblySummary;
+	const hasImage = imageUrl(p) !== null;
+	const canUpload = can(view, "parts.edit") && props.imagesEnabled;
+	const labels: Record<PartTab, { label: string; icon: IconNode; href: string }> = {
+		overview: { label: t.history.tabOverview, icon: icons.info, href: `/parts/${p.id}` },
+		prices: {
+			label: stocked ? t.parts.tabSuppliers : t.parts.prices,
+			icon: icons.coins,
+			href: `/parts/${p.id}/prices`,
+		},
+		stock: { label: t.parts.tabStock, icon: icons.warehouse, href: `/parts/${p.id}/stock` },
+		history: { label: t.history.tab, icon: icons.history, href: `/parts/${p.id}/history` },
+	};
 	return (
 		<>
 			<PageHeader
+				lead={<PartThumbnail part={p} enabled={props.imagesEnabled} />}
 				title={`${p.ref} · ${p.name}`}
 				subtitle={
 					<span class="inline-flex flex-wrap items-center gap-2">
@@ -480,7 +487,7 @@ function PartDetail(props: {
 				}
 				actions={
 					<>
-						{canEdit ? (
+						{can(view, "parts.edit") ? (
 							<Button href={`/parts/${p.id}/edit`} variant="outline" icon={icons.pencil}>
 								{t.common.edit}
 							</Button>
@@ -492,7 +499,8 @@ function PartDetail(props: {
 						) : null}
 						<MoreMenu
 							items={[
-								canArchive &&
+								canUpload && hasImage && { label: t.parts.changeImage, icon: icons.imageUp, dialog: IMAGE_DIALOG },
+								can(view, "parts.archive") &&
 									(p.archived
 										? { label: t.common.unarchive, icon: icons.archiveRestore, action: `/parts/${p.id}/unarchive` }
 										: {
@@ -501,7 +509,16 @@ function PartDetail(props: {
 												action: `/parts/${p.id}/archive`,
 												confirm: t.common.confirmArchive,
 											}),
-								canDelete && {
+								can(view, "parts.delete") &&
+									props.imagesEnabled &&
+									hasImage && {
+										label: t.parts.removeImage,
+										icon: icons.imageOff,
+										action: `/parts/${p.id}/image/delete`,
+										confirm: t.parts.confirmRemoveImage,
+										destructive: true,
+									},
+								can(view, "parts.delete") && {
 									label: t.common.delete,
 									icon: icons.trash,
 									action: `/parts/${p.id}/delete`,
@@ -513,7 +530,17 @@ function PartDetail(props: {
 					</>
 				}
 			/>
-			<RecordTabs base={`/parts/${p.id}`} active="overview" />
+			{canUpload ? <ImageDialog part={p} uploadError={props.uploadError} /> : null}
+			<LinkTabs items={partTabs(p.kind, seeCosts).map((tab) => ({ ...labels[tab], active: tab === props.active }))} />
+		</>
+	);
+}
+
+/** The flash message and the error of a redirect (?ok=…, ?err=…), above the content of every tab. */
+function PartNotices(props: { ok?: string | undefined; err?: string | undefined }) {
+	const { t } = useApp();
+	return (
+		<>
 			<Flash
 				ok={props.ok}
 				message={
@@ -527,166 +554,218 @@ function PartDetail(props: {
 				}
 			/>
 			{props.err && PART_ERRORS.has(props.err) ? <Alert variant="destructive">{errorText(t, props.err)}</Alert> : null}
-			<div class="flex flex-col gap-4">
-				<div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-					{stocked ? (
-						<StatCard
-							label={t.parts.onHand}
-							value={<Qty milli={props.onHand} unit={p.unit} />}
-							icon={icons.warehouse}
-							tone={props.onHand < 0 ? "destructive" : "default"}
-							hint={
-								seeCosts && p.costCents !== null ? (
-									<>
-										{t.parts.stockValue}: <Money cents={lineCostCents(props.onHand, p.costCents)} />
-									</>
-								) : undefined
-							}
-						/>
-					) : null}
-					{seeCosts ? (
-						<StatCard
-							label={t.parts.cost}
-							value={<Money cents={p.costCents} />}
-							icon={icons.coins}
-							tone={p.costCents === null && !rollup ? "warning" : "default"}
-						/>
-					) : null}
-					{seeCosts && rollup ? (
-						<StatCard
-							label={t.parts.rollupCost}
-							value={<CostView cost={rollup} refs={refs} />}
-							icon={icons.listTree}
-							tone={rollup.incomplete ? "warning" : "default"}
-						/>
-					) : null}
-				</div>
-				{p.kind === "make" || p.kind === "kit" ? <HowItsMade part={p} summary={props.assemblySummary} /> : null}
-				<div class="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
-					{props.imagesEnabled || p.imageKey ? (
-						<ImageCard part={p} enabled={props.imagesEnabled} uploadError={uploadErrorText(t, props.err, "image")} />
-					) : canEdit ? (
-						<Card>
-							<CardHeader>
-								<CardTitle icon={icons.image}>{t.parts.image}</CardTitle>
-								<CardDescription>{t.parts.imagesDisabled}</CardDescription>
-							</CardHeader>
-						</Card>
-					) : null}
-					<Card>
-						<CardHeader>
-							<CardTitle>{t.parts.info}</CardTitle>
-						</CardHeader>
-						<CardContent>
-							<DetailList
-								items={[
-									{ label: t.parts.unit, value: p.unit },
-									{ label: t.parts.trackSerial, value: p.trackSerial ? t.common.yes : t.common.no },
-									...(stocked
-										? [
-												{
-													label: t.parts.minStock,
-													value:
-														p.minStockMilli === null ? t.common.none : <Qty milli={p.minStockMilli} unit={p.unit} />,
-												},
-											]
-										: []),
-									...(stocked || props.supplier
-										? [
-												{
-													label: t.parts.preferredSupplier,
-													value: props.supplier ? (
-														<a href={`/suppliers/${props.supplier.id}`}>{props.supplier.name}</a>
-													) : (
-														t.common.none
-													),
-												},
-											]
-										: []),
-									...(props.supplier?.email
-										? [
-												{
-													label: t.suppliers.email,
-													value: <a href={`mailto:${props.supplier.email}`}>{props.supplier.email}</a>,
-												},
-											]
-										: []),
-									...(props.supplier?.phone ? [{ label: t.suppliers.phone, value: props.supplier.phone }] : []),
-									...(p.notes
-										? [{ label: t.common.notes, value: <span class="whitespace-pre-wrap">{p.notes}</span> }]
-										: []),
-								]}
-							/>
-						</CardContent>
-					</Card>
-					{seeCosts ? (
-						<PricesCard
-							part={p}
-							rollup={rollup}
-							refs={refs}
-							average={props.average}
-							preferredOffer={props.offers.find((o) => o.preferred)}
-						/>
-					) : null}
-				</div>
-				{props.files.length > 0 || can(view, "files.edit") ? (
-					<FilesCard
-						files={props.files}
-						uploadAction={`/parts/${p.id}/files`}
-						enabled={props.imagesEnabled}
-						editable={true}
-						uploadError={uploadErrorText(t, props.err, "file")}
-					/>
-				) : null}
-				{p.kind === "buy" || props.offers.length > 0 ? (
-					<OffersCard part={p} offers={props.offers} lastPaid={props.lastPaid} />
-				) : null}
-				{(p.kind === "make" || p.kind === "kit") && props.assemblySummary.assemblies.length > 1 ? (
-					<PartAssemblies part={p} summary={props.assemblySummary} />
-				) : null}
-				{p.kind === "make" ? (
-					<Card>
-						<CardHeader>
-							<CardTitle>{t.builds.recent}</CardTitle>
-							{can(view, "builds.plan") ? (
-								<CardAction>
-									<Button href={`/builds/new?part=${p.id}`} variant="outline" size="sm" icon={icons.plus}>
-										{t.builds.new}
-									</Button>
-								</CardAction>
-							) : null}
-						</CardHeader>
-						<CardContent class="px-2">
-							<BuildsTable rows={props.builds} emptyClass="px-4 py-1" />
-						</CardContent>
-					</Card>
-				) : null}
-				<WhereUsed rows={props.usedIn} />
-				{seeCosts ? (
-					<PriceHistoryCard
-						part={p}
-						history={props.history}
-						paid={props.paid}
-						today={props.today}
-						pastPrice={props.pastPrice}
-					/>
-				) : null}
-				{stocked ? (
-					<Card>
-						<CardHeader>
-							<CardTitle>{t.parts.history}</CardTitle>
-						</CardHeader>
-						<CardContent class="px-2">
-							<MovesTable moves={props.moves} unit={p.unit} />
-						</CardContent>
-					</Card>
-				) : null}
-				<p class="text-xs text-muted-foreground">
-					{fmt(t.common.createdBy, { by: p.createdBy, at: shortDateTime(p.createdAt) })} ·{" "}
-					{fmt(t.common.updatedBy, { by: p.updatedBy, at: shortDateTime(p.updatedAt) })}
-				</p>
-			</div>
 		</>
+	);
+}
+
+/**
+ * Overview: the figures, how it is made, details and prices side by side, files, where used and the other
+ * assemblies. Offers, price history and stock have their own tabs.
+ */
+function OverviewTab(props: {
+	part: Part;
+	supplier: { id: number; name: string; email: string; phone: string } | undefined;
+	preferredOffer: PartOffer | undefined;
+	average: AverageCost | undefined;
+	onHand: number;
+	assemblySummary: Awaited<ReturnType<typeof partAssemblySummary>>;
+	usedIn: WhereUsedRow[];
+	imagesEnabled: boolean;
+	files: FileRow[];
+	err?: string | undefined;
+}) {
+	const view = useApp();
+	const { t, seeCosts } = view;
+	const p = props.part;
+	const stocked = isStocked(p.kind);
+	const { rollup, refs } = props.assemblySummary;
+	// The figure cards share the row whatever their number (one, two or three): none stays empty.
+	const figures = [
+		stocked ? (
+			<StatCard
+				label={t.parts.onHand}
+				value={<Qty milli={props.onHand} unit={p.unit} />}
+				icon={icons.warehouse}
+				tone={props.onHand < 0 ? "destructive" : "default"}
+				hint={
+					seeCosts && p.costCents !== null ? (
+						<>
+							{t.parts.stockValue}: <Money cents={lineCostCents(props.onHand, p.costCents)} />
+						</>
+					) : undefined
+				}
+			/>
+		) : null,
+		seeCosts ? (
+			<StatCard
+				label={t.parts.cost}
+				value={<Money cents={p.costCents} />}
+				icon={icons.coins}
+				tone={p.costCents === null && !rollup ? "warning" : "default"}
+			/>
+		) : null,
+		seeCosts && rollup ? (
+			<StatCard
+				label={t.parts.rollupCost}
+				value={<CostView cost={rollup} refs={refs} />}
+				icon={icons.listTree}
+				tone={rollup.incomplete ? "warning" : "default"}
+			/>
+		) : null,
+	].filter((card) => card !== null);
+	return (
+		<div class="flex flex-col gap-4">
+			{figures.length > 0 ? (
+				<div class="flex flex-wrap gap-3 *:min-w-56 *:flex-1" data-slot="figures">
+					{figures}
+				</div>
+			) : null}
+			{p.kind === "make" || p.kind === "kit" ? <HowItsMade part={p} summary={props.assemblySummary} /> : null}
+			<div class={cn("grid gap-4", seeCosts && "lg:grid-cols-2")}>
+				<Card>
+					<CardHeader>
+						<CardTitle>{t.parts.info}</CardTitle>
+					</CardHeader>
+					<CardContent>
+						<DetailList
+							items={[
+								{ label: t.parts.unit, value: p.unit },
+								{ label: t.parts.trackSerial, value: p.trackSerial ? t.common.yes : t.common.no },
+								...(stocked
+									? [
+											{
+												label: t.parts.minStock,
+												value: p.minStockMilli === null ? t.common.none : <Qty milli={p.minStockMilli} unit={p.unit} />,
+											},
+										]
+									: []),
+								...(stocked || props.supplier
+									? [
+											{
+												label: t.parts.preferredSupplier,
+												value: props.supplier ? (
+													<a href={`/suppliers/${props.supplier.id}`}>{props.supplier.name}</a>
+												) : (
+													t.common.none
+												),
+											},
+										]
+									: []),
+								...(props.supplier?.email
+									? [
+											{
+												label: t.suppliers.email,
+												value: <a href={`mailto:${props.supplier.email}`}>{props.supplier.email}</a>,
+											},
+										]
+									: []),
+								...(props.supplier?.phone ? [{ label: t.suppliers.phone, value: props.supplier.phone }] : []),
+								...(p.notes
+									? [{ label: t.common.notes, value: <span class="whitespace-pre-wrap">{p.notes}</span> }]
+									: []),
+							]}
+						/>
+					</CardContent>
+				</Card>
+				{seeCosts ? (
+					<PricesCard
+						part={p}
+						rollup={rollup}
+						refs={refs}
+						average={props.average}
+						preferredOffer={props.preferredOffer}
+					/>
+				) : null}
+			</div>
+			{props.files.length > 0 || can(view, "files.edit") ? (
+				<FilesCard
+					files={props.files}
+					uploadAction={`/parts/${p.id}/files`}
+					enabled={props.imagesEnabled}
+					editable={true}
+					uploadError={uploadErrorText(t, props.err, "file")}
+				/>
+			) : null}
+			<WhereUsed rows={props.usedIn} />
+			{(p.kind === "make" || p.kind === "kit") && props.assemblySummary.assemblies.length > 1 ? (
+				<PartAssemblies part={p} summary={props.assemblySummary} />
+			) : null}
+			<p class="text-xs text-muted-foreground">
+				{fmt(t.common.createdBy, { by: p.createdBy, at: shortDateTime(p.createdAt) })} ·{" "}
+				{fmt(t.common.updatedBy, { by: p.updatedBy, at: shortDateTime(p.updatedAt) })}
+			</p>
+		</div>
+	);
+}
+
+/** Suppliers & prices: the supplier offers, then the price history with its past price form (who sees costs). */
+function PricesTab(props: {
+	part: Part;
+	offers: PartOffer[];
+	lastPaid: LastPaid;
+	history: HistoryRow[];
+	paid: PaidRow[];
+	today: string;
+	/** The "Add a past price" form, for those who may edit prices and see costs. */
+	pastPrice?: PastPriceFormProps | undefined;
+}) {
+	const { seeCosts } = useApp();
+	const p = props.part;
+	return (
+		<div class="flex flex-col gap-4">
+			{isStocked(p.kind) || props.offers.length > 0 ? (
+				<OffersCard part={p} offers={props.offers} lastPaid={props.lastPaid} />
+			) : null}
+			{seeCosts ? (
+				<PriceHistoryCard
+					part={p}
+					history={props.history}
+					paid={props.paid}
+					today={props.today}
+					pastPrice={props.pastPrice}
+				/>
+			) : null}
+		</div>
+	);
+}
+
+/** Stock: the part's stock moves and, for a made part, its recent builds. */
+function StockTab(props: {
+	part: Part;
+	moves: (typeof stockMoves.$inferSelect)[];
+	builds: Awaited<ReturnType<typeof listBuilds>>;
+}) {
+	const view = useApp();
+	const { t } = view;
+	const p = props.part;
+	return (
+		<div class="flex flex-col gap-4">
+			<Card>
+				<CardHeader>
+					<CardTitle>{t.parts.history}</CardTitle>
+				</CardHeader>
+				<CardContent class="px-2">
+					<MovesTable moves={props.moves} unit={p.unit} />
+				</CardContent>
+			</Card>
+			{p.kind === "make" ? (
+				<Card>
+					<CardHeader>
+						<CardTitle>{t.builds.recent}</CardTitle>
+						{can(view, "builds.plan") ? (
+							<CardAction>
+								<Button href={`/builds/new?part=${p.id}`} variant="outline" size="sm" icon={icons.plus}>
+									{t.builds.new}
+								</Button>
+							</CardAction>
+						) : null}
+					</CardHeader>
+					<CardContent class="px-2">
+						<BuildsTable rows={props.builds} emptyClass="px-4 py-1" />
+					</CardContent>
+				</Card>
+			) : null}
+		</div>
 	);
 }
 
@@ -711,95 +790,87 @@ const PART_ERRORS = new Set([
 const IMAGE_DIALOG = "image-upload";
 
 /**
- * The product image (D100): shown, uploaded (resized in the browser when JavaScript runs), removed by admins. Add or
- * Replace in the header opens the upload dialog; `uploadError` (the page comes back from a refused upload) opens it on
- * load.
+ * The 64 px thumbnail beside the part's title (D180). With an image it opens the full-size one; without one, for who
+ * may upload (and when the deployment has images), it is a dashed button that opens the upload dialog. Otherwise
+ * nothing: no empty placeholder to look at.
  */
-function ImageCard(props: { part: Part; enabled: boolean; uploadError?: string | undefined }) {
+function PartThumbnail(props: { part: Part; enabled: boolean }) {
 	const view = useApp();
 	const { t } = view;
 	const p = props.part;
 	const src = imageUrl(p);
-	const upload = can(view, "parts.edit") && props.enabled;
-	const remove = can(view, "parts.delete") && src !== null && props.enabled;
+	if (src) {
+		return (
+			<a
+				id="image"
+				href={src}
+				title={t.parts.openImage}
+				class="block size-16 shrink-0 overflow-hidden rounded-lg border bg-muted outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+			>
+				<img src={src} alt={p.name} class="size-full object-contain" />
+			</a>
+		);
+	}
+	if (!(can(view, "parts.edit") && props.enabled)) return null;
 	return (
-		<Card id="image">
-			<CardHeader>
-				<CardTitle icon={icons.image}>{t.parts.image}</CardTitle>
-				{upload || remove ? (
-					<CardAction>
-						{remove ? (
-							<PostButton
-								action={`/parts/${p.id}/image/delete`}
-								label={t.parts.removeImage}
-								confirm={t.parts.confirmRemoveImage}
-								variant="ghost"
-								size="sm"
-								icon={icons.trash}
-							/>
-						) : null}
-						{upload ? (
-							<Button type="button" variant="outline" size="sm" icon={icons.imageUp} popovertarget={IMAGE_DIALOG}>
-								{src ? t.parts.replaceImage : t.parts.addImage}
-							</Button>
-						) : null}
-					</CardAction>
-				) : null}
-			</CardHeader>
-			<CardContent class="flex flex-1 flex-col gap-4">
-				{src ? (
-					<a href={src} class="block overflow-hidden rounded-lg border bg-muted" title={t.parts.openImage}>
-						<img src={src} alt={p.name} class="aspect-4/3 max-h-80 w-full object-contain" />
-					</a>
-				) : (
-					<div class="flex min-h-32 w-full flex-1 flex-col items-center justify-center gap-2 rounded-lg border border-dashed bg-muted/40 p-4 text-sm text-muted-foreground">
-						<Icon icon={icons.imageOff} class="size-6" />
-						{t.parts.noImage}
-					</div>
-				)}
-				{can(view, "parts.edit") && !props.enabled ? (
-					<p class="text-xs text-muted-foreground">{t.parts.imagesDisabled}</p>
-				) : null}
-			</CardContent>
-			{upload ? (
-				<Dialog
-					id={IMAGE_DIALOG}
-					title={src ? t.parts.changeImage : t.parts.addImage}
-					open={props.uploadError !== undefined}
-				>
-					{props.uploadError !== undefined ? (
-						<Alert variant="destructive" class="mb-0">
-							{props.uploadError}
-						</Alert>
-					) : null}
-					<form
-						method="post"
-						action={`/parts/${p.id}/image`}
-						enctype="multipart/form-data"
-						class="flex flex-col gap-4"
-						data-image-form=""
-					>
-						<div data-slot="field" class="flex min-w-0 flex-col gap-2">
-							<label for="image-file" class="text-sm font-medium">
-								{t.parts.imageFile}
-							</label>
-							<input
-								id="image-file"
-								type="file"
-								name="image"
-								accept="image/jpeg,image/png,image/webp"
-								required
-								data-image-input=""
-							/>
-							<p class="text-xs text-muted-foreground">{t.parts.imageHint}</p>
-						</div>
-						<DialogFooter dialog={IMAGE_DIALOG}>
-							<Button icon={icons.imageUp}>{src ? t.parts.replaceImage : t.parts.uploadImage}</Button>
-						</DialogFooter>
-					</form>
-				</Dialog>
+		<button
+			id="image"
+			type="button"
+			popovertarget={IMAGE_DIALOG}
+			title={t.parts.addImage}
+			aria-label={t.parts.addImage}
+			class="flex size-16 shrink-0 cursor-pointer items-center justify-center rounded-lg border border-dashed bg-muted/40 text-muted-foreground outline-none hover:bg-accent hover:text-accent-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+		>
+			<Icon icon={icons.imageUp} class="size-6" />
+		</button>
+	);
+}
+
+/**
+ * The upload dialog of the product image (D100), opened by the thumbnail or the More menu (Replace); resized in the
+ * browser when JavaScript runs. `uploadError` (the page comes back from a refused upload) opens it on load.
+ */
+function ImageDialog(props: { part: Part; uploadError?: string | undefined }) {
+	const { t } = useApp();
+	const p = props.part;
+	const src = imageUrl(p);
+	return (
+		<Dialog
+			id={IMAGE_DIALOG}
+			title={src ? t.parts.changeImage : t.parts.addImage}
+			open={props.uploadError !== undefined}
+		>
+			{props.uploadError !== undefined ? (
+				<Alert variant="destructive" class="mb-0">
+					{props.uploadError}
+				</Alert>
 			) : null}
-		</Card>
+			<form
+				method="post"
+				action={`/parts/${p.id}/image`}
+				enctype="multipart/form-data"
+				class="flex flex-col gap-4"
+				data-image-form=""
+			>
+				<div data-slot="field" class="flex min-w-0 flex-col gap-2">
+					<label for="image-file" class="text-sm font-medium">
+						{t.parts.imageFile}
+					</label>
+					<input
+						id="image-file"
+						type="file"
+						name="image"
+						accept="image/jpeg,image/png,image/webp"
+						required
+						data-image-input=""
+					/>
+					<p class="text-xs text-muted-foreground">{t.parts.imageHint}</p>
+				</div>
+				<DialogFooter dialog={IMAGE_DIALOG}>
+					<Button icon={icons.imageUp}>{src ? t.parts.replaceImage : t.parts.uploadImage}</Button>
+				</DialogFooter>
+			</form>
+		</Dialog>
 	);
 }
 
@@ -1649,30 +1720,10 @@ export function MovesTable(props: { moves: (typeof stockMoves.$inferSelect)[]; u
 	);
 }
 
-/** The part page; `pastPrice` carries the submitted values and errors of a refused past price (422). */
-async function partPage(
-	c: Context<AppEnv>,
-	part: Part,
-	pastPrice?: { values: FormValues; errors: FormErrors },
-	status: 200 | 422 = 200,
-) {
+/** What the Overview tab shows, loaded together. */
+async function overviewTab(c: Context<AppEnv>, part: Part, imagesEnabled: boolean) {
 	const db = c.var.db;
-	const showPastPrice = c.var.seeCosts && can(c.var, "prices.edit");
-	const [
-		supplierRows,
-		onHand,
-		moves,
-		assemblySummary,
-		usedIn,
-		recent,
-		offers,
-		lastPaid,
-		average,
-		history,
-		paid,
-		allSuppliers,
-		files,
-	] = await Promise.all([
+	const [supplierRows, onHand, assemblySummary, usedIn, offers, average, files] = await Promise.all([
 		part.supplierId
 			? db
 					.select({ id: suppliers.id, name: suppliers.name, email: suppliers.email, phone: suppliers.phone })
@@ -1680,70 +1731,129 @@ async function partPage(
 					.where(eq(suppliers.id, part.supplierId))
 			: Promise.resolve([]),
 		onHandOf(db, part.id),
+		partAssemblySummary(db, part.id),
+		whereUsed(db, part.id),
+		c.var.seeCosts ? partOffers(db, part.id) : Promise.resolve([]),
+		isStocked(part.kind) ? averageCosts(db).then((a) => a.costs.get(part.id)) : Promise.resolve(undefined),
+		partFiles(db, part.id),
+	]);
+	return (
+		<OverviewTab
+			part={part}
+			supplier={supplierRows[0]}
+			preferredOffer={offers.find((o) => o.preferred)}
+			average={average}
+			onHand={onHand}
+			assemblySummary={assemblySummary}
+			usedIn={usedIn}
+			imagesEnabled={imagesEnabled}
+			files={files}
+			err={c.req.query("err")}
+		/>
+	);
+}
+
+/** What the Suppliers & prices tab shows; `pastPrice` is the submitted past price form of a refusal (422). */
+async function pricesTab(c: Context<AppEnv>, part: Part, pastPrice?: { values: FormValues; errors: FormErrors }) {
+	const db = c.var.db;
+	const showPastPrice = c.var.seeCosts && can(c.var, "prices.edit");
+	const [offers, lastPaid, history, paid, allSuppliers] = await Promise.all([
+		partOffers(db, part.id),
+		lastPaidBySupplier(db, part.id),
+		partPriceHistory(db, part.id),
+		paidPrices(db, part.id),
+		showPastPrice ? supplierOptions(c) : Promise.resolve([]),
+	]);
+	return (
+		<PricesTab
+			part={part}
+			offers={offers}
+			lastPaid={lastPaid}
+			history={history}
+			paid={paid}
+			today={nowIso().slice(0, 10)}
+			pastPrice={
+				showPastPrice
+					? { values: pastPrice?.values ?? {}, errors: pastPrice?.errors ?? {}, suppliers: allSuppliers }
+					: undefined
+			}
+		/>
+	);
+}
+
+/** What the Stock tab shows. */
+async function stockTab(c: Context<AppEnv>, part: Part) {
+	const db = c.var.db;
+	const [moves, builds] = await Promise.all([
 		db
 			.select()
 			.from(stockMoves)
 			.where(eq(stockMoves.partId, part.id))
 			.orderBy(desc(stockMoves.at), desc(stockMoves.id))
 			.limit(100),
-		partAssemblySummary(db, part.id),
-		whereUsed(db, part.id),
 		part.kind === "make" ? listBuilds(db, { status: "all", partId: part.id, limit: 10 }) : Promise.resolve([]),
-		partOffers(db, part.id),
-		lastPaidBySupplier(db, part.id),
-		isStocked(part.kind) ? averageCosts(db).then((a) => a.costs.get(part.id)) : Promise.resolve(undefined),
-		partPriceHistory(db, part.id),
-		paidPrices(db, part.id),
-		showPastPrice ? supplierOptions(c) : Promise.resolve([]),
-		partFiles(db, part.id),
 	]);
+	return <StockTab part={part} moves={moves} builds={builds} />;
+}
+
+/**
+ * One tab of the part page (D181), loading only what it shows. `pastPrice` carries the submitted values and errors of
+ * a refused past price (422, Prices tab).
+ */
+async function partPage(
+	c: Context<AppEnv>,
+	part: Part,
+	tab: Exclude<PartTab, "history">,
+	pastPrice?: { values: FormValues; errors: FormErrors },
+	status: 200 | 422 = 200,
+) {
+	const imagesEnabled = imagesBucket(c.env) !== null;
+	const body =
+		tab === "overview"
+			? await overviewTab(c, part, imagesEnabled)
+			: tab === "prices"
+				? await pricesTab(c, part, pastPrice)
+				: await stockTab(c, part);
 	return page(
 		c,
 		part.ref,
-		<PartDetail
-			part={part}
-			supplier={supplierRows[0]}
-			offers={offers}
-			lastPaid={lastPaid}
-			average={average}
-			history={history}
-			paid={paid}
-			today={nowIso().slice(0, 10)}
-			onHand={onHand}
-			moves={moves}
-			assemblySummary={assemblySummary}
-			usedIn={usedIn}
-			builds={recent}
-			imagesEnabled={imagesBucket(c.env) !== null}
-			files={files}
-			pastPrice={
-				showPastPrice
-					? { values: pastPrice?.values ?? {}, errors: pastPrice?.errors ?? {}, suppliers: allSuppliers }
-					: undefined
-			}
-			ok={c.req.query("ok")}
-			err={c.req.query("err")}
-		/>,
+		<>
+			<PartHeader
+				part={part}
+				active={tab}
+				imagesEnabled={imagesEnabled}
+				uploadError={uploadErrorText(c.var.t, c.req.query("err"), "image")}
+			/>
+			<PartNotices ok={c.req.query("ok")} err={c.req.query("err")} />
+			{body}
+		</>,
 		status,
 	);
 }
 
 partRoutes.get("/:id", async (c) => {
 	const part = await partFromParam(c);
-	return part ? partPage(c, part) : notFound(c);
+	return part ? partPage(c, part, "overview") : notFound(c);
 });
 
+// Suppliers & prices and Stock: a tab the part cannot have goes back to the overview (D181).
+for (const [path, tab] of [
+	["/:id/prices", "prices"],
+	["/:id/stock", "stock"],
+] as const) {
+	partRoutes.get(path, async (c) => {
+		const part = await partFromParam(c);
+		if (!part) return notFound(c);
+		if (!partHasTab(part, c.var.seeCosts, tab)) return c.redirect(`/parts/${part.id}`, 303);
+		return partPage(c, part, tab);
+	});
+}
+
 partRoutes.get("/:id/history", async (c) => {
-	const id = idParam(c);
-	const part = id ? await getPart(c.var.db, id) : undefined;
+	const part = await partFromParam(c);
 	if (!part) return notFound(c);
 	const title = `${part.ref} · ${part.name}`;
-	const header = (
-		<>
-			<PageHeader title={title} subtitle={<KindBadge kind={part.kind} />} />
-			<RecordTabs base={`/parts/${part.id}`} active="history" />
-		</>
-	);
+	const header = <PartHeader part={part} active="history" imagesEnabled={imagesBucket(c.env) !== null} />;
 	return recordHistoryPage(c, title, header, { kind: "part", id: part.id });
 });
 
@@ -1880,7 +1990,13 @@ partRoutes.post("/:id/prices/past", requirePermission("prices.edit"), async (c) 
 	const t = c.var.t;
 	const body = await c.req.parseBody();
 	const refuse = (errors: FieldErrors) =>
-		partPage(c, part, { values: body as FormValues, errors: translateErrors(c, errors, { kind: part.kind }) }, 422);
+		partPage(
+			c,
+			part,
+			"prices",
+			{ values: body as FormValues, errors: translateErrors(c, errors, { kind: part.kind }) },
+			422,
+		);
 	const v = validate(pastPriceInput, body);
 	if (!v.ok) return refuse(v.errors);
 	const d = v.data;
@@ -1912,7 +2028,7 @@ partRoutes.post("/:id/prices/past", requirePermission("prices.edit"), async (c) 
 		// The history is not tracked row by row and never loses a row (D92): there is nothing to undo (D142).
 		{ revertible: false },
 	);
-	return c.redirect(`/parts/${part.id}?ok=pastprice#price-history`, 303);
+	return c.redirect(`/parts/${part.id}/prices?ok=pastprice#price-history`, 303);
 });
 
 // Delete a wrong row of the price history (D143): admins only, never the current row of its series.
@@ -1923,7 +2039,7 @@ partRoutes.post("/:id/prices/:priceId/delete", requirePermission("prices.delete"
 	const check = await checkPriceDelete(c.var.db, part.id, priceId);
 	if (!check.ok) {
 		if (check.reason === "not_found") return notFound(c);
-		return c.redirect(`/parts/${part.id}?err=${check.reason}#price-history`, 303);
+		return c.redirect(`/parts/${part.id}/prices?err=${check.reason}#price-history`, 303);
 	}
 	await saveChanges(
 		c,
@@ -1932,7 +2048,7 @@ partRoutes.post("/:id/prices/:priceId/delete", requirePermission("prices.delete"
 		// The history is not tracked row by row (D92): there is no log entry to restore the row from (D143).
 		{ revertible: false },
 	);
-	return c.redirect(`/parts/${part.id}?ok=pricedeleted#price-history`, 303);
+	return c.redirect(`/parts/${part.id}/prices?ok=pricedeleted#price-history`, 303);
 });
 
 // ---------------------------------------------------------------------------
@@ -2100,7 +2216,7 @@ async function offerFromParam(c: Context<AppEnv>, part: Part) {
 
 partRoutes.get("/:id/offers", async (c) => {
 	const id = idParam(c);
-	return id ? c.redirect(`/parts/${id}#suppliers`, 303) : notFound(c);
+	return id ? c.redirect(`/parts/${id}/prices`, 303) : notFound(c);
 });
 
 partRoutes.get("/:id/offers/new", requirePermission("prices.edit"), async (c) => {
@@ -2151,7 +2267,7 @@ async function createOffer(c: Context<AppEnv>) {
 			nowIso(),
 		),
 	);
-	return redirectOk(c, `/parts/${part.id}`);
+	return redirectOk(c, `/parts/${part.id}/prices`);
 }
 
 partRoutes.post("/:id/offers", requirePermission("prices.edit"), createOffer);
@@ -2209,7 +2325,7 @@ partRoutes.post("/:id/offers/:supplierId", requirePermission("prices.edit"), asy
 			nowIso(),
 		),
 	);
-	return redirectOk(c, `/parts/${part.id}`);
+	return redirectOk(c, `/parts/${part.id}/prices`);
 });
 
 partRoutes.post("/:id/offers/:supplierId/prefer", requirePermission("prices.edit"), async (c) => {
@@ -2223,7 +2339,7 @@ partRoutes.post("/:id/offers/:supplierId/prefer", requirePermission("prices.edit
 			setPreferredStatement(c.var.db, part.id, found.supplier.id, c.var.user, nowIso()),
 		]);
 	}
-	return redirectOk(c, `/parts/${part.id}`);
+	return redirectOk(c, `/parts/${part.id}/prices`);
 });
 
 partRoutes.post("/:id/offers/:supplierId/delete", requirePermission("parts.delete"), async (c) => {
@@ -2236,7 +2352,7 @@ partRoutes.post("/:id/offers/:supplierId/delete", requirePermission("parts.delet
 		fmt(c.var.t.history.summaries.offerDelete, { supplier: found.supplier.name, ref: part.ref }),
 		deleteOfferStatements(c.var.db, part.id, found.supplier.id, c.var.user, nowIso()),
 	);
-	return redirectOk(c, `/parts/${part.id}`, "deleted");
+	return redirectOk(c, `/parts/${part.id}/prices`, "deleted");
 });
 
 // ---------------------------------------------------------------------------

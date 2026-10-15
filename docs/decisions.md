@@ -1208,3 +1208,29 @@ A survey of every page (before/after mockups approved by the user, P0–P13) led
   (D168), this one never shows errors, because Preview posts to its own page where the file's problems are listed, so
   a dialog is safe, with or without JavaScript. The full help text of the type moved from the card to the dialog's
   description. Preview, confirm and the Backup card are unchanged.
+- **D180. The part page's header carries the image, and the top of the overview fills its width.** The Image card took a
+  third of the first row to show a placeholder most of the time. The image is now a 64 px thumbnail beside the title
+  (`PageHeader` takes a `lead`): with an image it links to the full-size one; without one, for who may upload
+  (`parts.edit`) and when the deployment has the `IMAGES` bucket, it is a dashed button opening the upload dialog
+  (D168); otherwise nothing is drawn, so the "images are not set up" card and its hint are gone (the deployment docs
+  cover the bucket). Replacing and removing live in the More menu (D176), whose entries may now open a dialog
+  (`MenuItem.dialog`): "Replace the image" (who may upload) and, as a destructive entry, "Remove image" (admins, label
+  changed from "Remove"). The dialog is in the header, so every tab offers it and a refused upload (`?err=image_type#image`,
+  Overview) still reopens it. Details and Prices share one row (two equal columns from `lg`; Details alone when costs
+  are hidden), so the supplier email and price notes stop wrapping; the figure cards are a wrapping flex row whose
+  cards grow (`*:flex-1`), so one, two or three cards always fill the width.
+- **D181. The part page is four tabs, each its own URL, and a tab that can never have content is not offered.** A bought
+  part's overview reached about 2,800 px. Overview (figures, manufacturing, details and prices, files, where used,
+  assemblies of the part) stays at `/parts/:id`; `/parts/:id/prices` ("Suppliers & prices": the offers and the price
+  history with its past price form), `/parts/:id/stock` (stock moves and recent builds) and the existing
+  `/parts/:id/history` are plain links, so no script is needed and deep links work. Each tab loads only its own data.
+  Hidden rather than empty (a tab that explains why it is empty is noise): Stock for kits and fees (never stocked);
+  Suppliers & prices for a kit or fee shows only the price history, so it is labelled "Prices" and is offered only to who
+  sees costs (a kit or fee viewed without costs has Overview and History). Buy and make parts keep it whatever the role,
+  because offers (supplier, MOQ, lead time) are not costs; the offers card is now shown on a make part too (offers are
+  allowed for it) instead of only when it already has some. The URL of a hidden tab redirects to the overview. The
+  History tab uses the same header as the others. Anchors and redirects followed their content: offer create, edit, prefer
+  and delete, past price add and delete (and their refusals, `#price-history` kept) land on `/prices`; a stock adjustment
+  lands on `/stock` (where its move is listed); `GET /parts/:id/offers` goes to `/prices`; standard cost shortcuts, edits,
+  file and image redirects stay on the overview, where they show (`#files`, `#how-its-made`, `#image` still resolve).
+  Flash messages and errors are shown above whichever tab the redirect lands on.

@@ -28,7 +28,7 @@ describe("adjustments", () => {
 		const id = await insertPart("BOLT", "buy", { costCents: 12 });
 		const res = await postForm("/stock/adjust", { part: "BOLT", qty: "-2,5", serial: "", note: "dropped" });
 		expect(res.status).toBe(303);
-		expect(res.headers.get("Location")).toBe(`/parts/${id}?ok=adjusted`);
+		expect(res.headers.get("Location")).toBe(`/parts/${id}/stock?ok=adjusted`);
 		expect(await one("SELECT qty_milli, reason, ref_type, note, by, unit_cost_cents FROM stock_moves")).toEqual({
 			qty_milli: -2500,
 			reason: "adjust",
@@ -37,7 +37,7 @@ describe("adjustments", () => {
 			by: TESTER,
 			unit_cost_cents: 12,
 		});
-		expect(await (await request(`/parts/${id}?ok=adjusted`)).text()).toContain("Stock adjusted.");
+		expect(await (await request(`/parts/${id}/stock?ok=adjusted`)).text()).toContain("Stock adjusted.");
 	});
 
 	it("refuses kits, fees, zero, unknown parts and multi-unit serial moves", async () => {
