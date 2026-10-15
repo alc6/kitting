@@ -679,7 +679,7 @@ export async function partAssemblySummary(db: Db, partId: number) {
 }
 
 /**
- * Assembly roll-ups for the parts list (D175): the unit cost rolled up from the default active assembly of each listed
+ * Assembly roll-ups for the parts list (D176): the unit cost rolled up from the default active assembly of each listed
  * make or kit part that has no standard cost of its own. One pass for the whole page: the graph is loaded once (and
  * not at all when no listed part qualifies) and the costs are memoized across parts, never one query per row.
  * `refs` names the parts a cost is missing, for the incomplete marker.

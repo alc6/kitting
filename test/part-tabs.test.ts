@@ -1,4 +1,4 @@
-// The part page in tabs (D180-D182): header thumbnail, Overview, Suppliers & prices, Stock and History, each its own URL.
+// The part page in tabs (D181-D182): header thumbnail, Overview, Suppliers & prices, Stock and History, each its own URL.
 import { describe, expect, it } from "vitest";
 import type { PartKind } from "../src/db/schema";
 import {
@@ -48,7 +48,7 @@ async function upload(id: number) {
 	return request(`/parts/${id}/image`, { method: "POST", body: form });
 }
 
-describe("tabs of the part page (D181)", () => {
+describe("tabs of the part page (D182)", () => {
 	it("offers Overview, Suppliers & prices, Stock and History for a bought part, each its own URL", async () => {
 		const id = await insertPart("BOLT", "buy", { costCents: 100 });
 		const page = await html(`/parts/${id}`);
@@ -168,7 +168,7 @@ describe("tabs of the part page (D181)", () => {
 	});
 });
 
-describe("figure cards (D180)", () => {
+describe("figure cards (D181)", () => {
 	const count = (page: string) => (page.match(/data-slot="stat"/g) ?? []).length;
 
 	it("shares the row between however many cards there are", async () => {
@@ -185,7 +185,7 @@ describe("figure cards (D180)", () => {
 	});
 });
 
-describe("product image in the header (D180)", () => {
+describe("product image in the header (D181)", () => {
 	const header = (page: string) => page.slice(0, page.indexOf("</h1>"));
 
 	it("shows a dashed button that opens the upload dialog when there is no image yet", async () => {
@@ -231,7 +231,7 @@ describe("product image in the header (D180)", () => {
 	});
 });
 
-describe("details and prices (D180)", () => {
+describe("details and prices (D181)", () => {
 	it("sit in one row of two equal columns from lg, and the details take the width without costs", async () => {
 		const id = await insertPart("BOLT", "buy", { costCents: 100 });
 		expect(await html(`/parts/${id}`)).toContain('class="grid gap-4 lg:grid-cols-2"');

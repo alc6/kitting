@@ -111,7 +111,7 @@ describe("product images", () => {
 		const none = { IMAGES: undefined };
 		const html = await (await request(`/parts/${id}`, {}, none)).text();
 		expect(html).not.toContain('enctype="multipart/form-data"');
-		// No placeholder button and no dialog: there is nowhere to upload to (D180).
+		// No placeholder button and no dialog: there is nowhere to upload to (D181).
 		expect(html).not.toContain('popovertarget="image-upload"');
 		expect(html).not.toContain("Add image");
 		expect((await upload(id, PNG, "photo.png", none)).headers.get("Location")).toBe(`/parts/${id}?err=images_disabled`);

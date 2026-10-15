@@ -1,4 +1,4 @@
-// UI polish (D176-D179): the "More actions" menu, forms folded in place, read views for suppliers and machines,
+// UI polish (D177-D180): the "More actions" menu, forms folded in place, read views for suppliers and machines,
 // and the import list.
 import { describe, expect, it } from "vitest";
 import { IMPORTERS } from "../src/domain/import";
@@ -43,7 +43,7 @@ function foldedOpen(page: string, anchor: string): boolean {
 	return /\sopen=""/.test(tag?.[0] ?? "");
 }
 
-describe("More actions menu (D176)", () => {
+describe("More actions menu (D177)", () => {
 	it("holds archive and delete of a part, the destructive one last, with its confirmation", async () => {
 		const id = await insertPart("BOLT", "buy");
 		const page = await html(`/parts/${id}`);
@@ -149,7 +149,7 @@ describe("More actions menu (D176)", () => {
 	});
 });
 
-describe("forms folded in place (D177)", () => {
+describe("forms folded in place (D178)", () => {
 	it("shows the production settings as one line and folds the form open on errors", async () => {
 		await loadDemo();
 		const id = await assemblyId("LAMP-DESK");
@@ -201,7 +201,7 @@ describe("forms folded in place (D177)", () => {
 	});
 });
 
-describe("supplier pages (D178)", () => {
+describe("supplier pages (D179)", () => {
 	it("opens as a read view with linked contacts, and edits on its own page", async () => {
 		const id = await insertSupplier("Acme");
 		await postForm(`/suppliers/${id}`, {
@@ -256,7 +256,7 @@ describe("supplier pages (D178)", () => {
 	});
 });
 
-describe("machine pages (D178)", () => {
+describe("machine pages (D179)", () => {
 	it("opens as a read view, and edits on its own page", async () => {
 		await loadDemo();
 		const machine = await one<{ id: number; name: string; machine_type_id: number }>(
@@ -299,7 +299,7 @@ describe("machine pages (D178)", () => {
 	});
 });
 
-describe("import list (D179)", () => {
+describe("import list (D180)", () => {
 	it("lists the importers in order, each with template, export and its own form", async () => {
 		const page = await html("/import");
 		const types = IMPORTERS.map((i) => i.type);

@@ -106,7 +106,7 @@ export const parts = sqliteTable(
 		moqMilli: integer("moq_milli").notNull().default(0),
 		packSizeMilli: integer("pack_size_milli").notNull().default(0),
 		leadDays: integer("lead_days").notNull().default(0),
-		// Minimum stock (D172): the on-hand level under which the part raises a stock alert. NULL = no alert.
+		// Minimum stock (D173): the on-hand level under which the part raises a stock alert. NULL = no alert.
 		minStockMilli: integer("min_stock_milli"),
 		trackSerial: integer("track_serial", { mode: "boolean" }).notNull().default(false),
 		archived: integer("archived", { mode: "boolean" }).notNull().default(false),

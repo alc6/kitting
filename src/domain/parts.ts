@@ -282,7 +282,7 @@ export async function listParts(db: Db, f: PartFilters = {}) {
 			kind: parts.kind,
 			unit: parts.unit,
 			costCents: parts.costCents,
-			// Minimum stock (D172), for the stock alerts.
+			// Minimum stock (D173), for the stock alerts.
 			minStockMilli: parts.minStockMilli,
 			trackSerial: parts.trackSerial,
 			archived: parts.archived,

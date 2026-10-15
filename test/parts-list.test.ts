@@ -14,7 +14,7 @@ function rowWith(page: string, href: string): string {
 	return page.slice(start, page.indexOf("</tr>", at));
 }
 
-describe("parts list: standard cost column (D175)", () => {
+describe("parts list: standard cost column (D176)", () => {
 	it("shows the assembly roll-up, muted and marked, for made parts without a standard cost", async () => {
 		await loadDemo({ stock: false });
 		const page = await (await request("/parts")).text();
@@ -180,7 +180,7 @@ describe("parts list performance on a large catalogue", () => {
 
 		const ms = (a: number, b: number) => Math.round(b - a);
 		console.info(
-			`[D175] 2000 parts / 320 assemblies: listParts ${ms(t0, t1)} ms, listRollupCosts ${ms(t1, t2)} ms, ` +
+			`[D176] 2000 parts / 320 assemblies: listParts ${ms(t0, t1)} ms, listRollupCosts ${ms(t1, t2)} ms, ` +
 				`GET /parts with roll-ups ${ms(t3, t4)} ms, without costs ${ms(t4, t5)} ms`,
 		);
 		// A generous bound that only a per-row query pattern (thousands of round trips) would break.
@@ -194,6 +194,6 @@ describe("parts list performance on a large catalogue", () => {
 		await res.text();
 		const t1 = performance.now();
 		expect(res.status).toBe(200);
-		console.info(`[D175] examples/full: GET /parts ${Math.round(t1 - t0)} ms`);
+		console.info(`[D176] examples/full: GET /parts ${Math.round(t1 - t0)} ms`);
 	});
 });

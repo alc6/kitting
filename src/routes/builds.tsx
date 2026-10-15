@@ -124,7 +124,7 @@ export function BuildStatusBadge(props: { status: BuildStatus }) {
 /**
  * Bare table of builds, also embedded by the dashboard and the part page, where it sits in a secondary card:
  * its empty state is the quiet one (`emptyClass` aligns it with the padding of the card). `compact` (the dashboard,
- * D174) keeps the columns that fit beside the alerts rail: product on one line, no assembly and no serial number (the
+ * D175) keeps the columns that fit beside the alerts rail: product on one line, no assembly and no serial number (the
  * build pages keep them).
  */
 export function BuildsTable(props: { rows: BuildRow[]; emptyClass?: string; compact?: boolean }) {

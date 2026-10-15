@@ -152,7 +152,7 @@ function pages(s: Awaited<ReturnType<typeof seed>>): string[] {
 	return [
 		"/",
 		"/parts",
-		// WIDGET has no standard cost: the list shows its assembly roll-up, which is BOX-LAMP's cost (D175).
+		// WIDGET has no standard cost: the list shows its assembly roll-up, which is BOX-LAMP's cost (D176).
 		"/parts?q=WIDGET",
 		`/parts/${s.box}`,
 		`/parts/${s.box}/prices`,
@@ -245,7 +245,7 @@ describe("cost visibility", () => {
 		await setRole("planner");
 		const part = await (await request(`/parts/${s.box}`, {}, NOT_ADMIN)).text();
 		expect(part).toContain("1,234.56");
-		// The offer price and the past cost are on the Suppliers & prices tab (D181).
+		// The offer price and the past cost are on the Suppliers & prices tab (D182).
 		const prices = await (await request(`/parts/${s.box}/prices`, {}, NOT_ADMIN)).text();
 		expect(prices).toContain("1,111.11");
 		expect(prices).toContain("777.77");

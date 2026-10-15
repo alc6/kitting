@@ -17,7 +17,7 @@ import { historyStart, standardCostsAt } from "./prices";
 export const isStocked = (kind: PartKind): boolean => kind === "buy" || kind === "make";
 
 /**
- * The stock alert rule (D172): a stocked part with a minimum stock whose on-hand quantity is under it. A part
+ * The stock alert rule (D173): a stocked part with a minimum stock whose on-hand quantity is under it. A part
  * without a minimum never alerts here (the supplier's MOQ is not a reorder level).
  */
 export const belowMinimum = (p: { kind: PartKind; minStockMilli: number | null; onHandMilli: number }): boolean =>

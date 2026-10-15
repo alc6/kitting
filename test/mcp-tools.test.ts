@@ -191,7 +191,7 @@ describe("read tools", () => {
 			expect.objectContaining({ supplier: "Lumen Parts Co", preferred: true, price: "4.10", moq: "10" }),
 			expect.objectContaining({ supplier: "Quickparts Express", preferred: false, price: "4.90" }),
 		]);
-		// The minimum stock is in the examples (D172): LED-5W-CW has 6 on hand against a minimum of 20.
+		// The minimum stock is in the examples (D173): LED-5W-CW has 6 on hand against a minimum of 20.
 		expect(led.data.part).toMatchObject({ min_stock: "20" });
 		expect((await callTool(token, "get_part", { ref: "MANUAL" })).data.part).toMatchObject({ min_stock: null });
 		const used = led.data.where_used as { parent: string; depth: number; via: string }[];

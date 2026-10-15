@@ -68,7 +68,7 @@ function matches(filter: Filter, r: MarginRow): boolean {
 	return true;
 }
 
-/** Which column group the table shows (D173): the planned cost or the actual cost. The CSV has both. */
+/** Which column group the table shows (D174): the planned cost or the actual cost. The CSV has both. */
 const COST_VIEWS = ["planned", "actual"] as const;
 type CostView = (typeof COST_VIEWS)[number];
 

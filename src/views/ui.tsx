@@ -276,7 +276,7 @@ export function TableCard(props: { title?: Child; action?: Child; class?: string
 }
 
 /**
- * Nothing to show inside a card (D169): one muted line with a small icon, no box and no tile, for the secondary
+ * Nothing to show inside a card (D170): one muted line with a small icon, no box and no tile, for the secondary
  * cards of a page (files, where used, prices paid...). `large` keeps the full EmptyState for a card that is the
  * main result of the page (an empty stock list); the card already draws the border.
  */
@@ -872,7 +872,7 @@ export function ErrorBanner(props: { show: boolean; message?: string }) {
 /**
  * Live search: a plain GET form that also works without JavaScript. With htmx it
  * refreshes only #results (selected from the full page response) as you type.
- * `compact` keeps a bar with a DateRange on one line (D170).
+ * `compact` keeps a bar with a DateRange on one line (D171).
  */
 export function SearchBar(props: { action: string; q: string; compact?: boolean; children?: Child }) {
 	const { t } = useApp();
@@ -907,7 +907,7 @@ export function SearchBar(props: { action: string; q: string; compact?: boolean;
 					/>
 				</div>
 				{props.children}
-				{/* Needed without JavaScript only: app.js hides it, the form submits itself as you type (D171). */}
+				{/* Needed without JavaScript only: app.js hides it, the form submits itself as you type (D172). */}
 				<Button variant="outline" data-live-submit="">
 					{t.common.search}
 				</Button>
@@ -917,7 +917,7 @@ export function SearchBar(props: { action: string; q: string; compact?: boolean;
 }
 
 /**
- * A date range for a filter bar (D170): one "Dates" label and "from - to" on one line, the inputs named `from` and
+ * A date range for a filter bar (D171): one "Dates" label and "from - to" on one line, the inputs named `from` and
  * `to`. Each input keeps its own accessible name.
  */
 export function DateRange(props: { from?: string | null; to?: string | null; fromLabel: string; toLabel: string }) {

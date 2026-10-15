@@ -326,7 +326,7 @@ partRoutes.get("/", async (c) => {
 	const supplierId = /^\d+$/.test(supplierParam) ? Number(supplierParam) : null;
 	const archived = c.req.query("archived") === "on";
 	const [rows, sups] = await Promise.all([listParts(c.var.db, { q, kind, supplierId, archived }), supplierOptions(c)]);
-	// Made parts without a standard cost show their assembly roll-up (D175): one pass, only for those who see costs.
+	// Made parts without a standard cost show their assembly roll-up (D176): one pass, only for those who see costs.
 	const rollups = c.var.seeCosts
 		? await listRollupCosts(c.var.db, rows)
 		: { costs: new Map<number, Cost>(), refs: new Map<number, string>() };
@@ -440,7 +440,7 @@ partRoutes.post("/", requirePermission("parts.edit"), async (c) => {
 type PartTab = "overview" | "prices" | "stock" | "history";
 
 /**
- * The tabs a part page has (D181), each its own URL. Prices holds the supplier offers (buy and make parts) and the
+ * The tabs a part page has (D182), each its own URL. Prices holds the supplier offers (buy and make parts) and the
  * price history (who sees costs); Stock the moves and builds of a part that is stocked. A tab that could never have
  * content for the part is not offered at all, and its URL goes back to the overview (`partHasTab`).
  */
@@ -790,7 +790,7 @@ const PART_ERRORS = new Set([
 const IMAGE_DIALOG = "image-upload";
 
 /**
- * The 64 px thumbnail beside the part's title (D180). With an image it opens the full-size one; without one, for who
+ * The 64 px thumbnail beside the part's title (D181). With an image it opens the full-size one; without one, for who
  * may upload (and when the deployment has images), it is a dashed button that opens the upload dialog. Otherwise
  * nothing: no empty placeholder to look at.
  */
@@ -1797,7 +1797,7 @@ async function stockTab(c: Context<AppEnv>, part: Part) {
 }
 
 /**
- * One tab of the part page (D181), loading only what it shows. `pastPrice` carries the submitted values and errors of
+ * One tab of the part page (D182), loading only what it shows. `pastPrice` carries the submitted values and errors of
  * a refused past price (422, Prices tab).
  */
 async function partPage(
@@ -1836,7 +1836,7 @@ partRoutes.get("/:id", async (c) => {
 	return part ? partPage(c, part, "overview") : notFound(c);
 });
 
-// Suppliers & prices and Stock: a tab the part cannot have goes back to the overview (D181).
+// Suppliers & prices and Stock: a tab the part cannot have goes back to the overview (D182).
 for (const [path, tab] of [
 	["/:id/prices", "prices"],
 	["/:id/stock", "stock"],

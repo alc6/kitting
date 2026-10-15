@@ -55,7 +55,7 @@ describe("supplier offers on the part page", () => {
 		await loadDemo({ stock: false });
 		const id = await partId("DRV-12V");
 		const lumenId = await supplierId("Lumen Parts Co");
-		// The offers have their own tab (D181).
+		// The offers have their own tab (D182).
 		const html = await (await request(`/parts/${id}/prices`)).text();
 		const lumen = rowWith(html, `href="/suppliers/${lumenId}"`);
 		const quick = rowWith(html, `href="/suppliers/${await supplierId("Quickparts Express")}"`);
