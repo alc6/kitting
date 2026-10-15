@@ -68,7 +68,8 @@ const groupKey = (parentId: number, code: string, revision: string) => `${parent
  * each group replaces the lines of that assembly (created if new). Activating an assembly archives
  * the previously active assembly of the same parent and code. Cycles are rejected.
  * The optional sale_price column sets the variant's selling price (one value per assembly; empty everywhere
- * clears it); without the column, prices are kept. The optional batch_qty column works the same way (empty everywhere
+ * clears it); without the column, prices are kept, and a new revision of a variant keeps the variant's (that of its
+ * active revision, else its newest, D166). The optional batch_qty column works the same way (empty everywhere
  * means 1) and, like the lines, may change an active assembly (D153). The optional machine and machine_minutes columns
  * (a machine type name and whole minutes per batch, D148) follow the same rules.
  */
@@ -110,6 +111,13 @@ export const assembliesImporter: Importer = {
 		const typeName = (id: number | null) => (id === null ? "∅" : (types.find((m) => m.id === id)?.name ?? `#${id}`));
 		const priceOf = new Map(assemblyPrices.map((b) => [b.id, b.salePriceCents]));
 		const pricesInFile = table.header.includes("sale_price");
+		// The price a new revision keeps without the column (D166): its variant's active revision's, else its newest's
+		// (the last one set wins).
+		const variantPrice = new Map<string, number | null>();
+		const activeLast = [...graph.assemblies.values()].sort(
+			(x, y) => Number(x.status === "active") - Number(y.status === "active") || x.id - y.id,
+		);
+		for (const b of activeLast) variantPrice.set(`${b.parentPartId}|${b.code}`, priceOf.get(b.id) ?? null);
 		const batchesInFile = table.header.includes("batch_qty");
 		const machinesInFile = table.header.includes("machine") || table.header.includes("machine_minutes");
 		const byRef = new Map([...graph.parts.values()].map((p) => [p.ref, p]));
@@ -327,12 +335,19 @@ export const assembliesImporter: Importer = {
 				// Non-active statuses first, so an activation never meets another active assembly.
 				const ordered = [...changed].sort((a, b) => Number(a.status === "active") - Number(b.status === "active"));
 				for (const g of ordered) {
-					const price = pricesInFile ? { salePriceCents: g.salePrice } : {};
+					// The file's price, else an existing assembly's own, else the price a new revision keeps.
+					const oldPrice = g.existing ? (priceOf.get(g.existing.id) ?? null) : null;
+					const newPrice = pricesInFile
+						? g.salePrice
+						: g.existing
+							? oldPrice
+							: (variantPrice.get(`${g.parentId}|${g.code}`) ?? null);
+					// Without the column, an existing assembly's price is left untouched.
+					const price = pricesInFile || !g.existing ? { salePriceCents: newPrice } : {};
 					const batch = {
 						...(batchesInFile ? { batchQtyMilli: batchOf(g) } : {}),
 						...(machinesInFile ? { machineTypeId: machineOf(g).typeId, machineMinutes: machineOf(g).minutes } : {}),
 					};
-					const oldPrice = g.existing ? (priceOf.get(g.existing.id) ?? null) : null;
 					if (g.existing) {
 						stmts.push(
 							db
@@ -357,13 +372,13 @@ export const assembliesImporter: Importer = {
 						);
 					}
 					const assemblyId = sql`(SELECT id FROM assemblies WHERE parent_part_id = ${g.parentId} AND code = ${g.code} AND revision = ${g.revision})`;
-					if (pricesInFile && g.salePrice !== oldPrice) {
+					if (newPrice !== oldPrice) {
 						stmts.push(
 							db.insert(priceHistory).values({
 								partId: g.parentId,
 								kind: "sale",
 								assemblyId,
-								priceCents: g.salePrice,
+								priceCents: newPrice,
 								validFrom: now.slice(0, 10),
 								source: "import",
 								createdBy: user,

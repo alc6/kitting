@@ -10,7 +10,9 @@ import {
 	postForm,
 	request,
 	rows,
+	seedSql,
 	setRole,
+	stmt,
 } from "./helpers";
 
 // NOT_ADMIN requests run as a planner, so admin-only actions are refused by requireAdmin itself.
@@ -269,6 +271,46 @@ describe("assemblies.csv import", () => {
 		const diff = await (await preview(update)).text();
 		expect(diff).toContain("ARM-TUBE-300: 1 → 2");
 		expect(diff).toContain("− JOINT-KNOB");
+	});
+
+	it("keeps the variant's own price on a new revision unless the file has a sale_price column (D166)", async () => {
+		await loadDemo({ stock: false });
+		const price = async (code: string, revision: string) => {
+			const id = await assemblyId("LAMP-DESK", code, revision);
+			return {
+				own: (
+					await one<{ sale_price_cents: number | null }>("SELECT sale_price_cents FROM assemblies WHERE id = ?", id)
+				).sale_price_cents,
+				history: await rows("SELECT price_cents, source FROM price_history WHERE assembly_id = ? ORDER BY id", id),
+			};
+		};
+		const lampCsv = (status: string, revision: string, code = "warm", salePrice?: string) =>
+			[
+				`parent_ref,code,revision,status,${salePrice === undefined ? "" : "sale_price,"}component_ref,qty`,
+				...["BASE-ASSY,1", "ARM-ASSY,2", "HEAD-KIT-WW,1"].map(
+					(line) => `LAMP-DESK,${code},${revision},${status},${salePrice === undefined ? "" : `${salePrice},`}${line}`,
+				),
+			].join("\n");
+		// Without the column: the new revision keeps the variant's price, logged; the archived one keeps its own.
+		expect((await postForm("/import/assemblies/commit", { csv: lampCsv("active", "Rev2") })).status).toBe(303);
+		expect(await price("warm", "Rev2")).toEqual({ own: 9400, history: [{ price_cents: 9400, source: "import" }] });
+		expect((await price("warm", "Rev1")).own).toBe(9400);
+		// A draft revision takes the active one's; with the column, the file decides (empty: none).
+		await seedSql(
+			stmt("UPDATE assemblies SET sale_price_cents = 9900 WHERE id = ?", await assemblyId("LAMP-DESK", "warm", "Rev2")),
+		);
+		expect((await postForm("/import/assemblies/commit", { csv: lampCsv("draft", "Rev3") })).status).toBe(303);
+		expect((await price("warm", "Rev3")).own).toBe(9900);
+		expect((await postForm("/import/assemblies/commit", { csv: lampCsv("draft", "Rev4", "warm", "") })).status).toBe(
+			303,
+		);
+		expect(await price("warm", "Rev4")).toEqual({ own: null, history: [] });
+		// The active revision's price, not the newest's (Rev4 has none).
+		expect((await postForm("/import/assemblies/commit", { csv: lampCsv("draft", "Rev5") })).status).toBe(303);
+		expect((await price("warm", "Rev5")).own).toBe(9900);
+		// A new variant code has nothing to keep.
+		expect((await postForm("/import/assemblies/commit", { csv: lampCsv("draft", "Rev1", "cool") })).status).toBe(303);
+		expect(await price("cool", "Rev1")).toEqual({ own: null, history: [] });
 	});
 
 	it("rejects cycles, bad parents, mixed statuses and duplicate active variants", async () => {

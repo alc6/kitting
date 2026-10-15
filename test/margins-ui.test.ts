@@ -11,6 +11,7 @@ import {
 	postForm,
 	request,
 	rows,
+	seedSql,
 	stmt,
 	testDb,
 } from "./helpers";
@@ -166,6 +167,57 @@ describe("variant selling price on the assembly page", () => {
 		const row = rowWith(await html("/margins"), `/assemblies/${warm}`);
 		expect(row).toContain("€89.00");
 		expect(row).not.toContain("own price");
+	});
+
+	it("keeps the variant's own price on a new revision, so Margins still lists it once activated (D166)", async () => {
+		await loadDemo({ stock: false });
+		const lamp = await partId("LAMP-DESK");
+		const rev1 = await assemblyId("LAMP-DESK", "warm");
+		const before = await one<{ id: number }>("SELECT max(id) AS id FROM change_sets");
+		expect((await postForm(`/assemblies/${rev1}/revision`, {})).status).toBe(303);
+		const rev2 = await assemblyId("LAMP-DESK", "warm", "Rev2");
+		expect(await one("SELECT sale_price_cents FROM assemblies WHERE id = ?", rev2)).toEqual({ sale_price_cents: 9400 });
+		// Logged like any price, in the same change set as the revision.
+		expect(await saleHistory(rev2)).toEqual([
+			{ kind: "sale", part_id: lamp, assembly_id: rev2, price_cents: 9400, source: "form" },
+		]);
+		expect(await rows("SELECT id FROM change_sets WHERE id > ?", before.id)).toHaveLength(1);
+		expect(await html(`/assemblies/${rev2}`)).toContain('name="sale_price" type="text" value="94.00"');
+
+		expect((await postForm(`/assemblies/${rev2}/activate`, {})).status).toBe(303);
+		const page = await html("/margins");
+		const row = rowWith(page, `/assemblies/${rev2}`);
+		expect(row).toContain("€94.00");
+		expect(row).toContain("own price");
+		expect(page).not.toContain(`href="/assemblies/${rev1}"`);
+	});
+
+	it("starts a copy as a new variant without its own price: the part's applies (D166)", async () => {
+		await loadDemo({ stock: false });
+		const lamp = await partId("LAMP-DESK");
+		const warm = await assemblyId("LAMP-DESK", "warm");
+		const copy = { parent_part_id: String(lamp), revision: "Rev1", notes: "", copy_from: String(warm) };
+		expect((await postForm("/assemblies", { ...copy, code: "cool" })).status).toBe(303);
+		const cool = await assemblyId("LAMP-DESK", "cool", "Rev1");
+		expect(await one("SELECT sale_price_cents FROM assemblies WHERE id = ?", cool)).toEqual({ sale_price_cents: null });
+		expect(await saleHistory(cool)).toEqual([]);
+		// The same variant code under a new revision is a new revision of that variant: it keeps the price.
+		expect((await postForm("/assemblies", { ...copy, code: "warm", revision: "Rev5" })).status).toBe(303);
+		const rev5 = await assemblyId("LAMP-DESK", "warm", "Rev5");
+		expect(await one("SELECT sale_price_cents FROM assemblies WHERE id = ?", rev5)).toEqual({ sale_price_cents: 9400 });
+		// A copy of another part's assembly never takes its price.
+		await seedSql(stmt("UPDATE assemblies SET sale_price_cents = 5000 WHERE id = ?", await assemblyId("ARM-ASSY")));
+		const res = await postForm("/assemblies", {
+			parent_part_id: String(await partId("BASE-ASSY")),
+			code: "std",
+			revision: "Rev9",
+			notes: "",
+			copy_from: String(await assemblyId("ARM-ASSY")),
+		});
+		expect(res.status).toBe(303);
+		expect(
+			await one("SELECT sale_price_cents FROM assemblies WHERE id = ?", await assemblyId("BASE-ASSY", "std", "Rev9")),
+		).toEqual({ sale_price_cents: null });
 	});
 
 	it("refuses to change the price of an archived assembly", async () => {

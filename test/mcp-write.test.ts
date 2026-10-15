@@ -7,7 +7,19 @@ import { MCP_SCOPES } from "../src/domain/mcp-scopes";
 import { type Access, PERMISSIONS } from "../src/domain/permissions";
 import { revertChangeSet } from "../src/domain/revert";
 import { TOOL_BY_NAME, TOOLS } from "../src/mcp/tools";
-import { assemblyId, loadDemo, NOT_ADMIN, one, partId, postForm, rows, setRole, TESTER, testDb } from "./helpers";
+import {
+	assemblyId,
+	loadDemo,
+	NOT_ADMIN,
+	one,
+	partId,
+	postForm,
+	request,
+	rows,
+	setRole,
+	TESTER,
+	testDb,
+} from "./helpers";
 import { callTool, connect, mcpPost, resetKv, rpc } from "./mcp-helpers";
 
 const ADMIN: Access = { role: "admin", seeCosts: true };
@@ -521,6 +533,58 @@ describe("catalog tools", () => {
 			machine_type_id: null,
 			machine_minutes: 0,
 		});
+	});
+
+	it("keeps the variant's own price on every new revision, never on a new variant (D166)", async () => {
+		await loadDemo();
+		const token = await connect(["catalog:read", "catalog:write"]);
+		const warm = { assembly: "LAMP-DESK", code: "warm" };
+		const salePrice = async (revision: string) =>
+			(
+				await one<{ sale_price_cents: number | null }>(
+					"SELECT sale_price_cents FROM assemblies WHERE id = ?",
+					await assemblyId("LAMP-DESK", "warm", revision),
+				)
+			).sale_price_cents;
+		const history = async (revision: string) =>
+			rows<{ price_cents: number; source: string }>(
+				"SELECT price_cents, source FROM price_history WHERE assembly_id = ? ORDER BY id",
+				await assemblyId("LAMP-DESK", "warm", revision),
+			);
+
+		const lines = await write(token, "set_assembly_lines", {
+			...warm,
+			lines: [
+				{ ref: "BASE-ASSY", qty: "1" },
+				{ ref: "ARM-ASSY", qty: "2" },
+				{ ref: "HEAD-KIT-WW", qty: "1" },
+			],
+		});
+		expect(lines.data).toMatchObject({ new_revision: true, assembly: { revision: "Rev2", sale_price: "94.00" } });
+		expect(await salePrice("Rev2")).toBe(9400);
+		expect(await history("Rev2")).toEqual([{ price_cents: 9400, source: "form" }]);
+		const production = await write(token, "set_assembly_production", { ...warm, batch_qty: "2" });
+		expect(production.data).toMatchObject({ new_revision: true, assembly: { revision: "Rev3", sale_price: "94.00" } });
+		const revision = await write(token, "new_assembly_revision", warm);
+		expect(revision.data).toMatchObject({ assembly: { revision: "Rev4", sale_price: "94.00" } });
+		expect([await salePrice("Rev3"), await salePrice("Rev4")]).toEqual([9400, 9400]);
+
+		// Once Rev2 is active, Margins lists it at the variant's price.
+		const on = await write(token, "activate_assembly", { ...warm, revision: "Rev2" });
+		expect(on.data.assembly).toMatchObject({ revision: "Rev2", status: "active", sale_price: "94.00" });
+		const margins = await (await request("/margins")).text();
+		const at = margins.indexOf(`href="/assemblies/${await assemblyId("LAMP-DESK", "warm", "Rev2")}"`);
+		expect(at).toBeGreaterThan(-1);
+		expect(margins.slice(at, margins.indexOf("</tr>", at))).toContain("€94.00");
+
+		// Undoing a revision removes its price history with it.
+		const rev4 = await assemblyId("LAMP-DESK", "warm", "Rev4");
+		expect(await undo(revision.data.change_set_id as number)).toMatchObject({ ok: true });
+		expect(await rows("SELECT id FROM price_history WHERE assembly_id = ?", rev4)).toEqual([]);
+
+		// A new variant is another sellable item: the part's price applies until it gets its own.
+		const cool = await write(token, "create_assembly", { part: "LAMP-DESK", code: "cool", copy_from: warm });
+		expect(cool.data.assembly).toMatchObject({ code: "cool", revision: "Rev1", sale_price: null });
 	});
 
 	it("checks every line like the editor and changes nothing when one is refused", async () => {

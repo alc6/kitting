@@ -134,7 +134,9 @@ the one it came from, so an older revision may still hold an older file: say whi
 2. `get_assembly` on the active assembly, so you edit from the real lines.
 3. Propose the complete new line list. Confirm. Then `set_assembly_lines` with the **complete** list (it replaces all
    lines). On an active assembly this does not touch it: it creates the next draft revision and puts the lines there
-   (the result says `new_revision: true`). Need a new component first? `create_part` (and `upsert_supplier_offer`).
+   (the result says `new_revision: true`; the revision keeps the variant's own `sale_price`). Need a new component
+   first? `create_part` (and `upsert_supplier_offer`). A new variant (`create_assembly` with another `code`) starts
+   without its own selling price: ask whether it needs one (`set_sale_price` with `code`).
 4. Review the draft: `get_assembly` with `revision` and `explode_assembly`; compare the cost with the active revision (if
    costs are visible) and say what changed.
 5. Only after the user confirms again: `activate_assembly` on the draft. The old revision is archived and can be

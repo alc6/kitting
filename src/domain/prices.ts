@@ -1,6 +1,6 @@
 // Price history: an append-only log of standard costs, supplier offer prices and selling prices.
 // Prices actually paid are not copied here: they are the receipt moves of the ledger (PO price).
-import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, type SQL, sql } from "drizzle-orm";
 import {
 	assemblies,
 	type PriceKind,
@@ -19,7 +19,8 @@ export type PriceRecord = {
 	priceCents: number | null;
 	source: PriceSource;
 	supplierId?: number | null;
-	assemblyId?: number | null;
+	/** An assembly variant's own price; a subquery for an assembly created in the same batch. */
+	assemblyId?: number | SQL | null;
 	note?: string;
 	/** Date the price applies from (YYYY-MM-DD). Default: today. Only past prices entered as history set it (D142). */
 	validFrom?: string;
