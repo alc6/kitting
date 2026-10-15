@@ -146,10 +146,12 @@ describe("ordering from several suppliers", () => {
 		const orders = planDraftOrders(
 			shortages.groups,
 			(id) => id === lumen,
-			(p) => (p === drvId ? quick : undefined),
+			(key) => (key === String(drvId) ? quick : undefined),
 		);
 		const fromQuick = orders.find((o) => o.supplierId === quick)!;
-		expect(fromQuick.lines).toEqual([{ partId: drvId, qtyMilli: 1000, unitPriceCents: 790, leadDays: 3 }]);
+		expect(fromQuick.lines).toEqual([
+			{ partId: drvId, optionValues: null, qtyMilli: 1000, unitPriceCents: 790, leadDays: 3 },
+		]);
 		expect(orders.find((o) => o.supplierId === lumen)?.lines.some((l) => l.partId === drvId) ?? false).toBe(false);
 
 		// Through the page: the order_from_<part> field moves the line to that supplier's draft PO.

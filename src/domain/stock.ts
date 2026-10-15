@@ -1,4 +1,5 @@
-// Stock: the append-only ledger of moves. On-hand is always SUM(qty_milli) per part.
+// Stock: the append-only ledger of moves. On-hand is always SUM(qty_milli) per part, and per part and option values
+// (its key, D169) for a part with options.
 import { and, asc, desc, eq, gte, lte, type SQL, sql } from "drizzle-orm";
 import { z } from "zod";
 import { MOVE_REASONS, type MoveReason, type Part, type PartKind, parts, stockMoves } from "../db/schema";
@@ -8,10 +9,11 @@ import { MILLI } from "../lib/units";
 import { type FieldErrors, field } from "../lib/validation";
 import type { Db } from "../types";
 import { loadGraph } from "./assemblies";
-import { CostCalculator, centsOf } from "./assembly-graph";
+import { CostCalculator, centsOf, type GraphPart } from "./assembly-graph";
 import { averageUnitCents, centsOfMillicents, replayAverageCosts } from "./costing";
 import type { RowIssue } from "./import/types";
 import { machineRatesAt } from "./machines";
+import { type OptionKey, stockKey } from "./option-keys";
 import { historyStart, standardCostsAt } from "./prices";
 
 export const isStocked = (kind: PartKind): boolean => kind === "buy" || kind === "make";
@@ -28,6 +30,8 @@ export type NewMove = {
 	qtyMilli: number;
 	serial: string | null;
 	unitCostCents: number | null;
+	/** The option values moved (D169); none for a part without options. */
+	optionValues?: OptionKey;
 };
 
 /** Values for inserting a move; every caller goes through here so audit fields are never missed. */
@@ -48,6 +52,7 @@ export function moveValues(
 		qtyMilli: m.qtyMilli,
 		serial: m.serial,
 		unitCostCents: m.unitCostCents,
+		optionValues: m.optionValues ?? null,
 		reason: ctx.reason,
 		refType: ctx.refType,
 		refId: ctx.refId ?? null,
@@ -106,25 +111,33 @@ export function countStatements(db: Db, moves: NewMove[], note: string, user: st
 // Inventory counts (shared by stock.csv and the count screen)
 
 export type CountLine = { line: number; qtyMilli: number; serial: string; unitCostCents: number | null };
-export type CountGroup = { part: Part; lines: CountLine[] };
-export type CountResult = { part: Part; line: number; current: number; counted: number; serials: string[] };
+/** What was counted of a part, in some option values (D169) for a part with options. */
+export type CountGroup = { part: Part; optionValues?: OptionKey; lines: CountLine[] };
+export type CountResult = {
+	part: Part;
+	optionValues: OptionKey;
+	line: number;
+	current: number;
+	counted: number;
+	serials: string[];
+};
 
 /**
- * Turns counted quantities into `count` moves for the difference with the current on-hand.
- * A serial-tracked part with no stock yet may list one line per serial (qty 1): each serial
- * gets its own +1 move. Otherwise one line per part.
+ * Turns counted quantities into `count` moves for the difference with the current on-hand (per part and option
+ * values, `onHandByKey`). A serial-tracked part with no stock yet may list one line per serial (qty 1): each serial
+ * gets its own +1 move. Otherwise one line per part and values.
  */
 export function planCounts(
 	groups: CountGroup[],
-	onHand: Map<number, number>,
+	onHand: Map<string, number>,
 ): { moves: NewMove[]; results: CountResult[]; issues: RowIssue[] } {
 	const moves: NewMove[] = [];
 	const results: CountResult[] = [];
 	const issues: RowIssue[] = [];
-	for (const { part, lines } of groups) {
+	for (const { part, lines, optionValues = null } of groups) {
 		const first = lines[0];
 		if (!first) continue;
-		const current = onHand.get(part.id) ?? 0;
+		const current = onHand.get(stockKey(part.id, optionValues)) ?? 0;
 		if (lines.some((l) => l.serial !== "")) {
 			const bad = lines.find((l) => l.serial === "" || l.qtyMilli !== MILLI);
 			if (!part.trackSerial || bad) {
@@ -152,10 +165,12 @@ export function planCounts(
 					qtyMilli: MILLI,
 					serial: l.serial,
 					unitCostCents: l.unitCostCents ?? part.costCents,
+					optionValues,
 				});
 			}
 			results.push({
 				part,
+				optionValues,
 				line: first.line,
 				current,
 				counted: lines.length * MILLI,
@@ -176,9 +191,10 @@ export function planCounts(
 				qtyMilli: delta,
 				serial: null,
 				unitCostCents: first.unitCostCents ?? part.costCents,
+				optionValues,
 			});
 		}
-		results.push({ part, line: first.line, current, counted: first.qtyMilli, serials: [] });
+		results.push({ part, optionValues, line: first.line, current, counted: first.qtyMilli, serials: [] });
 	}
 	return { moves, results, issues };
 }
@@ -194,6 +210,28 @@ export async function onHandAt(db: Db, date?: string | null): Promise<Map<number
 		.where(date ? lte(stockMoves.at, `${date}T23:59:59.999Z`) : undefined)
 		.groupBy(stockMoves.partId);
 	return new Map(rows.map((r) => [r.partId, r.qty]));
+}
+
+/** On-hand per part and option values (D169), keyed by `stockKey`; optionally as of the end of a day. */
+export async function onHandByKey(db: Db, date?: string | null): Promise<Map<string, number>> {
+	const rows = await stockByKey(db, date);
+	return new Map(rows.map((r) => [stockKey(r.partId, r.optionValues), r.qty]));
+}
+
+/** The rows behind `onHandByKey`, for one part or all, zero balances included. */
+export async function stockByKey(db: Db, date?: string | null, partId?: number) {
+	const conds: SQL[] = [];
+	if (date) conds.push(lte(stockMoves.at, `${date}T23:59:59.999Z`));
+	if (partId !== undefined) conds.push(eq(stockMoves.partId, partId));
+	return db
+		.select({
+			partId: stockMoves.partId,
+			optionValues: stockMoves.optionValues,
+			qty: sql<number>`SUM(${stockMoves.qtyMilli})`,
+		})
+		.from(stockMoves)
+		.where(conds.length ? and(...conds) : undefined)
+		.groupBy(stockMoves.partId, stockMoves.optionValues);
 }
 
 export type MoveFilters = { q?: string; reason?: string; from?: string | null; to?: string | null; limit?: number };
@@ -226,7 +264,9 @@ export async function listMoves(db: Db, f: MoveFilters = {}) {
 }
 
 export type ValuationRow = {
-	part: Pick<Part, "id" | "ref" | "name" | "kind" | "unit">;
+	part: Pick<GraphPart, "id" | "ref" | "name" | "kind" | "unit" | "options">;
+	/** One row per option values a part with options has in stock (D175); costs stay per part. */
+	optionValues: OptionKey;
 	onHandMilli: number;
 	/** Standard method: unit cost in millicents (standard cost for buy parts, roll-up for make parts). */
 	unitMillicents: number;
@@ -275,7 +315,7 @@ export async function averageCosts(db: Db, date?: string | null) {
 export async function valuation(db: Db, date?: string | null) {
 	const [graph, onHand, dated, datedRates, average, start] = await Promise.all([
 		loadGraph(db),
-		onHandAt(db, date),
+		stockByKey(db, date),
 		date ? standardCostsAt(db, date) : Promise.resolve(null),
 		date ? machineRatesAt(db, date) : Promise.resolve(null),
 		averageCosts(db, date),
@@ -296,25 +336,42 @@ export async function valuation(db: Db, date?: string | null) {
 	}
 	const calc = new CostCalculator(graph);
 	const rows: ValuationRow[] = [];
-	for (const [partId, qty] of onHand) {
+	// The weighted average is per part: a part in several values shares its value out by quantity, the rest of the
+	// rounding on its last row, so the rows add up to the part's value.
+	const byPart = new Map<number, { optionValues: OptionKey; qty: number }[]>();
+	for (const r of onHand) {
+		if (r.qty === 0) continue;
+		byPart.set(r.partId, [...(byPart.get(r.partId) ?? []), { optionValues: r.optionValues, qty: r.qty }]);
+	}
+	for (const [partId, keys] of byPart) {
 		const part = graph.parts.get(partId);
-		if (!part || qty === 0 || !isStocked(part.kind)) continue;
+		if (!part || !isStocked(part.kind)) continue;
 		const cost = calc.part(partId);
 		const hasAssembly =
 			part.kind === "make" &&
 			[...graph.assemblies.values()].some((b) => b.parentPartId === partId && b.status === "active");
 		const avg = average.costs.get(partId);
-		rows.push({
-			part,
-			onHandMilli: qty,
-			unitMillicents: cost.millicents,
-			source: hasAssembly ? "rollup" : "standard",
-			incomplete: cost.incomplete,
-			valueCents: centsOf(calc.extended(partId, qty)),
-			fallback: dated?.fallback.has(partId) ?? false,
-			avgUnitCents: avg ? averageUnitCents(avg) : null,
-			avgValueCents: avg ? centsOfMillicents(avg.valueMillicents) : 0,
-			avgIncomplete: avg?.incomplete ?? true,
+		const avgValue = avg ? centsOfMillicents(avg.valueMillicents) : 0;
+		const total = keys.reduce((s, k) => s + k.qty, 0);
+		let shared = 0;
+		keys.sort((a, b) => (a.optionValues ?? "").localeCompare(b.optionValues ?? ""));
+		keys.forEach((k, i) => {
+			const last = i === keys.length - 1;
+			const share = last ? avgValue - shared : total === 0 ? 0 : Math.round((avgValue * k.qty) / total);
+			shared += share;
+			rows.push({
+				part,
+				optionValues: k.optionValues,
+				onHandMilli: k.qty,
+				unitMillicents: cost.millicents,
+				source: hasAssembly ? "rollup" : "standard",
+				incomplete: cost.incomplete,
+				valueCents: centsOf(calc.extended(partId, k.qty)),
+				fallback: dated?.fallback.has(partId) ?? false,
+				avgUnitCents: avg ? averageUnitCents(avg) : null,
+				avgValueCents: share,
+				avgIncomplete: avg?.incomplete ?? true,
+			});
 		});
 	}
 	rows.sort((a, b) => a.part.ref.localeCompare(b.part.ref));

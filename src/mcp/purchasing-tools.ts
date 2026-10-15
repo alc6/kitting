@@ -120,16 +120,16 @@ const createDraftPos = tool({
 			for (const name of a.suppliers) ids.add((await supplierByName(ctx.db, name)).id);
 			include = (supplierId) => ids.has(supplierId);
 		}
-		const chosen = new Map<number, number>();
+		const chosen = new Map<string, number>();
 		for (const o of a.order_from) {
 			const line = lines.find((l) => l.part.ref.toLowerCase() === o.ref.toLowerCase());
 			if (!line) throw new ToolError(`${o.ref} is not short: get_shortages lists what to order.`);
 			const supplier = await supplierByName(ctx.db, o.supplier);
 			if (!line.offers.some((offer) => offer.supplierId === supplier.id))
 				throw new ToolError(`${supplier.name} has no offer for ${line.part.ref}: add one with upsert_supplier_offer.`);
-			chosen.set(line.part.id, supplier.id);
+			chosen.set(line.key, supplier.id);
 		}
-		const orders = planDraftOrders(shortages.groups, include, (partId) => chosen.get(partId));
+		const orders = planDraftOrders(shortages.groups, include, (key) => chosen.get(key));
 		if (orders.length === 0) return { ...NOTHING_CHANGED, purchaseOrders: [], note: "Nothing to order." };
 		for (let attempt = 0; ; attempt++) {
 			const numbers = await nextPoNumbers(ctx.db, orders.length);

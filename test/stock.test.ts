@@ -159,7 +159,7 @@ describe("on-hand list and ledger", () => {
 		expect(html).toContain("Inventory count");
 		expect(html).not.toContain("Adjustment</span>");
 		const csv = await (await request("/stock/moves?format=csv")).text();
-		expect(csv.split("\r\n")[0]).toBe("at,ref,name,reason,qty,unit,serial,unit_cost,ref_type,ref_id,by,note");
+		expect(csv.split("\r\n")[0]).toBe("at,ref,name,reason,qty,unit,serial,unit_cost,ref_type,ref_id,by,note,options");
 		expect(csv).toContain(",A,Part A,adjust,-0.5,pcs,");
 	});
 });

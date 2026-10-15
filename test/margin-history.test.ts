@@ -37,6 +37,7 @@ const part = (id: number, kind: PartKind, costCents: number | null): GraphPart =
 	costCents,
 	trackSerial: false,
 	archived: false,
+	options: [],
 });
 
 const PRODUCT = 100;

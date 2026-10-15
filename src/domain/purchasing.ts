@@ -27,11 +27,14 @@ import {
 	type GraphMachineType,
 	type GraphPart,
 	machineNeed,
+	missingValues,
 	walkTree,
 } from "./assembly-graph";
-import { OPEN_STATUSES } from "./builds";
+import { OPEN_STATUSES, openBuildPicks } from "./builds";
 import { NO_TERMS, type OfferTerms, offersByPart, poUnitPrice } from "./offers";
-import { moveValues, onHandAt } from "./stock";
+import { idsOf, keyLabel, keyValues, type OptionKey, splitStockKey, stockKey } from "./option-keys";
+import { loadOptions } from "./options";
+import { moveValues, onHandByKey } from "./stock";
 
 /** POs whose remaining quantities count as "on order". Drafts count too, so drafting twice never doubles. */
 export const OPEN_PO_STATUSES: PoStatus[] = ["draft", "sent", "partial"];
@@ -45,6 +48,9 @@ export const RECEIVABLE_PO_STATUSES: PoStatus[] = ["draft", "sent", "partial"];
 export type ShortageOffer = OfferTerms & { supplierId: number; supplierName: string };
 
 export type ShortageLine = {
+	/** The part and option values short (`stockKey`): one line per values of a part with options (D176). */
+	key: string;
+	optionValues: OptionKey;
 	/** The part with its preferred supplier's terms (empty terms without a preferred offer). */
 	part: GraphPart & {
 		supplierId: number | null;
@@ -92,6 +98,8 @@ export type MachineLoad = {
  */
 export type ToMakeLine = {
 	part: GraphPart;
+	/** The values to make it in (D176). */
+	optionValues: OptionKey;
 	/** The assembly a build of it would use (its default active one): its batch and machine time. */
 	assembly: { id: number; code: string; revision: string; batchMilli: number };
 	/** Short: needed by the open builds and covered neither by stock nor by planned builds of it. */
@@ -117,27 +125,39 @@ export type Shortages = {
 	/** Made parts to make for the open builds, what they are made from first (D156). */
 	toMake: ToMakeLine[];
 	/** Make/kit parts that must be built for open builds but have no active assembly. */
-	missingAssemblies: { ref: string; name: string; qtyMilli: number; builds: string[] }[];
+	missingAssemblies: {
+		ref: string;
+		name: string;
+		optionValues: OptionKey;
+		values: string;
+		qtyMilli: number;
+		builds: string[];
+	}[];
+	/** Values open builds ask of a component that does not come in them (D170): nothing is ordered for those. */
+	missingValues: { ref: string; name: string; option: string; value: string; builds: string[] }[];
 	/** Machine time of the open builds, per machine type (sub-assemblies taken from stock need none). */
 	machines: MachineLoad[];
 	buildCount: number;
 };
 
-/** Remaining quantity to receive per part on open POs. */
-export async function onOrderMap(db: Db): Promise<Map<number, number>> {
+/** Remaining quantity to receive per part and option values (`stockKey`) on open POs. */
+export async function onOrderMap(db: Db): Promise<Map<string, number>> {
 	const rows = await db
 		.select({
 			partId: poLines.partId,
+			optionValues: poLines.optionValues,
 			qty: sql<number>`SUM(MAX(${poLines.qtyMilli} - ${poLines.receivedQtyMilli}, 0))`,
 		})
 		.from(poLines)
 		.innerJoin(purchaseOrders, eq(poLines.poId, purchaseOrders.id))
 		.where(inArray(purchaseOrders.status, OPEN_PO_STATUSES))
-		.groupBy(poLines.partId);
-	return new Map(rows.map((r) => [r.partId, r.qty]));
+		.groupBy(poLines.partId, poLines.optionValues);
+	return new Map(rows.map((r) => [stockKey(r.partId, r.optionValues), r.qty]));
 }
 
 /** The made parts built inside a node (through kits, which are phantoms): what it is made from, for the order (D156). */
+const nodeKey = (n: ExplodedNode) => stockKey(n.part.id, n.optionValues);
+
 function* subBuilds(node: ExplodedNode): Generator<ExplodedNode> {
 	for (const child of node.children) {
 		if (child.part.kind === "make" && child.toBuildMilli > 0 && child.assemblyId !== null) yield child;
@@ -152,19 +172,22 @@ function* subBuilds(node: ExplodedNode): Generator<ExplodedNode> {
  *    on its own is not built a second time inside its parent;
  * 2. for buy parts: net = need − on-hand − on order (make parts taken from stock are already covered);
  * 3. round up to MOQ and pack size; group by supplier.
- * Parts already below zero count as a need of their deficit.
+ * Parts already below zero count as a need of their deficit. Everything is counted per part and option values (D176):
+ * each build explodes in its values and with the values chosen for it.
  */
 export async function computeShortages(db: Db): Promise<Shortages> {
-	const [graph, onHand, onOrder, open, partRows, offers, active] = await Promise.all([
+	const [graph, onHand, onOrder, open, partRows, offers, active, picks] = await Promise.all([
 		loadGraph(db),
-		onHandAt(db),
+		onHandByKey(db),
 		onOrderMap(db),
 		db
 			.select({
+				id: builds.id,
 				number: builds.number,
 				partId: builds.partId,
 				assemblyId: builds.assemblyId,
 				qtyMilli: builds.qtyMilli,
+				optionValues: builds.optionValues,
 			})
 			.from(builds)
 			.where(inArray(builds.status, OPEN_STATUSES))
@@ -176,23 +199,28 @@ export async function computeShortages(db: Db): Promise<Shortages> {
 			.from(machines)
 			.where(eq(machines.status, "active"))
 			.groupBy(machines.machineTypeId),
+		openBuildPicks(db),
 	]);
 	const preferredSupplier = new Map(partRows.map((p) => [p.id, p.supplierId]));
 	// Stock to come from the open builds (D156): what they will make is available to the builds that need it.
-	const planned = new Map<number, number>();
-	for (const b of open) planned.set(b.partId, (planned.get(b.partId) ?? 0) + b.qtyMilli);
+	const planned = new Map<string, number>();
+	for (const b of open) {
+		const k = stockKey(b.partId, b.optionValues);
+		planned.set(k, (planned.get(k) ?? 0) + b.qtyMilli);
+	}
 	// Planned output first fills a deficit: 5 arms planned with stock at −3 make 2 available (explode() clamps at 0).
 	const available = new Map(onHand);
-	for (const [partId, qty] of planned) available.set(partId, (available.get(partId) ?? 0) + qty);
-	/** Per made part to make: how many, for which builds, and the made parts it is built from (`uses`). */
-	const toMake = new Map<number, { qty: number; builds: Set<string>; uses: Set<number> }>();
-	const need = new Map<number, { qty: number; builds: Set<string> }>();
-	const missing = new Map<number, { qty: number; builds: Set<string> }>();
-	const add = (into: typeof need, partId: number, qty: number, build: string) => {
-		const e = into.get(partId) ?? { qty: 0, builds: new Set<string>() };
+	for (const [k, qty] of planned) available.set(k, (available.get(k) ?? 0) + qty);
+	/** Per made part and values to make: how many, for which builds, and the made parts it is built from (`uses`). */
+	const toMake = new Map<string, { qty: number; builds: Set<string>; uses: Set<string> }>();
+	const need = new Map<string, { qty: number; builds: Set<string> }>();
+	const missing = new Map<string, { qty: number; builds: Set<string> }>();
+	const lacking = new Map<string, Shortages["missingValues"][number]>();
+	const add = (into: typeof need, k: string, qty: number, build: string) => {
+		const e = into.get(k) ?? { qty: 0, builds: new Set<string>() };
 		e.qty += qty;
 		e.builds.add(build);
-		into.set(partId, e);
+		into.set(k, e);
 	};
 	const load = new Map<number, MachineLoad>();
 	const activeOf = new Map(active.map((a) => [a.typeId, a.n]));
@@ -208,25 +236,39 @@ export async function computeShortages(db: Db): Promise<Shortages> {
 		load.set(machineType.id, l);
 	};
 	for (const b of open) {
-		const ex = explode(graph, b.assemblyId, b.qtyMilli, { available });
+		const ex = explode(graph, b.assemblyId, b.qtyMilli, {
+			available,
+			values: idsOf(b.optionValues),
+			picks: picks.get(b.id),
+		});
+		for (const m of missingValues(ex)) {
+			const k = `${m.part.id}|${m.option}|${m.value}`;
+			const e = lacking.get(k) ?? { ref: m.part.ref, name: m.part.name, option: m.option, value: m.value, builds: [] };
+			if (!e.builds.includes(b.number)) e.builds.push(b.number);
+			lacking.set(k, e);
+		}
 		// Machine time of the build itself and its kits; that of the sub-assemblies to make is added below, in whole
 		// runs as they will be made (D156).
 		const subTime = new Map<number, number>();
 		for (const node of walkTree(ex.tree)) {
 			// A make part built now, with an assembly to build it from (one without is in missingAssemblies).
 			if (node.part.kind !== "make" || node.toBuildMilli <= 0 || node.assemblyId === null) continue;
-			const e = toMake.get(node.part.id) ?? { qty: 0, builds: new Set<string>(), uses: new Set<number>() };
+			if (node.missingValues.length) continue;
+			const e = toMake.get(nodeKey(node)) ?? { qty: 0, builds: new Set<string>(), uses: new Set<string>() };
 			e.qty += node.toBuildMilli;
 			e.builds.add(b.number);
-			for (const sub of subBuilds(node)) e.uses.add(sub.part.id);
-			toMake.set(node.part.id, e);
+			for (const sub of subBuilds(node)) e.uses.add(nodeKey(sub));
+			toMake.set(nodeKey(node), e);
 			const sub = node.assemblyId === null ? undefined : graph.assemblies.get(node.assemblyId);
 			if (sub?.machineTypeId != null && sub.machineMinutes > 0)
 				subTime.set(sub.machineTypeId, (subTime.get(sub.machineTypeId) ?? 0) + machineNeed(sub, node.toBuildMilli));
 		}
 		for (const r of ex.requirements) {
-			if (r.missingAssembly) add(missing, r.part.id, r.qtyMilli, b.number);
-			else if (r.part.kind === "buy") add(need, r.part.id, r.qtyMilli, b.number);
+			// A value the part lacks is never ordered: its default only stands in (listed in missingValues).
+			if (r.missingValue) continue;
+			const k = stockKey(r.part.id, r.optionValues);
+			if (r.missingAssembly) add(missing, k, r.qtyMilli, b.number);
+			else if (r.part.kind === "buy") add(need, k, r.qtyMilli, b.number);
 		}
 		for (const m of ex.machines) {
 			const own = m.minutesMilli - (subTime.get(m.machineType.id) ?? 0);
@@ -234,18 +276,19 @@ export async function computeShortages(db: Db): Promise<Shortages> {
 		}
 	}
 	// What to make, in whole runs (D156); what a part is made from comes first.
-	const level = new Map<number, number>();
-	const levelOf = (partId: number, stack: number[] = []): number => {
-		const known = level.get(partId);
+	const level = new Map<string, number>();
+	const levelOf = (k: string, stack: string[] = []): number => {
+		const known = level.get(k);
 		if (known !== undefined) return known;
-		if (stack.includes(partId)) return 0;
-		const uses = [...(toMake.get(partId)?.uses ?? [])];
-		const l = uses.length ? 1 + Math.max(...uses.map((u) => levelOf(u, [...stack, partId]))) : 0;
-		level.set(partId, l);
+		if (stack.includes(k)) return 0;
+		const uses = [...(toMake.get(k)?.uses ?? [])];
+		const l = uses.length ? 1 + Math.max(...uses.map((u) => levelOf(u, [...stack, k]))) : 0;
+		level.set(k, l);
 		return l;
 	};
 	const toMakeLines: ToMakeLine[] = [];
-	for (const [partId, m] of toMake) {
+	for (const [k, m] of toMake) {
+		const { partId, key: optionValues } = splitStockKey(k);
 		const part = graph.parts.get(partId);
 		const assembly = defaultAssembly(graph, partId);
 		if (!part || !assembly) continue;
@@ -257,51 +300,62 @@ export async function computeShortages(db: Db): Promise<Shortages> {
 				: undefined;
 		toMakeLines.push({
 			part,
+			optionValues,
 			assembly: { id: assembly.id, code: assembly.code, revision: assembly.revision, batchMilli: assembly.batchMilli },
 			shortMilli: m.qty,
-			onHandMilli: onHand.get(partId) ?? 0,
-			plannedMilli: planned.get(partId) ?? 0,
+			onHandMilli: onHand.get(k) ?? 0,
+			plannedMilli: planned.get(k) ?? 0,
 			toMakeMilli,
 			runs,
 			machine: machineType ? { machineType, minutesMilli: machineNeed(assembly, toMakeMilli) } : null,
-			level: levelOf(partId),
+			level: levelOf(k),
 			builds: [...m.builds],
 		});
 		// Rounded up to whole runs: what the rest of the last run uses is bought too, so making the suggested quantity
 		// never takes stock below zero. Its own machine time is in the line; that of sub-assemblies inside it is not.
 		if (toMakeMilli > m.qty) {
-			const extra = explode(graph, assembly.id, toMakeMilli - m.qty, { available });
+			const extra = explode(graph, assembly.id, toMakeMilli - m.qty, { available, values: idsOf(optionValues) });
 			for (const r of extra.requirements) {
+				if (r.missingValue) continue;
 				const into = r.missingAssembly ? missing : r.part.kind === "buy" ? need : undefined;
 				if (!into) continue;
-				const e = into.get(r.part.id) ?? { qty: 0, builds: new Set<string>() };
+				const rk = stockKey(r.part.id, r.optionValues);
+				const e = into.get(rk) ?? { qty: 0, builds: new Set<string>() };
 				e.qty += r.qtyMilli;
 				for (const build of m.builds) e.builds.add(build);
-				into.set(r.part.id, e);
+				into.set(rk, e);
 			}
 		}
 	}
-	toMakeLines.sort((a, b) => a.level - b.level || a.part.ref.localeCompare(b.part.ref));
+	toMakeLines.sort(
+		(a, b) =>
+			a.level - b.level ||
+			a.part.ref.localeCompare(b.part.ref) ||
+			(a.optionValues ?? "").localeCompare(b.optionValues ?? ""),
+	);
 	for (const l of toMakeLines) if (l.machine) addLoad(l.machine.machineType, l.machine.minutesMilli, l.builds);
-	// Parts already below zero are short of their deficit even without open builds.
-	for (const [partId, qty] of onHand) {
-		if (qty < 0 && graph.parts.get(partId)?.kind === "buy" && !need.has(partId))
-			need.set(partId, { qty: 0, builds: new Set() });
+	// Parts already below zero (in some values) are short of their deficit even without open builds.
+	for (const [k, qty] of onHand) {
+		if (qty < 0 && graph.parts.get(splitStockKey(k).partId)?.kind === "buy" && !need.has(k))
+			need.set(k, { qty: 0, builds: new Set() });
 	}
 
 	const groups = new Map<number | null, SupplierGroup>();
-	for (const [partId, n] of need) {
+	for (const [k, n] of need) {
+		const { partId, key: optionValues } = splitStockKey(k);
 		const gp = graph.parts.get(partId);
 		if (!gp) continue;
 		const supplierId = preferredSupplier.get(partId) ?? null;
 		const partOffers = offers.get(partId) ?? [];
 		const preferred = partOffers.find((o) => o.supplierId === supplierId);
 		const terms = preferred ?? NO_TERMS;
-		const stock = onHand.get(partId) ?? 0;
-		const ordered = onOrder.get(partId) ?? 0;
+		const stock = onHand.get(k) ?? 0;
+		const ordered = onOrder.get(k) ?? 0;
 		const net = n.qty - stock - ordered;
 		if (net <= 0) continue;
 		const line: ShortageLine = {
+			key: k,
+			optionValues,
 			part: {
 				...gp,
 				supplierId,
@@ -333,16 +387,26 @@ export async function computeShortages(db: Db): Promise<Shortages> {
 	const sorted = [...groups.values()].sort((a, b) =>
 		a.supplierId === null ? 1 : b.supplierId === null ? -1 : a.supplierName.localeCompare(b.supplierName),
 	);
-	for (const g of sorted) g.lines.sort((a, b) => a.part.ref.localeCompare(b.part.ref));
+	for (const g of sorted)
+		g.lines.sort(
+			(a, b) => a.part.ref.localeCompare(b.part.ref) || (a.optionValues ?? "").localeCompare(b.optionValues ?? ""),
+		);
 	return {
 		groups: sorted,
 		toMake: toMakeLines,
-		missingAssemblies: [...missing].map(([partId, m]) => ({
-			ref: graph.parts.get(partId)?.ref ?? String(partId),
-			name: graph.parts.get(partId)?.name ?? "",
-			qtyMilli: m.qty,
-			builds: [...m.builds],
-		})),
+		missingAssemblies: [...missing].map(([k, m]) => {
+			const { partId, key } = splitStockKey(k);
+			const part = graph.parts.get(partId);
+			return {
+				ref: part?.ref ?? String(partId),
+				name: part?.name ?? "",
+				optionValues: key,
+				values: keyValues(part?.options ?? [], key),
+				qtyMilli: m.qty,
+				builds: [...m.builds],
+			};
+		}),
+		missingValues: [...lacking.values()],
 		machines: [...load.values()].sort((a, b) => a.machineType.name.localeCompare(b.machineType.name)),
 		buildCount: open.length,
 	};
@@ -384,30 +448,31 @@ const poIdByNumber = (number: string) => sql`(SELECT id FROM purchase_orders WHE
 /** What to order from one supplier. */
 export type DraftOrder = {
 	supplierId: number;
-	lines: { partId: number; qtyMilli: number; unitPriceCents: number; leadDays: number }[];
+	lines: { partId: number; optionValues: OptionKey; qtyMilli: number; unitPriceCents: number; leadDays: number }[];
 };
 
 /**
  * Turns the shortage list into draft orders: lines of the checked supplier groups, each ordered from the
  * supplier chosen for it (its preferred one by default). A line moved to another supplier is rounded to
  * that supplier's MOQ and pack size and priced at its offer (else the standard cost). Lines without a
- * preferred supplier are ordered only when a supplier is chosen for them.
+ * preferred supplier are ordered only when a supplier is chosen for them. `choice` takes a line's key (part and values).
  */
 export function planDraftOrders(
 	groups: SupplierGroup[],
 	include: (supplierId: number) => boolean,
-	choice: (partId: number) => number | undefined,
+	choice: (key: string) => number | undefined,
 ): DraftOrder[] {
 	const orders = new Map<number, DraftOrder>();
 	for (const g of groups) {
 		if (g.supplierId !== null && !include(g.supplierId)) continue;
 		for (const l of g.lines) {
-			const chosen = choice(l.part.id) ?? g.supplierId;
+			const chosen = choice(l.key) ?? g.supplierId;
 			const offer = l.offers.find((o) => o.supplierId === chosen);
 			if (chosen === null || !offer) continue;
 			const order = orders.get(chosen) ?? { supplierId: chosen, lines: [] };
 			order.lines.push({
 				partId: l.part.id,
+				optionValues: l.optionValues,
 				qtyMilli: roundOrderQty(l.netMilli, offer.moqMilli, offer.packSizeMilli),
 				unitPriceCents: poUnitPrice(offer.priceCents, l.part.costCents),
 				leadDays: offer.leadDays,
@@ -449,6 +514,7 @@ export function draftPoStatements(
 				db.insert(poLines).values({
 					poId: poIdByNumber(number),
 					partId: l.partId,
+					optionValues: l.optionValues,
 					qtyMilli: l.qtyMilli,
 					unitPriceCents: l.unitPriceCents,
 					createdBy: user,
@@ -493,7 +559,7 @@ export function updatePoStatement(
 export function addPoLineStatement(
 	db: Db,
 	poId: number,
-	line: { partId: number; qtyMilli: number; unitPriceCents: number },
+	line: { partId: number; qtyMilli: number; unitPriceCents: number; optionValues?: OptionKey },
 	user: string,
 	now: string,
 ) {
@@ -504,7 +570,7 @@ export function updatePoLineStatement(
 	db: Db,
 	poId: number,
 	lineId: number,
-	d: { qtyMilli: number; unitPriceCents: number },
+	d: { qtyMilli: number; unitPriceCents: number; optionValues?: OptionKey },
 	user: string,
 	now: string,
 ) {
@@ -702,7 +768,17 @@ export async function getPo(db: Db, id: number) {
 	return rows[0];
 }
 
+/** The lines of a PO, with each part's options and the line's values as text (D176). */
 export async function getPoLines(db: Db, poId: number) {
+	const rows = await queryPoLines(db, poId);
+	const options = await loadOptions(db, [...new Set(rows.map((r) => r.line.partId))]);
+	return rows.map((r) => {
+		const partOptions = options.get(r.line.partId) ?? [];
+		return { ...r, options: partOptions, values: keyLabel(partOptions, r.line.optionValues) };
+	});
+}
+
+function queryPoLines(db: Db, poId: number) {
 	return db
 		.select({
 			line: poLines,
@@ -723,7 +799,15 @@ export async function getPoLines(db: Db, poId: number) {
 		.orderBy(asc(poLines.id));
 }
 
-export type Receipt = { lineId: number; partId: number; qtyMilli: number; unitPriceCents: number; serials: string[] };
+export type Receipt = {
+	lineId: number;
+	partId: number;
+	/** The line's option values: what is received (D176). */
+	optionValues: OptionKey;
+	qtyMilli: number;
+	unitPriceCents: number;
+	serials: string[];
+};
 
 /** Form field names of a receipt: the quantity and the serials received on a PO line. */
 export const receiveQtyField = (lineId: number) => `recv_${lineId}`;
@@ -735,7 +819,7 @@ export const receiveSerialsField = (lineId: number) => `serials_${lineId}`;
  * keyed by field; nothing received at all is an error too.
  */
 export function planReceipts(
-	lines: { line: { id: number; partId: number; unitPriceCents: number } }[],
+	lines: { line: { id: number; partId: number; unitPriceCents: number; optionValues: OptionKey } }[],
 	values: Record<string, string>,
 ): { receipts: Receipt[]; errors: FieldErrors } {
 	const errors: FieldErrors = {};
@@ -766,6 +850,7 @@ export function planReceipts(
 		receipts.push({
 			lineId: l.line.id,
 			partId: l.line.partId,
+			optionValues: l.line.optionValues,
 			qtyMilli: qty,
 			unitPriceCents: l.line.unitPriceCents,
 			serials,
@@ -792,18 +877,34 @@ export function receiptStatements(
 		if (r.serials.length > 0) {
 			for (const serial of r.serials) {
 				stmts.push(
-					db
-						.insert(stockMoves)
-						.values(moveValues({ partId: r.partId, qtyMilli: MILLI, serial, unitCostCents: r.unitPriceCents }, ctx)),
+					db.insert(stockMoves).values(
+						moveValues(
+							{
+								partId: r.partId,
+								qtyMilli: MILLI,
+								serial,
+								unitCostCents: r.unitPriceCents,
+								optionValues: r.optionValues,
+							},
+							ctx,
+						),
+					),
 				);
 			}
 		} else {
 			stmts.push(
-				db
-					.insert(stockMoves)
-					.values(
-						moveValues({ partId: r.partId, qtyMilli: r.qtyMilli, serial: null, unitCostCents: r.unitPriceCents }, ctx),
+				db.insert(stockMoves).values(
+					moveValues(
+						{
+							partId: r.partId,
+							qtyMilli: r.qtyMilli,
+							serial: null,
+							unitCostCents: r.unitPriceCents,
+							optionValues: r.optionValues,
+						},
+						ctx,
 					),
+				),
 			);
 		}
 		stmts.push(

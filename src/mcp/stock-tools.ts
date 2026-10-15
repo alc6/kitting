@@ -9,7 +9,7 @@ import {
 	type CountGroup,
 	countStatements,
 	isStocked,
-	onHandAt,
+	onHandByKey,
 	planCounts,
 } from "../domain/stock";
 import { fmt } from "../i18n";
@@ -104,7 +104,7 @@ const countStock = tool({
 			}
 		}
 		if (problems.length) throw new ToolError(`Refused, nothing was changed. ${problems.join(" ")}`);
-		const { moves, results } = planCounts(groups, await onHandAt(ctx.db));
+		const { moves, results } = planCounts(groups, await onHandByKey(ctx.db));
 		const { change } = await saveChange(
 			ctx,
 			fmt(ctx.t.history.summaries.stockCount, { n: new Set(moves.map((m) => m.partId)).size }),

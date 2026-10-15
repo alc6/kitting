@@ -8,6 +8,7 @@ import {
 	buildableProduct,
 	buildInput,
 	buildPickList,
+	buildPicks,
 	buildPlanErrors,
 	cancelBuildStatement,
 	choiceField,
@@ -22,8 +23,9 @@ import {
 	serialField,
 	unitsToBuild,
 } from "../domain/builds";
+import { stockKey } from "../domain/option-keys";
 import { can } from "../domain/permissions";
-import { onHandAt } from "../domain/stock";
+import { onHandByKey } from "../domain/stock";
 import { fmt } from "../i18n";
 import { isConstraintError } from "../lib/sql";
 import { validate } from "../lib/validation";
@@ -201,7 +203,11 @@ const completeBuild = tool({
 	run: async (a, ctx) => {
 		const { build, part, assembly } = await buildByNumber(ctx.db, a.number);
 		if (!OPEN_STATUSES.includes(build.status)) refuse({ _: "build_not_open" });
-		const [graph, onHand] = await Promise.all([loadGraph(ctx.db), onHandAt(ctx.db)]);
+		const [graph, onHand, picks] = await Promise.all([
+			loadGraph(ctx.db),
+			onHandByKey(ctx.db),
+			buildPicks(ctx.db, build.id),
+		]);
 		const form: Record<string, string> = {};
 		// Every place a make part can appear (the assembly exploded with no stock: all built), to apply a choice by reference.
 		const everywhere = exploding(() => explode(graph, build.assemblyId, build.qtyMilli, { stock: new Map() }));
@@ -224,13 +230,13 @@ const completeBuild = tool({
 			if (given.has(component.id)) throw new ToolError(`Serials of ${component.ref} are listed twice.`);
 			given.set(component.id, component.ref);
 			s.serials.forEach((serial, i) => {
-				form[serialField(component.id, i)] = serial;
+				form[serialField(stockKey(component.id, null), i)] = serial;
 			});
 		}
-		const pick = exploding(() => buildPickList(graph, onHand, build, part, form, true));
+		const pick = exploding(() => buildPickList(graph, onHand, { ...build, picks }, part, form, true));
 		const problems: string[] = pick.problems.map((p) => errorMessage(p.key, p.vars));
 		for (const [id, ref] of given) {
-			const needed = pick.serials.get(id)?.length ?? 0;
+			const needed = pick.serials.get(stockKey(id, null))?.length ?? 0;
 			const sent = a.serials.find((s) => s.ref.toLowerCase() === ref.toLowerCase())?.serials.length ?? 0;
 			if (needed === 0) problems.push(`${ref}: no serial is scanned for it in this build.`);
 			else if (sent > needed) problems.push(`${ref}: ${sent} serials given, ${needed} needed.`);
@@ -289,7 +295,7 @@ const recordBuild = tool({
 		if (!can(ctx.access, "builds.plan"))
 			throw new ToolError("Refused: your role does not allow planning builds, which recording one does.");
 		const { product, assembly, d } = await checkBuildToPlan(a, ctx);
-		const [graph, onHand] = await Promise.all([loadGraph(ctx.db), onHandAt(ctx.db)]);
+		const [graph, onHand] = await Promise.all([loadGraph(ctx.db), onHandByKey(ctx.db)]);
 		const pick = exploding(() =>
 			buildPickList(
 				graph,

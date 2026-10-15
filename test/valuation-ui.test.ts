@@ -102,14 +102,14 @@ describe("valuation page", () => {
 		const csv = await (await request("/stock/valuation?format=csv")).text();
 		const lines = csv.trim().split(/\r?\n/);
 		expect(lines[0]).toBe(
-			"ref,name,kind,unit,on_hand,standard_unit_cost,cost_source,standard_value,standard_incomplete,average_unit_cost,average_value,average_incomplete",
+			"ref,name,kind,unit,on_hand,standard_unit_cost,cost_source,standard_value,standard_incomplete,average_unit_cost,average_value,average_incomplete,options",
 		);
 		// Initial stock entered at standard cost: both methods agree on the arms (2 × 4.54 roll-up).
 		expect(csv).toContain("ARM-ASSY,Arm sub-assembly,make,pcs,2,4.54,rollup,9.08,,4.54,9.08,");
 		const v = await valuation(testDb());
 		const yes = (b: boolean) => (b ? "yes" : "");
 		expect(lines.at(-1)).toBe(
-			`,,,,,,total,${formatCentsInput(v.totalCents)},${yes(v.incomplete)},,${formatCentsInput(v.avgTotalCents)},${yes(v.avgIncomplete)}`,
+			`,,,,,,total,${formatCentsInput(v.totalCents)},${yes(v.incomplete)},,${formatCentsInput(v.avgTotalCents)},${yes(v.avgIncomplete)},`,
 		);
 	});
 

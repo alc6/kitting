@@ -29,9 +29,11 @@ import {
 	nextRevision,
 	productionError,
 	productionInput,
+	readLineOptions,
 	reorderAssemblyLinesStatements,
 	setAssemblyStatusStatement,
 	setProductionStatement,
+	updateAssemblyLineOptionsStatements,
 	updateAssemblyLineQtyStatements,
 } from "../domain/assemblies";
 import {
@@ -45,8 +47,11 @@ import {
 } from "../domain/assembly-graph";
 import { assemblyFiles, filesBucket } from "../domain/files";
 import { type Margin, marginOf, salePriceOf } from "../domain/margins";
-import { onHandMap, partOptions } from "../domain/parts";
+import { defaultValue, idsOf, keyText, type OptionDef, stockKey } from "../domain/option-keys";
+import { keyFromForm, optionsOf } from "../domain/options";
+import { partOptions } from "../domain/parts";
 import { can } from "../domain/permissions";
+import { onHandByKey } from "../domain/stock";
 import { errorText, fmt } from "../i18n";
 import { cn } from "../lib/cn";
 import { isConstraintError } from "../lib/sql";
@@ -72,6 +77,7 @@ import { useApp } from "../views/context";
 import { FilesCard, uploadErrorText } from "../views/files";
 import { Icon, type IconNode, icons } from "../views/icons";
 import { Duration, MachineTimeCard, type MachineTimeRow } from "../views/machines";
+import { OptionValues } from "../views/options";
 import { PartPicker, PartPickerDialog, PartSelectPicker } from "../views/part-picker";
 import { idParam, notFound, nowIso, page, redirectOk, saveChanges, translateErrors } from "../views/render";
 import {
@@ -558,6 +564,8 @@ function LinesEditor(props: {
 	/** The production bar's values and errors. */
 	production: { values: FormValues; errors: FormErrors };
 	options: { ref: string; name: string }[];
+	/** The options of each component part (D168), for the lines' rules (D171). */
+	componentOptions: Map<number, OptionDef[]>;
 	values: FormValues;
 	errors: FormErrors;
 }) {
@@ -643,6 +651,12 @@ function LinesEditor(props: {
 												{l.archived ? <Badge variant="muted">{t.common.archivedLabel}</Badge> : null}
 											</div>
 											{l.notes ? <div class="mt-0.5 text-xs text-muted-foreground">{l.notes}</div> : null}
+											<LineOptions
+												options={props.componentOptions.get(l.partId) ?? []}
+												line={l}
+												action={editable ? `${lineUrl}/options` : null}
+												hx={hx}
+											/>
 										</TableCell>
 										<TableCell>
 											<KindBadge kind={l.kind} />
@@ -790,6 +804,76 @@ function LinesEditor(props: {
 				) : null}
 			</Card>
 		</>
+	);
+}
+
+/**
+ * A line's rule for each option of its component (D171): follows the build, chosen when a build is planned, or always
+ * one value. Edited in place (saved on change with htmx, or with the button).
+ */
+function LineOptions(props: {
+	options: OptionDef[];
+	line: { id: number; ref: string; fixedOptionValues: string | null; chosenOptionIds: string | null };
+	action: string | null;
+	hx: Record<string, string>;
+}) {
+	const { t } = useApp();
+	if (props.options.length === 0) return null;
+	const fixed = idsOf(props.line.fixedOptionValues);
+	const chosen = idsOf(props.line.chosenOptionIds);
+	const current = (o: OptionDef) =>
+		chosen.includes(o.id) ? "*" : String(o.values.find((v) => fixed.includes(v.id))?.id ?? "");
+	const label = (o: OptionDef) => {
+		const c = current(o);
+		if (c === "*") return t.options.chosen;
+		const value = o.values.find((v) => String(v.id) === c);
+		return value ? fmt(t.options.always, { value: value.name }) : t.options.follows;
+	};
+	if (!props.action)
+		return (
+			<div class="mt-1 flex flex-col text-xs text-muted-foreground">
+				{props.options.map((o) => (
+					<span>
+						{o.name}: {label(o)}
+					</span>
+				))}
+			</div>
+		);
+	return (
+		<form
+			method="post"
+			action={props.action}
+			class="mt-1.5 flex flex-wrap items-center gap-2"
+			hx-post={props.action}
+			hx-trigger="change"
+			{...props.hx}
+		>
+			{props.options.map((o) => (
+				<label class="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+					<span>{o.name}</span>
+					<select
+						name={`rule:${o.id}`}
+						data-slot="native-select"
+						class="h-(--control-h-sm) w-auto py-0 text-xs"
+						aria-label={`${t.options.rule} ${props.line.ref} ${o.name}`}
+						title={fmt(t.options.followsHint, { value: defaultValue(o)?.name ?? "" })}
+					>
+						<option value="" selected={current(o) === ""}>
+							{t.options.follows}
+						</option>
+						<option value="*" selected={current(o) === "*"}>
+							{t.options.chosen}
+						</option>
+						{o.values.map((v) => (
+							<option value={String(v.id)} selected={current(o) === String(v.id)}>
+								{fmt(t.options.always, { value: v.name })}
+							</option>
+						))}
+					</select>
+				</label>
+			))}
+			<Button variant="ghost" size="icon-sm" icon={icons.save} aria-label={t.common.save} title={t.common.save} />
+		</form>
 	);
 }
 
@@ -1121,6 +1205,7 @@ async function renderEditor(
 					errors: translateErrors(c, production?.errors ?? {}),
 				}}
 				options={options.filter((o) => o.id !== part.id)}
+				componentOptions={new Map(lines.map((l) => [l.partId, graph.parts.get(l.partId)?.options ?? []]))}
 				values={form.values}
 				errors={translateErrors(c, form.errors, form.vars)}
 			/>
@@ -1268,6 +1353,32 @@ assemblyRoutes.post("/:id/lines/:lineId", requirePermission("assemblies.edit"), 
 			assembly: assemblyLabel(data.part.ref, data.assembly),
 		}),
 		updateAssemblyLineQtyStatements(c.var.db, data.assembly.id, data.line.id, qty, c.var.user, nowIso()),
+	);
+	return c.redirect(`/assemblies/${data.assembly.id}`, 303);
+});
+
+assemblyRoutes.post("/:id/lines/:lineId/options", requirePermission("assemblies.edit"), async (c) => {
+	const data = await editableLine(c);
+	if (!data) return notFound(c);
+	if (data.assembly.status === "archived")
+		return c.redirect(`/assemblies/${data.assembly.id}?err=assembly_archived`, 303);
+	const body = await c.req.parseBody();
+	const comp = (await c.var.db.select().from(parts).where(eq(parts.id, data.line.componentPartId)).limit(1))[0];
+	const options = await optionsOf(c.var.db, data.line.componentPartId);
+	await saveChanges(
+		c,
+		fmt(c.var.t.history.summaries.assemblyLineOptions, {
+			ref: comp?.ref ?? "",
+			assembly: assemblyLabel(data.part.ref, data.assembly),
+		}),
+		updateAssemblyLineOptionsStatements(
+			c.var.db,
+			data.assembly.id,
+			data.line.id,
+			readLineOptions(options, body),
+			c.var.user,
+			nowIso(),
+		),
 	);
 	return c.redirect(`/assemblies/${data.assembly.id}`, 303);
 });
@@ -1456,6 +1567,9 @@ function QtyForm(props: {
 	/** Other view options to keep (empty values are left out). */
 	hidden?: Record<string, string>;
 	class?: string;
+	/** The product's options (D168): the values to explode it in, its defaults first. */
+	options?: OptionDef[];
+	values?: number[];
 }) {
 	const { t, locale } = useApp();
 	return (
@@ -1475,6 +1589,18 @@ function QtyForm(props: {
 					class="w-24 text-right tabular-nums"
 				/>
 			</label>
+			{(props.options ?? []).map((o) => (
+				<label class="inline-flex items-center gap-2 text-sm font-medium">
+					<span>{o.name}</span>
+					<select name={`option:${o.id}`} data-slot="native-select" class="w-auto">
+						{o.values.map((v) => (
+							<option value={String(v.id)} selected={props.values?.includes(v.id) ?? v.id === defaultValue(o)?.id}>
+								{v.name}
+							</option>
+						))}
+					</select>
+				</label>
+			))}
 			{props.showStock ? (
 				<label class="inline-flex min-h-(--control-h) cursor-pointer items-center gap-2 text-sm font-medium">
 					<input type="checkbox" name="stock" value="on" checked={props.stock} />
@@ -1520,6 +1646,10 @@ function TreeNode(props: { node: ExplodedNode; calc: CostCalculator; refs: Map<n
 					<a href={`/parts/${n.part.id}`}>{n.part.ref}</a>
 					<span class="min-w-0 truncate text-muted-foreground">{n.part.name}</span>
 					<KindBadge kind={n.part.kind} />
+					<OptionValues options={n.part.options} values={n.optionValues} />
+					{n.missingValues.map((m) => (
+						<Badge variant="warning">{fmt(t.errors.option_value_missing, { ref: n.part.ref, ...m })}</Badge>
+					))}
 					{n.mode === "missing_assembly" ? (
 						<Badge variant="warning">{t.assemblies.modes.missing_assembly}</Badge>
 					) : null}
@@ -1591,10 +1721,12 @@ assemblyRoutes.get("/:id/tree", async (c) => {
 	const graph = await loadGraph(c.var.db);
 	const calc = new CostCalculator(graph);
 	const refs = new Map([...graph.parts.values()].map((p) => [p.id, p.ref]));
+	const rootOptions = graph.parts.get(data.part.id)?.options ?? [];
+	const values = idsOf(keyFromForm(rootOptions, c.req.query()).key);
 	let explosion: Explosion | null = null;
 	let error = "";
 	try {
-		explosion = explode(graph, data.assembly.id, qty);
+		explosion = explode(graph, data.assembly.id, qty, { values });
 	} catch (err) {
 		error = err instanceof Error ? err.message : String(err);
 	}
@@ -1611,7 +1743,7 @@ assemblyRoutes.get("/:id/tree", async (c) => {
 				tab="tree"
 				pricing={assemblyPricing(data.part, data.assembly, calc)}
 			/>
-			<QtyForm action={`/assemblies/${data.assembly.id}/tree`} qty={qty} />
+			<QtyForm action={`/assemblies/${data.assembly.id}/tree`} qty={qty} options={rootOptions} values={values} />
 			{error ? <Alert variant="destructive">{error}</Alert> : null}
 			<Card class="gap-0 overflow-hidden py-0">
 				<div
@@ -1777,12 +1909,14 @@ assemblyRoutes.get("/:id/explode", async (c) => {
 	const t = c.var.t;
 	const qty = qtyParam(c, data.assembly.batchQtyMilli);
 	const useStock = c.req.query("stock") === "on";
-	const [graph, stock] = await Promise.all([loadGraph(c.var.db), onHandMap(c.var.db)]);
+	const [graph, stock] = await Promise.all([loadGraph(c.var.db), onHandByKey(c.var.db)]);
 	const calc = new CostCalculator(graph);
 	const refs = new Map([...graph.parts.values()].map((p) => [p.id, p.ref]));
-	const ex = explode(graph, data.assembly.id, qty, useStock ? { stock } : {});
+	const rootOptions = graph.parts.get(data.part.id)?.options ?? [];
+	const values = idsOf(keyFromForm(rootOptions, c.req.query()).key);
+	const ex = explode(graph, data.assembly.id, qty, useStock ? { stock, values } : { values });
 	const rows = ex.requirements.map((r) => {
-		const onHand = stock.get(r.part.id) ?? 0;
+		const onHand = stock.get(stockKey(r.part.id, r.optionValues)) ?? 0;
 		return { ...r, onHand, short: Math.max(0, r.qtyMilli - Math.max(0, onHand)), cost: calc.part(r.part.id) };
 	});
 	const machineRows = ex.machines.map((m) => ({ ...m, cost: calc.machine(m.machineType.id, m.minutesMilli) }));
@@ -1794,7 +1928,7 @@ assemblyRoutes.get("/:id/explode", async (c) => {
 			c,
 			`${data.part.ref}-${data.assembly.code}-${data.assembly.revision}-x${formatQtyInput(qty)}.csv`,
 			[
-				["ref", "name", "kind", "unit", "qty", "on_hand", "short", "unit_cost", "extended_cost"],
+				["ref", "name", "kind", "unit", "qty", "on_hand", "short", "unit_cost", "extended_cost", "options"],
 				...[...rows, ...ex.fees.map((f) => ({ ...f, onHand: 0, short: 0, cost: calc.part(f.part.id) }))].map((r) => [
 					r.part.ref,
 					r.part.name,
@@ -1805,6 +1939,7 @@ assemblyRoutes.get("/:id/explode", async (c) => {
 					r.part.kind === "fee" ? "" : formatQtyInput(r.short, locale),
 					r.cost.incomplete ? "" : formatCentsInput(centsOf(r.cost.millicents), locale),
 					r.cost.incomplete ? "" : formatCentsInput(centsOf(calc.extended(r.part.id, r.qtyMilli)), locale),
+					keyText(r.part.options, r.optionValues),
 				]),
 				// Machine time (D148): in hours, at the type's hourly rate.
 				...machineRows.map((m) => [
@@ -1817,6 +1952,7 @@ assemblyRoutes.get("/:id/explode", async (c) => {
 					"",
 					m.machineType.rateCents === null ? "" : formatCentsInput(m.machineType.rateCents, locale),
 					m.cost.incomplete ? "" : formatCentsInput(centsOf(m.cost.millicents), locale),
+					"",
 				]),
 			],
 		);
@@ -1825,7 +1961,13 @@ assemblyRoutes.get("/:id/explode", async (c) => {
 		[...ex.requirements, ...ex.fees].reduce((s, r) => s + calc.extended(r.part.id, r.qtyMilli), 0) +
 		machineRows.reduce((s, m) => s + m.cost.millicents, 0);
 	const total = calc.assembly(data.assembly.id);
-	const query = `qty=${encodeURIComponent(formatQtyInput(qty))}${useStock ? "&stock=on" : ""}`;
+	const valueQuery = rootOptions
+		.map((o) => {
+			const v = o.values.find((x) => values.includes(x.id));
+			return v ? `&${encodeURIComponent(`option:${o.id}`)}=${v.id}` : "";
+		})
+		.join("");
+	const query = `qty=${encodeURIComponent(formatQtyInput(qty))}${useStock ? "&stock=on" : ""}${valueQuery}`;
 	return page(
 		c,
 		`${data.part.ref} · ${t.assemblies.explode}`,
@@ -1837,7 +1979,15 @@ assemblyRoutes.get("/:id/explode", async (c) => {
 				pricing={assemblyPricing(data.part, data.assembly, calc)}
 			/>
 			<div class="mb-4 flex flex-wrap items-center justify-between gap-3">
-				<QtyForm action={`/assemblies/${data.assembly.id}/explode`} qty={qty} stock={useStock} showStock class="" />
+				<QtyForm
+					action={`/assemblies/${data.assembly.id}/explode`}
+					qty={qty}
+					stock={useStock}
+					showStock
+					class=""
+					options={rootOptions}
+					values={values}
+				/>
 				<Button
 					href={`/assemblies/${data.assembly.id}/explode?${query}&format=csv`}
 					variant="outline"
@@ -1874,6 +2024,7 @@ assemblyRoutes.get("/:id/explode", async (c) => {
 							<TableRow>
 								<TableCell>
 									<a href={`/parts/${r.part.id}`}>{r.part.ref}</a>
+									<OptionValues options={r.part.options} values={r.optionValues} class="block" />
 								</TableCell>
 								<TableCell>
 									{r.part.name}

@@ -23,6 +23,8 @@ import type { Statement } from "../lib/db";
 import { chunks, isConstraintError } from "../lib/sql";
 import type { Db } from "../types";
 import { COLUMN_ACTIONS, runChangeSet } from "./history";
+import { idsOf } from "./option-keys";
+import { keyNames, OPTION_KEY_COLUMNS } from "./options";
 import { type Access, type Action, can } from "./permissions";
 
 /** The permission needed to undo a change to each tracked table: the one that edits it (D112). */
@@ -40,6 +42,9 @@ export const TABLE_ACTIONS: Record<string, Action> = {
 	settings: "users.manage",
 	machine_types: "machines.edit",
 	machines: "machines.edit",
+	part_options: "parts.edit",
+	part_option_values: "parts.edit",
+	build_option_choices: "builds.plan",
 	files: "files.edit",
 };
 
@@ -294,7 +299,127 @@ async function findConflicts(db: Db, setId: number, rows: Touched[]): Promise<Re
 				conflicts.push({ table: r.name, rowId: r.rowId, row: r.before, reason: "parent_missing", other: parent });
 		}
 	}
+	conflicts.push(...(await keyConflicts(db, rows)));
 	return conflicts;
+}
+
+const VALUES_TABLE = "part_option_values";
+
+/** The key column of a tracked table (D169), if it has one. */
+const keyColumnOf = (table: string) => OPTION_KEY_COLUMNS.find((k) => k.table === table)?.column;
+
+/** Value ids the undo deletes (rows the change set created), and those it brings back (rows it deleted). */
+function valueChanges(rows: Touched[]) {
+	const values = rows.filter((r) => r.name === VALUES_TABLE);
+	return {
+		deleted: new Map(values.filter((r) => r.before === null && r.after !== null).map((r) => [r.rowId, r])),
+		restored: new Set(values.filter((r) => r.before !== null).map((r) => r.rowId)),
+	};
+}
+
+/** Value ids named by the restored state of the rows the undo puts back or changes. */
+function restoredKeys(rows: Touched[]): { row: Touched; ids: number[] }[] {
+	return rows.flatMap((r) => {
+		const column = keyColumnOf(r.name);
+		const value = column && r.before ? r.before[column] : null;
+		return typeof value === "string" ? [{ row: r, ids: idsOf(value) }] : [];
+	});
+}
+
+/**
+ * The foreign key checks above, for option values named in text keys (D169): a value the undo deletes must not be
+ * named by a record (as it is now, or as the undo restores it), and a record the undo restores must not name a
+ * value that no longer exists.
+ */
+async function keyConflicts(db: Db, rows: Touched[]): Promise<RevertConflict[]> {
+	const conflicts: RevertConflict[] = [];
+	const { deleted, restored } = valueChanges(rows);
+	const touched = new Set(rows.map((r) => `${r.name}:${r.rowId}`));
+	if (deleted.size) {
+		const ids = [...deleted.keys()];
+		for (const k of OPTION_KEY_COLUMNS) {
+			for (const part of chunks(ids, 40)) {
+				const column = sql.identifier(k.column);
+				const named = await db.all<{ id: number; key: string }>(
+					sql`SELECT id, ${column} AS key FROM ${sql.identifier(k.table)} WHERE ${column} IS NOT NULL AND (${sql.join(
+						part.map((id) => keyNames(sql`${column}`, id)),
+						sql` OR `,
+					)})`,
+				);
+				for (const r of named) {
+					if (touched.has(`${k.table}:${r.id}`)) continue;
+					for (const id of idsOf(r.key))
+						if (deleted.has(id))
+							conflicts.push({
+								table: VALUES_TABLE,
+								rowId: id,
+								row: deleted.get(id)?.after ?? null,
+								reason: "in_use",
+								other: k.table,
+							});
+				}
+			}
+		}
+		for (const { row, ids } of restoredKeys(rows))
+			for (const id of ids)
+				if (deleted.has(id))
+					conflicts.push({
+						table: VALUES_TABLE,
+						rowId: id,
+						row: deleted.get(id)?.after ?? null,
+						reason: "in_use",
+						other: row.name,
+					});
+	}
+	const wanted = restoredKeys(rows);
+	const existing = await currentRows(
+		db,
+		VALUES_TABLE,
+		wanted.flatMap((w) => w.ids),
+	);
+	for (const { row, ids } of wanted)
+		if (ids.some((id) => deleted.has(id) || (!existing.has(id) && !restored.has(id))))
+			conflicts.push({
+				table: row.name,
+				rowId: row.rowId,
+				row: row.before,
+				reason: "parent_missing",
+				other: VALUES_TABLE,
+			});
+	const seen = new Set<string>();
+	return conflicts.filter((c) => {
+		const k = `${c.table}:${c.rowId}:${c.reason}:${c.other}`;
+		if (seen.has(k)) return false;
+		seen.add(k);
+		return true;
+	});
+}
+
+/** The same checks inside the batch, after the undo's own statements: a change made meanwhile rolls it back. */
+function keyGuards(db: Db, rows: Touched[]): Statement[] {
+	const { deleted } = valueChanges(rows);
+	const stmts: Statement[] = [];
+	for (const part of chunks([...deleted.keys()], 20)) {
+		const named = OPTION_KEY_COLUMNS.flatMap((k) =>
+			part.map(
+				(id) =>
+					sql`EXISTS (SELECT 1 FROM ${sql.identifier(k.table)} WHERE ${keyNames(sql`${sql.identifier(k.column)}`, id)})`,
+			),
+		);
+		stmts.push(guard(db, sql`(${sql.join(named, sql` OR `)})`));
+	}
+	const ids = [...new Set(restoredKeys(rows).flatMap((w) => w.ids))];
+	for (const part of chunks(ids, 40))
+		stmts.push(
+			guard(
+				db,
+				sql`(${sql.join(
+					part.map((id) => sql`NOT EXISTS (SELECT 1 FROM ${sql.identifier(VALUES_TABLE)} WHERE id = ${id})`),
+					sql` OR `,
+				)})`,
+			),
+		);
+	return stmts;
 }
 
 // Statements are query builders, never db.run(sql) with parameters: Drizzle's D1 batch cannot bind those.
@@ -442,7 +567,7 @@ export function revertStatements(db: Db, set: ChangeSet, entries: ChangeLogRow[]
 			stmts.push(db.delete(table).where(byId(e.rowId)));
 		}
 	}
-	stmts.push(...priceStatements(db, rows, set.id, user, now));
+	stmts.push(...priceStatements(db, rows, set.id, user, now), ...keyGuards(db, rows));
 	return stmts;
 }
 

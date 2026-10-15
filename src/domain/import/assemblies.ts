@@ -257,6 +257,8 @@ export const assembliesImporter: Importer = {
 				qtyMilli: l.qtyMilli,
 				position: i + 1,
 				notes: l.notes,
+				fixedValueIds: [],
+				chosenOptionIds: [],
 			}));
 			next.assemblies.set(id, {
 				id,

@@ -16,6 +16,7 @@ const part = (id: number, ref: string, kind: GraphPart["kind"], costCents: numbe
 	costCents,
 	trackSerial: false,
 	archived: false,
+	options: [],
 	...opts,
 });
 

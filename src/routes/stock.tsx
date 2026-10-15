@@ -3,6 +3,17 @@ import type { Context } from "hono";
 import { Hono } from "hono";
 import { MOVE_REASONS, parts } from "../db/schema";
 import { centsOf } from "../domain/assembly-graph";
+import {
+	combinations,
+	keyLabel,
+	keyOf,
+	keyText,
+	type OptionDef,
+	type OptionKey,
+	splitStockKey,
+	stockKey,
+} from "../domain/option-keys";
+import { keyFromForm, loadOptions, optionsOf } from "../domain/options";
 import { getPart, listParts, partOptions } from "../domain/parts";
 import { can } from "../domain/permissions";
 import {
@@ -14,8 +25,9 @@ import {
 	countStatements,
 	isStocked,
 	listMoves,
-	onHandAt,
+	onHandByKey,
 	planCounts,
+	stockByKey,
 	valuation,
 } from "../domain/stock";
 import { errorText, fmt } from "../i18n";
@@ -26,8 +38,9 @@ import { requirePermission } from "../middleware/roles";
 import type { AppEnv } from "../types";
 import { useApp } from "../views/context";
 import { type IconNode, icons } from "../views/icons";
+import { OptionSelects, OptionValues } from "../views/options";
 import { PartPicker, PartPickerDialog } from "../views/part-picker";
-import { nowIso, page, saveChanges, translateErrors } from "../views/render";
+import { fragment, nowIso, page, saveChanges, translateErrors } from "../views/render";
 import {
 	Alert,
 	Badge,
@@ -129,9 +142,21 @@ stockRoutes.get("/", async (c) => {
 	const filter = (FILTERS as readonly string[]).includes(c.req.query("filter") ?? "")
 		? (c.req.query("filter") as Filter)
 		: "all";
-	const all = (await listParts(c.var.db, { q })).filter((p) => isStocked(p.kind));
+	const [listed, options, keyed] = await Promise.all([
+		listParts(c.var.db, { q }),
+		loadOptions(c.var.db),
+		stockByKey(c.var.db),
+	]);
+	const all = listed.filter((p) => isStocked(p.kind));
+	// A part with options is counted per values (D169): its rows below it, and the filters look at each.
+	const byValues = new Map<number, { optionValues: OptionKey; qty: number }[]>();
+	for (const r of keyed) {
+		if (r.optionValues === null || !options.has(r.partId)) continue;
+		byValues.set(r.partId, [...(byValues.get(r.partId) ?? []), r]);
+	}
+	const quantities = (p: (typeof all)[number]) => byValues.get(p.id)?.map((r) => r.qty) ?? [p.onHandMilli];
 	const rows = all.filter((p) => {
-		if (filter === "below_zero") return p.onHandMilli < 0;
+		if (filter === "below_zero") return p.onHandMilli < 0 || quantities(p).some((q) => q < 0);
 		if (filter === "below_min") return belowMinimum(p);
 		if (filter === "in_stock") return p.onHandMilli > 0;
 		return true;
@@ -173,9 +198,16 @@ stockRoutes.get("/", async (c) => {
 								</TableRow>
 							</TableHeader>
 							<TableBody>
-								{rows.map((p) => {
+								{rows.flatMap((p) => {
+									// The minimum stock is per part (D173): it compares the total.
 									const low = belowMinimum(p);
-									return (
+									const partOptions = options.get(p.id) ?? [];
+									const values = (byValues.get(p.id) ?? [])
+										.filter((r) => r.qty !== 0)
+										.sort((a, b) =>
+											keyLabel(partOptions, a.optionValues).localeCompare(keyLabel(partOptions, b.optionValues)),
+										);
+									return [
 										<TableRow>
 											<TableCell class="font-medium">
 												<a href={`/parts/${p.id}`}>{p.ref}</a>
@@ -207,8 +239,20 @@ stockRoutes.get("/", async (c) => {
 													/>
 												</TableCell>
 											) : null}
-										</TableRow>
-									);
+										</TableRow>,
+										...values.map((r) => (
+											<TableRow class="text-muted-foreground">
+												<TableCell />
+												<TableCell colspan={3} class="pl-6">
+													{keyLabel(partOptions, r.optionValues)}
+												</TableCell>
+												<TableCell class="text-right">
+													<Qty milli={r.qty} unit={p.unit} />
+												</TableCell>
+												{canAdjust ? <TableCell /> : null}
+											</TableRow>
+										)),
+									];
 								})}
 							</TableBody>
 						</Table>
@@ -222,7 +266,33 @@ stockRoutes.get("/", async (c) => {
 // ---------------------------------------------------------------------------
 // Adjustments
 
-function AdjustForm(props: { values: FormValues; errors: FormErrors; options: { ref: string; name: string }[] }) {
+/** The selects of a part's options on the adjustment form (D169), refreshed when the part changes. */
+function AdjustOptions(props: { options: OptionDef[]; values: FormValues; errors: FormErrors }) {
+	return (
+		<div
+			id="adjust-options"
+			class="grid gap-4 empty:hidden md:grid-cols-2"
+			hx-get="/stock/adjust/options"
+			hx-trigger="change from:#f-part"
+			hx-include="#f-part"
+			hx-swap="outerHTML"
+		>
+			<OptionSelects
+				options={props.options}
+				name={(o) => `option:${o.id}`}
+				values={props.values}
+				errors={props.errors}
+			/>
+		</div>
+	);
+}
+
+function AdjustForm(props: {
+	values: FormValues;
+	errors: FormErrors;
+	options: { ref: string; name: string }[];
+	partOptions: OptionDef[];
+}) {
 	const { t } = useApp();
 	const p = { values: props.values, errors: props.errors };
 	return (
@@ -244,6 +314,7 @@ function AdjustForm(props: { values: FormValues; errors: FormErrors; options: { 
 							autofocus
 							{...p}
 						/>
+						<AdjustOptions options={props.partOptions} values={props.values} errors={props.errors} />
 						<div class="grid gap-4 md:grid-cols-2">
 							<TextField name="qty" label={t.stock.qty} hint={t.stock.adjustHint} inputmode="decimal" required {...p} />
 							<TextField name="serial" label={t.stock.serial} hint={t.stock.serialHint} {...p} />
@@ -276,8 +347,23 @@ stockRoutes.get("/adjust", requirePermission("stock.adjust"), async (c) => {
 		t.stock.adjustTitle,
 		<>
 			<PageHeader title={t.stock.adjustTitle} subtitle={t.stock.adjustIntro} />
-			<AdjustForm values={{ part: part?.ref ?? "" }} errors={{}} options={await stockedOptions(c)} />
+			<AdjustForm
+				values={{ part: part?.ref ?? "" }}
+				errors={{}}
+				options={await stockedOptions(c)}
+				partOptions={part ? await optionsOf(c.var.db, part.id) : []}
+			/>
 		</>,
+	);
+});
+
+/** The option selects for the part typed on the adjustment form (htmx; the form works without it, see the POST). */
+stockRoutes.get("/adjust/options", requirePermission("stock.adjust"), async (c) => {
+	const ref = (c.req.query("part") ?? "").trim();
+	const part = ref ? (await c.var.db.select().from(parts).where(eq(parts.ref, ref)).limit(1))[0] : undefined;
+	return fragment(
+		c,
+		<AdjustOptions options={part ? await optionsOf(c.var.db, part.id) : []} values={{}} errors={{}} />,
 	);
 });
 
@@ -289,11 +375,21 @@ stockRoutes.post("/adjust", requirePermission("stock.adjust"), async (c) => {
 	const errors: FieldErrors = v.ok ? {} : { ...v.errors };
 	let vars: Record<string, string> = {};
 	let part: typeof parts.$inferSelect | undefined;
+	let partOptionDefs: OptionDef[] = [];
+	let optionValues: OptionKey = null;
 	if (v.ok) {
 		part = (await db.select().from(parts).where(eq(parts.ref, v.data.part)).limit(1))[0];
 		const problems = adjustmentErrors(part, v.data);
 		Object.assign(errors, problems.errors);
 		vars = problems.vars;
+		// A part with options is adjusted in one value of each (D169): the selects appear once the part is known.
+		partOptionDefs = part ? await optionsOf(db, part.id) : [];
+		const chosen = keyFromForm(partOptionDefs, body);
+		optionValues = chosen.key;
+		if (chosen.missing) {
+			errors[`option:${chosen.missing.id}`] = "option_value_required";
+			vars.option = chosen.missing.name;
+		}
 	}
 	if (!v.ok || !part || Object.keys(errors).length > 0) {
 		return page(
@@ -305,6 +401,7 @@ stockRoutes.post("/adjust", requirePermission("stock.adjust"), async (c) => {
 					values={body as FormValues}
 					errors={translateErrors(c, errors, vars)}
 					options={await stockedOptions(c)}
+					partOptions={partOptionDefs}
 				/>
 			</>,
 			422,
@@ -313,7 +410,13 @@ stockRoutes.post("/adjust", requirePermission("stock.adjust"), async (c) => {
 	await saveChanges(c, fmt(t.history.summaries.stockAdjust, { ref: part.ref }), [
 		adjustmentStatement(
 			db,
-			{ partId: part.id, qtyMilli: v.data.qty, serial: v.data.serial || null, unitCostCents: part.costCents },
+			{
+				partId: part.id,
+				qtyMilli: v.data.qty,
+				serial: v.data.serial || null,
+				unitCostCents: part.costCents,
+				optionValues,
+			},
 			v.data.note,
 			c.var.user,
 			nowIso(),
@@ -332,7 +435,27 @@ stockRoutes.get("/count", requirePermission("stock.count"), async (c) => {
 async function renderCount(c: Context<AppEnv>, values: FormValues, errors: FieldErrors, status: 200 | 422 = 200) {
 	const t = c.var.t;
 	const q = c.req.query("q") ?? "";
-	const rows = (await listParts(c.var.db, { q })).filter((p) => isStocked(p.kind));
+	const [listed, options, onHand] = await Promise.all([
+		listParts(c.var.db, { q }),
+		loadOptions(c.var.db),
+		onHandByKey(c.var.db),
+	]);
+	// One line per part, and per combination of values for a part with options (D169).
+	const rows = listed
+		.filter((p) => isStocked(p.kind))
+		.flatMap((p) => {
+			const partOptions = options.get(p.id) ?? [];
+			if (partOptions.length === 0) return [{ part: p, name: `count_${p.id}`, label: "", onHand: p.onHandMilli }];
+			return combinations(partOptions).map((ids) => {
+				const key = keyOf(ids);
+				return {
+					part: p,
+					name: `count_${p.id}_${ids.join("-")}`,
+					label: keyLabel(partOptions, key),
+					onHand: onHand.get(stockKey(p.id, key)) ?? 0,
+				};
+			});
+		});
 	const done = c.req.query("done");
 	return page(
 		c,
@@ -363,8 +486,7 @@ async function renderCount(c: Context<AppEnv>, values: FormValues, errors: Field
 									</TableRow>
 								</TableHeader>
 								<TableBody>
-									{rows.map((p) => {
-										const name = `count_${p.id}`;
+									{rows.map(({ part: p, name, label, onHand: current }) => {
 										const error = errors[name];
 										return (
 											<TableRow class={cn(error && "bg-destructive/5 hover:bg-destructive/10")}>
@@ -373,10 +495,11 @@ async function renderCount(c: Context<AppEnv>, values: FormValues, errors: Field
 												</TableCell>
 												<TableCell>
 													{p.name}
+													{label ? <span class="block text-sm text-muted-foreground">{label}</span> : null}
 													{error ? <p class="mt-1 text-sm text-destructive">{errorText(t, error)}</p> : null}
 												</TableCell>
 												<TableCell class="text-right text-muted-foreground">
-													<Qty milli={p.onHandMilli} unit={p.unit} />
+													<Qty milli={current} unit={p.unit} />
 												</TableCell>
 												<TableCell class="w-0 text-right">
 													<input
@@ -384,7 +507,7 @@ async function renderCount(c: Context<AppEnv>, values: FormValues, errors: Field
 														name={name}
 														inputmode="decimal"
 														value={values[name] ?? ""}
-														aria-label={`${t.stock.counted} ${p.ref}`}
+														aria-label={`${t.stock.counted} ${p.ref}${label ? ` ${label}` : ""}`}
 														aria-invalid={error ? "true" : undefined}
 														data-select-on-focus
 														class="w-28 text-right tabular-nums"
@@ -415,10 +538,11 @@ stockRoutes.post("/count", requirePermission("stock.count"), async (c) => {
 	const body = await c.req.parseBody();
 	const values: FormValues = {};
 	const errors: FieldErrors = {};
-	const entries: { partId: number; qty: number; line: number }[] = [];
+	const entries: { partId: number; valueIds: number[]; qty: number; line: number }[] = [];
 	let line = 0;
 	for (const [key, raw] of Object.entries(body)) {
-		const m = /^count_(\d+)$/.exec(key);
+		// count_<part>, or count_<part>_<value ids> for a part with options.
+		const m = /^count_(\d+)(?:_(\d+(?:-\d+)*))?$/.exec(key);
 		if (!m || typeof raw !== "string") continue;
 		values[key] = raw;
 		line++;
@@ -426,19 +550,28 @@ stockRoutes.post("/count", requirePermission("stock.count"), async (c) => {
 		const qty = parseMilli(raw);
 		if (qty === null) errors[key] = "invalid_quantity";
 		else if (qty < 0) errors[key] = "negative";
-		else entries.push({ partId: Number(m[1]), qty, line });
+		else entries.push({ partId: Number(m[1]), valueIds: m[2] ? m[2].split("-").map(Number) : [], qty, line });
 	}
 	const note = typeof body.note === "string" ? body.note.trim().slice(0, 500) : "";
 	values.note = note;
 	if (Object.keys(errors).length > 0) return renderCount(c, values, errors, 422);
 
-	const [allParts, onHand] = await Promise.all([db.select().from(parts), onHandAt(db)]);
+	const [allParts, onHand, options] = await Promise.all([db.select().from(parts), onHandByKey(db), loadOptions(db)]);
 	const byId = new Map(allParts.map((p) => [p.id, p]));
 	const groups: CountGroup[] = [];
 	for (const e of entries) {
 		const part = byId.get(e.partId);
 		if (!part || !isStocked(part.kind)) continue;
-		groups.push({ part, lines: [{ line: e.line, qtyMilli: e.qty, serial: "", unitCostCents: null }] });
+		// Only a whole combination of the part's values counts (none for a part without options).
+		const partOptions = options.get(part.id) ?? [];
+		const key = keyOf(e.valueIds);
+		const valid = combinations(partOptions).some((ids) => keyOf(ids) === key) || (!partOptions.length && !key);
+		if (!valid) continue;
+		groups.push({
+			part,
+			optionValues: key,
+			lines: [{ line: e.line, qtyMilli: e.qty, serial: "", unitCostCents: null }],
+		});
 	}
 	const { moves, results } = planCounts(groups, onHand);
 	await saveChanges(
@@ -460,11 +593,28 @@ stockRoutes.get("/moves", async (c) => {
 	const to = dateParam(c.req.query("to"));
 	const csv = c.req.query("format") === "csv";
 	const limit = csv ? 100_000 : 300;
-	const rows = await listMoves(c.var.db, { q, reason, from, to, limit });
+	const [rows, options] = await Promise.all([
+		listMoves(c.var.db, { q, reason, from, to, limit }),
+		loadOptions(c.var.db),
+	]);
 	if (csv) {
 		const locale = c.var.locale;
 		return csvResponse(c, `stock-moves-${nowIso().slice(0, 10)}.csv`, [
-			["at", "ref", "name", "reason", "qty", "unit", "serial", "unit_cost", "ref_type", "ref_id", "by", "note"],
+			[
+				"at",
+				"ref",
+				"name",
+				"reason",
+				"qty",
+				"unit",
+				"serial",
+				"unit_cost",
+				"ref_type",
+				"ref_id",
+				"by",
+				"note",
+				"options",
+			],
 			...rows.map(({ move: m, ref, name, unit }) => [
 				m.at,
 				ref,
@@ -478,6 +628,7 @@ stockRoutes.get("/moves", async (c) => {
 				m.refId ?? "",
 				m.by,
 				m.note,
+				keyText(options.get(m.partId) ?? [], m.optionValues),
 			]),
 		]);
 	}
@@ -526,6 +677,11 @@ stockRoutes.get("/moves", async (c) => {
 										</TableCell>
 										<TableCell class="font-medium">
 											<a href={`/parts/${m.partId}`}>{ref}</a>
+											<OptionValues
+												options={options.get(m.partId) ?? []}
+												values={m.optionValues}
+												class="block font-normal"
+											/>
 										</TableCell>
 										<TableCell>
 											<MoveReference reason={m.reason} refType={m.refType} refId={m.refId} />
@@ -609,6 +765,7 @@ stockRoutes.get("/valuation", requirePermission("costs.view"), async (c) => {
 				"average_unit_cost",
 				"average_value",
 				"average_incomplete",
+				"options",
 			],
 			...v.rows.map((r) => [
 				r.part.ref,
@@ -623,6 +780,7 @@ stockRoutes.get("/valuation", requirePermission("costs.view"), async (c) => {
 				r.avgUnitCents === null ? "" : formatCentsInput(r.avgUnitCents, locale),
 				formatCentsInput(r.avgValueCents, locale),
 				yes(r.avgIncomplete),
+				keyText(r.part.options, r.optionValues),
 			]),
 			[
 				"",
@@ -637,6 +795,7 @@ stockRoutes.get("/valuation", requirePermission("costs.view"), async (c) => {
 				"",
 				formatCentsInput(v.avgTotalCents, locale),
 				yes(v.avgIncomplete),
+				"",
 			],
 		]);
 	}
@@ -734,6 +893,7 @@ stockRoutes.get("/valuation", requirePermission("costs.view"), async (c) => {
 								<TableRow>
 									<TableCell class="font-medium">
 										<a href={`/parts/${r.part.id}`}>{r.part.ref}</a>
+										<OptionValues options={r.part.options} values={r.optionValues} class="block font-normal" />
 									</TableCell>
 									<TableCell>
 										<span class="mr-2">{r.part.name}</span>

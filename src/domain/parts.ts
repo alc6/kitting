@@ -23,6 +23,7 @@ import {
 	saveOfferStatements,
 	setPreferredStatement,
 } from "./offers";
+import { optionsOf } from "./options";
 import { priceRecordForRefStatement, priceRecordStatement } from "./prices";
 
 export const partInput = z.object({
@@ -212,13 +213,15 @@ export function deletePartStatement(db: Db, partId: number) {
 /** Business rules shared by the form and the CSV import. Returns field -> error key. */
 export function partRuleErrors(
 	d: { kind: PartKind; trackSerial: boolean; minStockMilli?: number | null },
-	ctx: { hasMoves: boolean; hasAssemblies?: boolean },
+	ctx: { hasMoves: boolean; hasAssemblies?: boolean; hasOptions?: boolean },
 ): FieldErrors {
 	const errors: FieldErrors = {};
 	if (d.trackSerial && (d.kind === "kit" || d.kind === "fee")) errors.track_serial = "serial_kind";
 	if (d.minStockMilli != null && (d.kind === "kit" || d.kind === "fee")) errors.min_stock = "min_stock_kind";
 	if (ctx.hasMoves && (d.kind === "kit" || d.kind === "fee")) errors.kind = "kind_has_stock";
 	if (ctx.hasAssemblies && d.kind !== "make" && d.kind !== "kit") errors.kind = "kind_has_assemblies";
+	// Only stocked parts come in values (D168).
+	if (ctx.hasOptions && d.kind !== "buy" && d.kind !== "make") errors.kind = "kind_has_options";
 	return errors;
 }
 
@@ -236,11 +239,12 @@ export async function checkPart(db: Db, body: Record<string, unknown>, existing?
 	if (clash) errors.ref = clash.ref === d.ref ? "duplicate_ref" : "ref_case";
 	const hasMoves = existing ? await hasStockMoves(db, existing.id) : false;
 	const ownsAssemblies = existing ? await hasAssemblies(db, existing.id) : false;
+	const hasOptions = existing ? (await optionsOf(db, existing.id)).length > 0 : false;
 	Object.assign(
 		errors,
 		partRuleErrors(
 			{ kind: d.kind, trackSerial: d.track_serial, minStockMilli: d.min_stock },
-			{ hasMoves, hasAssemblies: ownsAssemblies },
+			{ hasMoves, hasAssemblies: ownsAssemblies, hasOptions },
 		),
 	);
 	if (Object.keys(errors).length > 0) return { ok: false as const, errors, clashRef: clash?.ref };

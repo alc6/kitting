@@ -7,6 +7,7 @@ import {
 	type BuildStatus,
 	buildLines,
 	buildMachineTimes,
+	buildOptionChoices,
 	builds,
 	machineTypes,
 	type Part,
@@ -22,12 +23,17 @@ import {
 	type AssemblyGraph,
 	CostCalculator,
 	centsOf,
+	defaultAssembly,
 	type Explosion,
 	explode,
+	type GraphPart,
 	type MakeChoice,
+	missingValues,
 	type Requirement,
 	walkTree,
 } from "./assembly-graph";
+import { idsOf, keyOf, keyValues, type OptionDef, type OptionKey, stockKey } from "./option-keys";
+import { keyFromForm, loadOptions } from "./options";
 import { moveValues } from "./stock";
 
 export const OPEN_STATUSES: BuildStatus[] = ["planned", "in_progress"];
@@ -150,6 +156,8 @@ export function createBuildStatement(
 		serial: string | null;
 		plannedFor: string | null;
 		notes: string;
+		/** The values of the product's options (D170). */
+		optionValues?: OptionKey;
 	},
 	user: string,
 	now: string,
@@ -163,7 +171,7 @@ export function createBuildStatement(
 export function updateBuildStatement(
 	db: Db,
 	buildId: number,
-	d: { serial: string | null; plannedFor: string | null; notes: string },
+	d: { serial: string | null; plannedFor: string | null; notes: string; optionValues?: OptionKey },
 	user: string,
 	now: string,
 ) {
@@ -192,6 +200,14 @@ export function cancelBuildStatement(db: Db, buildId: number, user: string, now:
 export type BuildFilters = { q?: string; status?: string; partId?: number | null; limit?: number };
 
 export async function listBuilds(db: Db, f: BuildFilters = {}) {
+	const rows = await queryBuilds(db, f);
+	// The values each build makes (D170), as text: "white · L".
+	const ids = [...new Set(rows.filter((r) => r.optionValues).map((r) => r.partId))];
+	const options = await loadOptions(db, ids);
+	return rows.map((r) => ({ ...r, values: keyValues(options.get(r.partId) ?? [], r.optionValues) }));
+}
+
+function queryBuilds(db: Db, f: BuildFilters) {
 	const conds: SQL[] = [];
 	if (f.q) {
 		const like = likePattern(f.q);
@@ -211,6 +227,7 @@ export async function listBuilds(db: Db, f: BuildFilters = {}) {
 			status: builds.status,
 			qtyMilli: builds.qtyMilli,
 			serial: builds.serial,
+			optionValues: builds.optionValues,
 			plannedFor: builds.plannedFor,
 			doneAt: builds.doneAt,
 			partId: parts.id,
@@ -275,13 +292,154 @@ export async function buildsConsumingSerial(db: Db, partId: number, serial: stri
 }
 
 // ---------------------------------------------------------------------------
+// Option values of a build (D170, D172): the product's, and those chosen for the options its lines leave to the build.
+
+const PICK_PREFIX = "pick:";
+/** Form field of a value chosen when planning: `pick:<partId>:<optionId>`. */
+export const pickField = (partId: number, optionId: number) => `${PICK_PREFIX}${partId}:${optionId}`;
+/** Form field of a value of the product's options: `option:<optionId>`. */
+export const optionField = (optionId: number) => `option:${optionId}`;
+
+/**
+ * The components whose lines leave options to the build, anywhere in the assembly's structure (through kits and the
+ * sub-assemblies it may build), with those options, in the order met.
+ */
+export function chosenComponents(
+	graph: AssemblyGraph,
+	assemblyId: number,
+): { part: GraphPart; options: OptionDef[] }[] {
+	const found = new Map<number, { part: GraphPart; options: OptionDef[] }>();
+	const seen = new Set<number>();
+	const visit = (id: number) => {
+		const b = graph.assemblies.get(id);
+		if (!b || seen.has(id)) return;
+		seen.add(id);
+		for (const line of b.lines) {
+			const part = graph.parts.get(line.componentPartId);
+			if (!part) continue;
+			const options = part.options.filter((o) => line.chosenOptionIds.includes(o.id));
+			if (options.length) {
+				const entry = found.get(part.id) ?? { part, options: [] };
+				for (const o of options) if (!entry.options.some((x) => x.id === o.id)) entry.options.push(o);
+				found.set(part.id, entry);
+			}
+			if (part.kind === "make" || part.kind === "kit") {
+				const sub = defaultAssembly(graph, part.id);
+				if (sub) visit(sub.id);
+			}
+		}
+	};
+	visit(assemblyId);
+	return [...found.values()];
+}
+
+/** The values a build form chose: the product's (`option:<id>`) and those of `pick:<partId>:<optionId>` fields. */
+export function readBuildValues(
+	graph: AssemblyGraph,
+	product: { id: number },
+	assemblyId: number | null,
+	form: Record<string, unknown>,
+): { optionValues: OptionKey; missing: OptionDef | null; picks: Map<number, number[]> } {
+	const options = graph.parts.get(product.id)?.options ?? [];
+	const { key, missing } = keyFromForm(options, form);
+	const picks = new Map<number, number[]>();
+	for (const c of assemblyId === null ? [] : chosenComponents(graph, assemblyId)) {
+		const ids: number[] = [];
+		for (const o of c.options) {
+			const raw = form[pickField(c.part.id, o.id)];
+			const id = Number(typeof raw === "string" ? raw : "");
+			if (o.values.some((v) => v.id === id)) ids.push(id);
+		}
+		if (ids.length) picks.set(c.part.id, ids);
+	}
+	return { optionValues: key, missing, picks };
+}
+
+/**
+ * What blocks a build in these values (D170): a value of the product's options left out, or a value the build asks
+ * of a component that does not come in it (the cover has no "red"). Problems are i18n keys with their variables.
+ */
+export function buildValueProblems(
+	graph: AssemblyGraph,
+	assemblyId: number,
+	qtyMilli: number,
+	values: { optionValues: OptionKey; missing: OptionDef | null; picks: Map<number, number[]> },
+): { key: string; vars?: Record<string, string> }[] {
+	const problems: { key: string; vars?: Record<string, string> }[] = [];
+	if (values.missing) problems.push({ key: "option_value_required", vars: { option: values.missing.name } });
+	const ex = explode(graph, assemblyId, qtyMilli, { values: idsOf(values.optionValues), picks: values.picks });
+	for (const m of missingValues(ex))
+		problems.push({ key: "option_value_missing", vars: { ref: m.part.ref, option: m.option, value: m.value } });
+	return problems;
+}
+
+/** Replaces the values chosen for a build (D172): one row per component part. `buildId` is SQL for a new build. */
+export function buildChoicesStatements(
+	db: Db,
+	buildId: number | SQL,
+	picks: Map<number, number[]>,
+	user: string,
+	now: string,
+): Statement[] {
+	return [
+		db.delete(buildOptionChoices).where(eq(buildOptionChoices.buildId, buildId)),
+		...[...picks].flatMap(([partId, ids]) => {
+			const optionValues = keyOf(ids);
+			return optionValues
+				? [
+						db.insert(buildOptionChoices).values({
+							buildId,
+							partId,
+							optionValues,
+							createdBy: user,
+							updatedBy: user,
+							createdAt: now,
+							updatedAt: now,
+						}),
+					]
+				: [];
+		}),
+	];
+}
+
+/** The values chosen for a build, per component part. */
+export async function buildPicks(db: Db, buildId: number): Promise<Map<number, number[]>> {
+	const rows = await db
+		.select({ partId: buildOptionChoices.partId, optionValues: buildOptionChoices.optionValues })
+		.from(buildOptionChoices)
+		.where(eq(buildOptionChoices.buildId, buildId));
+	return new Map(rows.map((r) => [r.partId, idsOf(r.optionValues)]));
+}
+
+/** The values chosen for every open build, per build. */
+export async function openBuildPicks(db: Db): Promise<Map<number, Map<number, number[]>>> {
+	const rows = await db
+		.select({
+			buildId: buildOptionChoices.buildId,
+			partId: buildOptionChoices.partId,
+			key: buildOptionChoices.optionValues,
+		})
+		.from(buildOptionChoices)
+		.innerJoin(builds, eq(buildOptionChoices.buildId, builds.id))
+		.where(inArray(builds.status, OPEN_STATUSES));
+	const byBuild = new Map<number, Map<number, number[]>>();
+	for (const r of rows) {
+		const m = byBuild.get(r.buildId) ?? new Map<number, number[]>();
+		m.set(r.partId, idsOf(r.key));
+		byBuild.set(r.buildId, m);
+	}
+	return byBuild;
+}
+
+// ---------------------------------------------------------------------------
 // Pick list and completion
 
 const CHOICE_PREFIX = "choice:";
 const SERIAL_PREFIX = "serial:";
 
 export const choiceField = (path: string) => `${CHOICE_PREFIX}${path}`;
-export const serialField = (partId: number, i: number) => `${SERIAL_PREFIX}${partId}:${i}`;
+/** Serial field of a unit of a requirement: `serial:<partId>:<i>`, with the values for a part with options (D169). */
+export const serialField = (key: number | string, i: number) => `${SERIAL_PREFIX}${key}:${i}`;
 
 /** Reads "use stock" / "build now" choices from submitted form fields. */
 export function parseChoices(form: Record<string, unknown>): Map<string, MakeChoice> {
@@ -297,14 +455,19 @@ export function parseChoices(form: Record<string, unknown>): Map<string, MakeCho
 
 export type PickList = {
 	explosion: Explosion;
-	/** Serials entered per serial-tracked part (index = unit). */
-	serials: Map<number, string[]>;
+	/** Serials entered per serial-tracked requirement, keyed by `stockKey` (index = unit). */
+	serials: Map<string, string[]>;
 	/** Field name -> i18n error key. */
 	errors: Record<string, string>;
 	/** Errors not tied to a field (i18n key + vars). */
 	problems: { key: string; vars?: Record<string, string> }[];
-	onHand: Map<number, number>;
+	/** On-hand per part and values (`stockKey`). */
+	onHand: Map<string, number>;
 };
+
+/** The on-hand of a requirement's part in its values. */
+export const onHandOfReq = (onHand: Map<string, number>, r: Pick<Requirement, "part" | "optionValues">) =>
+	onHand.get(stockKey(r.part.id, r.optionValues)) ?? 0;
 
 /** Number of serials needed for a requirement (one per unit). */
 export const serialCount = (r: Requirement): number => Math.floor(r.qtyMilli / MILLI);
@@ -315,23 +478,48 @@ export const serialCount = (r: Requirement): number => Math.floor(r.qtyMilli / M
  */
 export function buildPickList(
 	graph: AssemblyGraph,
-	onHand: Map<number, number>,
-	build: { assemblyId: number; qtyMilli: number; serial: string | null },
+	onHand: Map<string, number>,
+	build: {
+		assemblyId: number;
+		qtyMilli: number;
+		serial: string | null;
+		optionValues?: OptionKey;
+		picks?: Map<number, number[]>;
+	},
 	product: { trackSerial: boolean },
 	form: Record<string, unknown>,
 	validateSerials: boolean,
 ): PickList {
-	const explosion = explode(graph, build.assemblyId, build.qtyMilli, { stock: onHand, choices: parseChoices(form) });
-	const serials = new Map<number, string[]>();
+	const explosion = explode(graph, build.assemblyId, build.qtyMilli, {
+		stock: onHand,
+		choices: parseChoices(form),
+		values: idsOf(build.optionValues),
+		picks: build.picks,
+	});
+	const serials = new Map<string, string[]>();
 	const errors: Record<string, string> = {};
 	const problems: PickList["problems"] = [];
+	for (const m of missingValues(explosion))
+		problems.push({ key: "option_value_missing", vars: { ref: m.part.ref, option: m.option, value: m.value } });
 	for (const r of explosion.requirements) {
 		if (r.missingAssembly) problems.push({ key: "missing_assembly_build", vars: { ref: r.part.ref } });
+		// A sub-assembly with options taken from stock must exist in its values (D174); "build now" makes it.
+		else if (
+			r.part.kind === "make" &&
+			r.part.options.length > 0 &&
+			!r.missingValue &&
+			r.qtyMilli > Math.max(0, onHandOfReq(onHand, r))
+		)
+			problems.push({
+				key: "option_stock_short",
+				vars: { ref: r.part.ref, values: keyValues(r.part.options, r.optionValues) },
+			});
 		if (!r.part.trackSerial) continue;
+		const key = stockKey(r.part.id, r.optionValues);
 		const list: string[] = [];
 		const seen = new Set<string>();
 		for (let i = 0; i < serialCount(r); i++) {
-			const name = serialField(r.part.id, i);
+			const name = serialField(key, i);
 			const raw = form[name];
 			const value = typeof raw === "string" ? raw.trim().slice(0, 100) : "";
 			list.push(value);
@@ -340,7 +528,7 @@ export function buildPickList(
 			else if (seen.has(value)) errors[name] = "serial_duplicate";
 			seen.add(value);
 		}
-		serials.set(r.part.id, list);
+		serials.set(key, list);
 	}
 	if (validateSerials && product.trackSerial) {
 		if (!build.serial) problems.push({ key: "build_serial_required" });
@@ -357,7 +545,14 @@ export function buildPickList(
 export function completionStatements(
 	db: Db,
 	graph: AssemblyGraph,
-	build: { id: number | SQL; partId: number; qtyMilli: number; serial: string | null; number: string },
+	build: {
+		id: number | SQL;
+		partId: number;
+		qtyMilli: number;
+		serial: string | null;
+		number: string;
+		optionValues?: OptionKey;
+	},
 	pick: PickList,
 	user: string,
 	now: string,
@@ -367,12 +562,19 @@ export function completionStatements(
 	const consume: Statement[] = [];
 	const lines: Statement[] = [];
 	let totalMillicents = 0;
-	const lineValues = (partId: number, qtyMilli: number, serial: string | null, unitCostCents: number | null) => ({
+	const lineValues = (
+		partId: number,
+		qtyMilli: number,
+		serial: string | null,
+		unitCostCents: number | null,
+		optionValues: OptionKey,
+	) => ({
 		buildId: build.id,
 		partId,
 		qtyMilli,
 		serial,
 		unitCostCents,
+		optionValues,
 		createdBy: user,
 		updatedBy: user,
 		createdAt: now,
@@ -383,7 +585,8 @@ export function completionStatements(
 		// Unknown (or partly unknown) costs are stored as NULL so the as-built record can flag them.
 		const unitCents = cost.incomplete ? null : centsOf(cost.millicents);
 		totalMillicents += calc.extended(r.part.id, r.qtyMilli);
-		const units = r.part.trackSerial ? (pick.serials.get(r.part.id) ?? []) : [];
+		const units = r.part.trackSerial ? (pick.serials.get(stockKey(r.part.id, r.optionValues)) ?? []) : [];
+		const optionValues = r.optionValues;
 		if (units.length > 0) {
 			for (const serial of units) {
 				consume.push(
@@ -391,12 +594,12 @@ export function completionStatements(
 						.insert(stockMoves)
 						.values(
 							moveValues(
-								{ partId: r.part.id, qtyMilli: -MILLI, serial, unitCostCents: unitCents },
+								{ partId: r.part.id, qtyMilli: -MILLI, serial, unitCostCents: unitCents, optionValues },
 								{ ...ctx, reason: "build_consume" },
 							),
 						),
 				);
-				lines.push(db.insert(buildLines).values(lineValues(r.part.id, MILLI, serial, unitCents)));
+				lines.push(db.insert(buildLines).values(lineValues(r.part.id, MILLI, serial, unitCents, optionValues)));
 			}
 			const rest = r.qtyMilli - units.length * MILLI; // fractional remainder of a tracked part (should not happen)
 			if (rest > 0) {
@@ -405,12 +608,12 @@ export function completionStatements(
 						.insert(stockMoves)
 						.values(
 							moveValues(
-								{ partId: r.part.id, qtyMilli: -rest, serial: null, unitCostCents: unitCents },
+								{ partId: r.part.id, qtyMilli: -rest, serial: null, unitCostCents: unitCents, optionValues },
 								{ ...ctx, reason: "build_consume" },
 							),
 						),
 				);
-				lines.push(db.insert(buildLines).values(lineValues(r.part.id, rest, null, unitCents)));
+				lines.push(db.insert(buildLines).values(lineValues(r.part.id, rest, null, unitCents, optionValues)));
 			}
 		} else {
 			consume.push(
@@ -418,12 +621,12 @@ export function completionStatements(
 					.insert(stockMoves)
 					.values(
 						moveValues(
-							{ partId: r.part.id, qtyMilli: -r.qtyMilli, serial: null, unitCostCents: unitCents },
+							{ partId: r.part.id, qtyMilli: -r.qtyMilli, serial: null, unitCostCents: unitCents, optionValues },
 							{ ...ctx, reason: "build_consume" },
 						),
 					),
 			);
-			lines.push(db.insert(buildLines).values(lineValues(r.part.id, r.qtyMilli, null, unitCents)));
+			lines.push(db.insert(buildLines).values(lineValues(r.part.id, r.qtyMilli, null, unitCents, optionValues)));
 		}
 	}
 	for (const f of pick.explosion.fees) totalMillicents += calc.extended(f.part.id, f.qtyMilli);
@@ -444,14 +647,18 @@ export function completionStatements(
 		);
 	}
 	const unitCostCents = centsOf(roundDiv(totalMillicents * MILLI, build.qtyMilli));
-	const output = db
-		.insert(stockMoves)
-		.values(
-			moveValues(
-				{ partId: build.partId, qtyMilli: build.qtyMilli, serial: build.serial, unitCostCents },
-				{ ...ctx, reason: "build_output" },
-			),
-		);
+	const output = db.insert(stockMoves).values(
+		moveValues(
+			{
+				partId: build.partId,
+				qtyMilli: build.qtyMilli,
+				serial: build.serial,
+				unitCostCents,
+				optionValues: build.optionValues ?? pick.explosion.optionValues,
+			},
+			{ ...ctx, reason: "build_output" },
+		),
+	);
 	const done = db
 		.update(builds)
 		.set({ status: "done", doneAt: now, updatedAt: now, updatedBy: user })
@@ -478,22 +685,35 @@ export function recordProblems(pick: PickList): { key: string; vars?: Record<str
 export function recordStatements(
 	db: Db,
 	graph: AssemblyGraph,
-	b: { number: string; partId: number; assemblyId: number; qtyMilli: number; serial: string | null; notes: string },
+	b: {
+		number: string;
+		partId: number;
+		assemblyId: number;
+		qtyMilli: number;
+		serial: string | null;
+		notes: string;
+		optionValues?: OptionKey;
+		picks?: Map<number, number[]>;
+	},
 	pick: PickList,
 	user: string,
 	now: string,
 ): Statement[] {
+	const { picks, ...build } = b;
+	const id = sql`(SELECT id FROM builds WHERE number = ${b.number})`;
 	return [
-		createBuildStatement(db, { ...b, plannedFor: now.slice(0, 10) }, user, now),
+		createBuildStatement(db, { ...build, plannedFor: now.slice(0, 10) }, user, now),
+		...(picks?.size ? buildChoicesStatements(db, id, picks, user, now) : []),
 		...completionStatements(
 			db,
 			graph,
 			{
-				id: sql`(SELECT id FROM builds WHERE number = ${b.number})`,
+				id,
 				partId: b.partId,
 				qtyMilli: b.qtyMilli,
 				serial: b.serial,
 				number: b.number,
+				optionValues: b.optionValues ?? null,
 			},
 			pick,
 			user,

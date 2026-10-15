@@ -124,6 +124,43 @@ export const parts = sqliteTable(
 	],
 );
 
+// An option a part comes in (D168), e.g. "Colour", with its ordered values below. Stock, receipts and builds of the
+// part are counted per value; the part stays one part in the catalogue and in recipes. Parts match each other's
+// options by name, ignoring case (D170).
+export const partOptions = sqliteTable(
+	"part_options",
+	{
+		id: integer("id").primaryKey({ autoIncrement: true }),
+		partId: integer("part_id")
+			.notNull()
+			.references(() => parts.id, { onDelete: "cascade" }),
+		name: text("name").notNull(),
+		position: integer("position").notNull().default(0),
+		...audit(),
+	},
+	(t) => [uniqueIndex("part_options_part_name_unique").on(t.partId, t.name)],
+);
+
+// A value of a part's option ("white"), one of them the default. Records name values by id in their `option_values`
+// key (D169), so a value is renamed freely but deleted only while nothing uses it (checked in src/domain/options.ts).
+export const partOptionValues = sqliteTable(
+	"part_option_values",
+	{
+		id: integer("id").primaryKey({ autoIncrement: true }),
+		optionId: integer("option_id")
+			.notNull()
+			.references(() => partOptions.id, { onDelete: "cascade" }),
+		name: text("name").notNull(),
+		position: integer("position").notNull().default(0),
+		isDefault: integer("is_default", { mode: "boolean" }).notNull().default(false),
+		...audit(),
+	},
+	(t) => [
+		uniqueIndex("part_option_values_option_name_unique").on(t.optionId, t.name),
+		uniqueIndex("part_option_values_one_default").on(t.optionId).where(sql`is_default = 1`),
+	],
+);
+
 // A kind of machine (e.g. "FDM printer"): what recipes name and what carries the hourly rate (D147).
 export const machineTypes = sqliteTable(
 	"machine_types",
@@ -227,6 +264,10 @@ export const assemblyLines = sqliteTable(
 		position: integer("position").notNull().default(0),
 		notes: text("notes").notNull().default(""),
 		...audit(),
+		// The line's rule for each option of its component (D171): the values it always takes (a key, D169), and the
+		// options chosen when a build is planned (option ids, comma-separated). Every other option follows the build.
+		fixedOptionValues: text("fixed_option_values"),
+		chosenOptionIds: text("chosen_option_ids"),
 	},
 	(t) => [
 		index("assembly_lines_assembly_idx").on(t.assemblyId, t.position),
@@ -253,6 +294,9 @@ export const stockMoves = sqliteTable(
 		by: text("by").notNull(),
 		note: text("note").notNull().default(""),
 		...audit(),
+		// The option values of the moved units (D169): value ids in ascending order, comma-separated; NULL for a part
+		// without options. On-hand is SUM(qty_milli) per part and key.
+		optionValues: text("option_values"),
 	},
 	(t) => [
 		index("stock_moves_part_idx").on(t.partId, t.at),
@@ -300,6 +344,8 @@ export const poLines = sqliteTable(
 		receivedQtyMilli: integer("received_qty_milli").notNull().default(0),
 		notes: text("notes").notNull().default(""),
 		...audit(),
+		// The option values ordered (D169): its receipts are moves with this key.
+		optionValues: text("option_values"),
 	},
 	(t) => [
 		index("po_lines_po_idx").on(t.poId),
@@ -346,6 +392,8 @@ export const builds = sqliteTable(
 		doneAt: text("done_at"),
 		notes: text("notes").notNull().default(""),
 		...audit(),
+		// The option values the build makes (D169): the key of its output move; follow lines take them (D170).
+		optionValues: text("option_values"),
 	},
 	(t) => [
 		uniqueIndex("builds_number_unique").on(t.number),
@@ -375,8 +423,28 @@ export const buildLines = sqliteTable(
 		unitCostCents: integer("unit_cost_cents"),
 		notes: text("notes").notNull().default(""),
 		...audit(),
+		// The option values consumed (D169).
+		optionValues: text("option_values"),
 	},
 	(t) => [index("build_lines_build_idx").on(t.buildId), index("build_lines_part_serial_idx").on(t.partId, t.serial)],
+);
+
+// The values chosen when a build is planned for the options its recipe lines leave to it (D172): one row per
+// component part, its key holding only the chosen options' values. Edited while the build is open.
+export const buildOptionChoices = sqliteTable(
+	"build_option_choices",
+	{
+		id: integer("id").primaryKey({ autoIncrement: true }),
+		buildId: integer("build_id")
+			.notNull()
+			.references(() => builds.id, { onDelete: "cascade" }),
+		partId: integer("part_id")
+			.notNull()
+			.references(() => parts.id),
+		optionValues: text("option_values").notNull(),
+		...audit(),
+	},
+	(t) => [uniqueIndex("build_option_choices_build_part_unique").on(t.buildId, t.partId)],
 );
 
 // As-built record of machine time (D148): one row per machine type a completed build used, with the minutes (milli)
@@ -605,6 +673,9 @@ export const HISTORY_TABLES: SQLiteTable[] = [
 	machineTypes,
 	machines,
 	files,
+	partOptions,
+	partOptionValues,
+	buildOptionChoices,
 ];
 
 /**
@@ -642,3 +713,6 @@ export type MachineType = typeof machineTypes.$inferSelect;
 export type Machine = typeof machines.$inferSelect;
 export type BuildMachineTime = typeof buildMachineTimes.$inferSelect;
 export type FileRow = typeof files.$inferSelect;
+export type PartOption = typeof partOptions.$inferSelect;
+export type PartOptionValue = typeof partOptionValues.$inferSelect;
+export type BuildOptionChoice = typeof buildOptionChoices.$inferSelect;

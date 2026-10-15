@@ -4,7 +4,7 @@ import { listBuilds } from "../domain/builds";
 import { listParts } from "../domain/parts";
 import { can } from "../domain/permissions";
 import { computeShortages, listPos } from "../domain/purchasing";
-import { belowMinimum, isStocked, valuation } from "../domain/stock";
+import { belowMinimum, isStocked, stockByKey, valuation } from "../domain/stock";
 import { fmt } from "../i18n";
 import { cn } from "../lib/cn";
 import { formatMoney } from "../lib/units";
@@ -102,19 +102,22 @@ function StockValueHint(props: { value: Awaited<ReturnType<typeof valuation>> })
 dashboardRoutes.get("/", async (c) => {
 	const t = c.var.t;
 	const db = c.var.db;
-	const [allParts, shortages, openPos, open, done, value] = await Promise.all([
+	const [allParts, shortages, openPos, open, done, value, keyed] = await Promise.all([
 		listParts(db),
 		computeShortages(db),
 		listPos(db, { status: "open" }),
 		listBuilds(db, { status: "open", limit: 100 }),
 		listBuilds(db, { status: "done", limit: LIMIT }),
 		c.var.seeCosts ? valuation(db) : null,
+		stockByKey(db),
 	]);
+	// A part with options is below zero when one of its values is (D169), whatever its total.
+	const negativeValue = new Set(keyed.filter((r) => r.optionValues !== null && r.qty < 0).map((r) => r.partId));
 	const canBuild = can(c.var, "builds.plan");
 	const today = nowIso().slice(0, 10);
 	const stocked = allParts.filter((p) => isStocked(p.kind));
-	const belowZero = stocked.filter((p) => p.onHandMilli < 0);
-	const belowMin = stocked.filter((p) => p.onHandMilli >= 0 && belowMinimum(p));
+	const belowZero = stocked.filter((p) => p.onHandMilli < 0 || negativeValue.has(p.id));
+	const belowMin = stocked.filter((p) => p.onHandMilli >= 0 && !negativeValue.has(p.id) && belowMinimum(p));
 	const shortageLines = shortages.groups.flatMap((g) => g.lines.map((l) => ({ ...l, supplierName: g.supplierName })));
 	const shortSuppliers = new Set(shortageLines.map((l) => l.supplierName)).size;
 	const overdue = openPos.filter((p) => p.expectedAt && p.expectedAt < today).length;

@@ -3,6 +3,8 @@ import type { Context } from "hono";
 import { Hono } from "hono";
 import { PO_STATUSES, type PoShipment, type PoStatus, parts, poLines, suppliers } from "../db/schema";
 import { getOffer, poUnitPrice } from "../domain/offers";
+import { keyLabel, keyText, type OptionDef } from "../domain/option-keys";
+import { keyFromForm, optionsOf } from "../domain/options";
 import { can } from "../domain/permissions";
 import {
 	addPoLineStatement,
@@ -63,8 +65,9 @@ import type { AppEnv } from "../types";
 import { type AppView, useApp } from "../views/context";
 import { RecordTabs } from "../views/history";
 import { Icon, icons } from "../views/icons";
+import { OptionSelects } from "../views/options";
 import { PartPicker, PartPickerDialog } from "../views/part-picker";
-import { idParam, notFound, nowIso, page, redirectOk, saveChanges, translateErrors } from "../views/render";
+import { fragment, idParam, notFound, nowIso, page, redirectOk, saveChanges, translateErrors } from "../views/render";
 import {
 	Alert,
 	Badge,
@@ -138,15 +141,44 @@ function isOverdue(expectedAt: string | null, status: PoStatus, today: string): 
 }
 
 /** Part reference (linked), name and optional supplier reference, for the first cell of a line. */
-function PartCell(props: { id: number; ref: string; name: string; supplierRef?: string | null }) {
+function PartCell(props: {
+	id: number;
+	ref: string;
+	name: string;
+	supplierRef?: string | null;
+	/** The option values ordered (D176), as text. */
+	values?: string;
+}) {
 	return (
 		<TableCell class="min-w-44">
 			<span class="whitespace-nowrap">
 				<a href={`/parts/${props.id}`}>{props.ref}</a>
 			</span>{" "}
 			<span class="text-muted-foreground">{props.name}</span>
+			{props.values ? <div class="text-sm font-medium">{props.values}</div> : null}
 			{props.supplierRef ? <div class="text-xs text-muted-foreground">{props.supplierRef}</div> : null}
 		</TableCell>
+	);
+}
+
+/** The selects of a part's options on the add-line form, refreshed when the part changes (htmx). */
+function LineOptions(props: { poId: number; options: OptionDef[]; values: FormValues; errors: FormErrors }) {
+	return (
+		<div
+			id="po-line-options"
+			class="grid gap-4 empty:hidden md:col-span-4 md:grid-cols-3"
+			hx-get={`/purchasing/po/${props.poId}/line-options`}
+			hx-trigger="change from:#f-part"
+			hx-include="#f-part"
+			hx-swap="outerHTML"
+		>
+			<OptionSelects
+				options={props.options}
+				name={(o) => `option:${o.id}`}
+				values={props.values}
+				errors={props.errors}
+			/>
+		</div>
 	);
 }
 
@@ -181,7 +213,7 @@ function OrderFromSelect(props: { line: ShortageLine }) {
 	const l = props.line;
 	return (
 		<select
-			name={`order_from_${l.part.id}`}
+			name={`order_from_${l.key}`}
 			aria-label={`${view.t.purchasing.orderFrom} ${l.part.ref}`}
 			class="w-auto max-w-72 min-w-44"
 		>
@@ -205,7 +237,20 @@ export function ShortageTables(props: { shortages: Shortages; selectable?: boole
 					<ul class="m-0 flex list-disc flex-col gap-1 pl-4">
 						{shortages.missingAssemblies.map((m) => (
 							<li>
-								<span class="font-medium">{m.ref}</span> {m.name} × <Qty milli={m.qtyMilli} /> ({m.builds.join(", ")})
+								<span class="font-medium">{m.ref}</span> {m.name}
+								{m.values ? ` (${m.values})` : ""} × <Qty milli={m.qtyMilli} /> ({m.builds.join(", ")})
+							</li>
+						))}
+					</ul>
+				</Alert>
+			) : null}
+			{shortages.missingValues.length ? (
+				<Alert variant="warning" title={t.purchasing.missingValues} class="mb-0">
+					<ul class="m-0 flex list-disc flex-col gap-1 pl-4">
+						{shortages.missingValues.map((m) => (
+							<li>
+								{fmt(t.errors.option_value_missing, { ref: m.ref, option: m.option, value: m.value })} (
+								{m.builds.join(", ")})
 							</li>
 						))}
 					</ul>
@@ -271,7 +316,13 @@ export function ShortageTables(props: { shortages: Shortages; selectable?: boole
 								<TableBody>
 									{g.lines.map((l) => (
 										<TableRow>
-											<PartCell id={l.part.id} ref={l.part.ref} name={l.part.name} supplierRef={l.part.supplierRef} />
+											<PartCell
+												id={l.part.id}
+												ref={l.part.ref}
+												name={l.part.name}
+												supplierRef={l.part.supplierRef}
+												values={keyLabel(l.part.options, l.optionValues)}
+											/>
 											<TableCell class="text-right">
 												<Qty milli={l.needMilli} unit={l.part.unit} />
 											</TableCell>
@@ -375,8 +426,8 @@ purchasingRoutes.post("/draft-pos", requirePermission("purchasing.order"), async
 	const orders = planDraftOrders(
 		shortages.groups,
 		(supplierId) => body[`supplier_${supplierId}`] === "on",
-		(partId) => {
-			const v = body[`order_from_${partId}`];
+		(key) => {
+			const v = body[`order_from_${key}`];
 			return typeof v === "string" && /^\d+$/.test(v) ? Number(v) : undefined;
 		},
 	);
@@ -685,6 +736,8 @@ function DraftLines(props: {
 	po: PoData["po"];
 	lines: PoLineRow[];
 	options: { ref: string; name: string }[];
+	/** The options of the part typed on the add-line form, once known. */
+	addOptions: OptionDef[];
 	values: FormValues;
 	errors: FormErrors;
 	today: string;
@@ -727,7 +780,13 @@ function DraftLines(props: {
 							<TableBody>
 								{props.lines.map((l) => (
 									<TableRow>
-										<PartCell id={l.line.partId} ref={l.ref} name={l.name} supplierRef={l.supplierRef} />
+										<PartCell
+											id={l.line.partId}
+											ref={l.ref}
+											name={l.name}
+											supplierRef={l.supplierRef}
+											values={l.values}
+										/>
 										<TableCell>
 											<form
 												method="post"
@@ -765,6 +824,27 @@ function DraftLines(props: {
 													aria-label={t.common.save}
 													title={t.common.save}
 												/>
+												{l.options.length ? (
+													<span class="flex basis-full flex-wrap justify-end gap-2">
+														{l.options.map((o) => (
+															<select
+																name={`option:${o.id}`}
+																data-slot="native-select"
+																class="h-(--control-h-sm) w-auto py-0 text-sm"
+																aria-label={`${o.name} ${l.ref}`}
+															>
+																{o.values.map((v) => (
+																	<option
+																		value={String(v.id)}
+																		selected={(l.line.optionValues ?? "").split(",").includes(String(v.id))}
+																	>
+																		{`${o.name}: ${v.name}`}
+																	</option>
+																))}
+															</select>
+														))}
+													</span>
+												) : null}
 											</form>
 										</TableCell>
 										<TableCell class="text-right">
@@ -844,6 +924,7 @@ function DraftLines(props: {
 								</span>
 								<Button icon={icons.plus}>{t.purchasing.addLine}</Button>
 							</div>
+							<LineOptions poId={po.id} options={props.addOptions} values={props.values} errors={props.errors} />
 						</div>
 					</form>
 					<PartPickerDialog name="part" scope={{ kinds: ["buy", "make"] }} />
@@ -893,7 +974,7 @@ function ReceiveForm(props: { po: PoData["po"]; lines: PoLineRow[]; values: Form
 								const serialError = props.errors[serialName];
 								return (
 									<TableRow>
-										<PartCell id={l.line.partId} ref={l.ref} name={l.name} />
+										<PartCell id={l.line.partId} ref={l.ref} name={l.name} values={l.values} />
 										<TableCell class="text-right">
 											<Qty milli={l.line.qtyMilli} unit={l.unit} />
 										</TableCell>
@@ -983,7 +1064,7 @@ function ReadOnlyLines(props: { lines: PoLineRow[] }) {
 					<TableBody>
 						{props.lines.map((l) => (
 							<TableRow>
-								<PartCell id={l.line.partId} ref={l.ref} name={l.name} supplierRef={l.supplierRef} />
+								<PartCell id={l.line.partId} ref={l.ref} name={l.name} supplierRef={l.supplierRef} values={l.values} />
 								<TableCell class="text-right">
 									<Qty milli={l.line.qtyMilli} unit={l.unit} />
 								</TableCell>
@@ -1239,7 +1320,8 @@ async function renderPo(
 	const t = c.var.t;
 	const db = c.var.db;
 	const { po, supplier } = data;
-	const [lines, shipments, carriers, options] = await Promise.all([
+	const typed = (form.lineValues?.part ?? "").trim();
+	const [lines, shipments, carriers, options, addPart] = await Promise.all([
 		getPoLines(db, po.id),
 		getPoShipments(db, po.id),
 		knownCarriers(db),
@@ -1248,7 +1330,9 @@ async function renderPo(
 			.from(parts)
 			.where(and(eq(parts.archived, false), inArray(parts.kind, ["buy", "make"])))
 			.orderBy(asc(parts.ref)),
+		typed ? db.select({ id: parts.id }).from(parts).where(eq(parts.ref, typed)).limit(1) : Promise.resolve([]),
 	]);
+	const addOptions = addPart[0] ? await optionsOf(db, addPart[0].id) : [];
 	const ok = c.req.query("ok");
 	const flash = ok
 		? (
@@ -1364,6 +1448,7 @@ async function renderPo(
 						po={po}
 						lines={lines}
 						options={options}
+						addOptions={addOptions}
 						values={form.lineValues ?? {}}
 						errors={translateErrors(c, form.lineErrors ?? {}, form.lineVars)}
 						today={today}
@@ -1531,15 +1616,39 @@ purchasingRoutes.post("/po/:id/lines", requirePermission("purchasing.order"), as
 			vars.kind = part.kind;
 		}
 	}
+	// A part with options is ordered in one value of each (D176).
+	const partOptionDefs = part ? await optionsOf(db, part.id) : [];
+	const chosen = keyFromForm(partOptionDefs, body);
+	if (part && chosen.missing) {
+		errors[`option:${chosen.missing.id}`] = "option_value_required";
+		vars.option = chosen.missing.name;
+	}
 	if (!v.ok || !part || Object.keys(errors).length) {
 		return renderPo(c, data, { lineValues: body as FormValues, lineErrors: errors, lineVars: vars }, 422);
 	}
 	const unitPriceCents =
 		v.data.price ?? poUnitPrice((await getOffer(db, part.id, data.po.supplierId))?.priceCents, part.costCents);
 	await saveChanges(c, fmt(c.var.t.history.summaries.poLineAdd, { ref: part.ref, number: data.po.number }), [
-		addPoLineStatement(db, data.po.id, { partId: part.id, qtyMilli: v.data.qty, unitPriceCents }, c.var.user, nowIso()),
+		addPoLineStatement(
+			db,
+			data.po.id,
+			{ partId: part.id, qtyMilli: v.data.qty, unitPriceCents, optionValues: chosen.key },
+			c.var.user,
+			nowIso(),
+		),
 	]);
 	return c.redirect(`/purchasing/po/${data.po.id}`, 303);
+});
+
+/** The option selects for the part typed on the add-line form (htmx; without it, a refused submit shows them). */
+purchasingRoutes.get("/po/:id/line-options", requirePermission("purchasing.order"), async (c) => {
+	const id = idParam(c);
+	const ref = (c.req.query("part") ?? "").trim();
+	const part = ref ? (await c.var.db.select().from(parts).where(eq(parts.ref, ref)).limit(1))[0] : undefined;
+	return fragment(
+		c,
+		<LineOptions poId={id ?? 0} options={part ? await optionsOf(c.var.db, part.id) : []} values={{}} errors={{}} />,
+	);
 });
 
 async function partRef(c: Context<AppEnv>, partId: number): Promise<string> {
@@ -1570,6 +1679,10 @@ purchasingRoutes.post("/po/:id/lines/:lineId", requirePermission("purchasing.ord
 	const price = parseCents(typeof body.price === "string" ? body.price : "");
 	if (qty === null || qty <= 0) return c.redirect(`/purchasing/po/${data.po.id}?err=invalid_quantity`, 303);
 	if (price === null || price < 0) return c.redirect(`/purchasing/po/${data.po.id}?err=invalid_money`, 303);
+	// Its values can change while it is a draft; a part with options keeps one value of each (D176).
+	const partOptionDefs = await optionsOf(c.var.db, data.line.partId);
+	const chosen = keyFromForm(partOptionDefs, body);
+	const optionValues = partOptionDefs.length && !chosen.missing ? chosen.key : data.line.optionValues;
 	await saveChanges(
 		c,
 		fmt(c.var.t.history.summaries.poLineEdit, { ref: await partRef(c, data.line.partId), number: data.po.number }),
@@ -1578,7 +1691,7 @@ purchasingRoutes.post("/po/:id/lines/:lineId", requirePermission("purchasing.ord
 				c.var.db,
 				data.po.id,
 				data.line.id,
-				{ qtyMilli: qty, unitPriceCents: price },
+				{ qtyMilli: qty, unitPriceCents: price, optionValues },
 				c.var.user,
 				nowIso(),
 			),
@@ -1671,7 +1784,7 @@ purchasingRoutes.get("/po/:id/export.csv", requirePermission("costs.view"), asyn
 	const locale = c.var.locale;
 	const lines = await getPoLines(c.var.db, data.po.id);
 	return csvResponse(c, `${data.po.number}.csv`, [
-		["supplier_ref", "ref", "name", "qty", "unit", "unit_price", "line_total"],
+		["supplier_ref", "ref", "name", "qty", "unit", "unit_price", "line_total", "options"],
 		...lines.map((l) => [
 			l.supplierRef,
 			l.ref,
@@ -1680,6 +1793,7 @@ purchasingRoutes.get("/po/:id/export.csv", requirePermission("costs.view"), asyn
 			l.unit,
 			formatCentsInput(l.line.unitPriceCents, locale),
 			formatCentsInput(lineCostCents(l.line.qtyMilli, l.line.unitPriceCents), locale),
+			keyText(l.options, l.line.optionValues),
 		]),
 	]);
 });

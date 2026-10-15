@@ -8,6 +8,8 @@ import { CHANGE_SOURCES, type ChangeLogRow, changeLog, HISTORY_TABLES } from "..
 import {
 	type EntryView,
 	entryView,
+	KEY_COLUMNS,
+	keyLabelOf,
 	labelOf,
 	listChangeSets,
 	REFERENCE_COLUMNS,
@@ -55,6 +57,7 @@ function wireField(
 		if (money && typeof v === "number") return formatCentsInput(v);
 		if (qty && typeof v === "number") return formatQtyInput(v);
 		if (ref) return labelOf(labels, ref, v);
+		if (KEY_COLUMNS[f.column]) return keyLabelOf(labels, f.column, v);
 		if (BOOLEAN_COLUMNS.has(`${table}.${f.column}`)) return v === 1 || v === true;
 		return v;
 	};

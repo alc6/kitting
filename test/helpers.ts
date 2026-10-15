@@ -25,6 +25,7 @@ const TABLES = [
 	"settings",
 	"build_lines",
 	"build_machine_times",
+	"build_option_choices",
 	"builds",
 	"po_lines",
 	"po_shipments",
@@ -38,6 +39,8 @@ const TABLES = [
 	"machines",
 	"machine_rate_history",
 	"machine_types",
+	"part_option_values",
+	"part_options",
 	"parts",
 	"suppliers",
 ];

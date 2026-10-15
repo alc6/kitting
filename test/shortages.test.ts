@@ -94,7 +94,14 @@ describe("shortage engine", () => {
 		await planBuild("TOP", { qty: "2" });
 		const s = await computeShortages(testDb());
 		expect(s.missingAssemblies).toEqual([
-			{ ref: "NOASSEMBLY", name: "Part NOASSEMBLY", qtyMilli: 2000, builds: ["B-0001"] },
+			{
+				ref: "NOASSEMBLY",
+				name: "Part NOASSEMBLY",
+				optionValues: null,
+				values: "",
+				qtyMilli: 2000,
+				builds: ["B-0001"],
+			},
 		]);
 		const unassigned = s.groups.find((g) => g.supplierId === null)!;
 		expect(unassigned.lines.map((l) => [l.part.ref, l.orderMilli])).toEqual([["LOOSE", 4000]]);

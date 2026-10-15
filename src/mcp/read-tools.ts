@@ -5,6 +5,7 @@ import { loadGraph, partAssemblySummary, whereUsed } from "../domain/assemblies"
 import { CostCalculator, centsOf, type ExplodedNode, explode, type MachineNeed } from "../domain/assembly-graph";
 import {
 	buildPickList,
+	buildPicks,
 	getBuildLines,
 	getBuildMachineTimes,
 	listBuilds,
@@ -14,9 +15,10 @@ import {
 import { assemblyFiles, partFiles } from "../domain/files";
 import { listMachines, listMachineTypes } from "../domain/machines";
 import { partOffers } from "../domain/offers";
-import { listParts, onHandMap, onHandOf } from "../domain/parts";
+import { stockKey } from "../domain/option-keys";
+import { listParts, onHandOf } from "../domain/parts";
 import { computeShortages, getPoLines, getPoShipments, listPos } from "../domain/purchasing";
-import { belowMinimum, isStocked, listMoves, onHandAt } from "../domain/stock";
+import { belowMinimum, isStocked, listMoves, onHandByKey } from "../domain/stock";
 import { lineCostCents, MILLI, machineMillicents, roundDiv } from "../lib/units";
 import {
 	assemblySelector,
@@ -247,7 +249,7 @@ const explodeAssembly = tool({
 	rule: { scope: "catalog:read" },
 	input: z.object({ ...assemblySelector, qty: quantity, use_stock: z.boolean().default(false) }),
 	run: async (a, { db }) => {
-		const [graph, stock] = await Promise.all([loadGraph(db), onHandMap(db)]);
+		const [graph, stock] = await Promise.all([loadGraph(db), onHandByKey(db)]);
 		const { assembly, part } = await resolveAssembly(db, graph, a);
 		const calc = new CostCalculator(graph);
 		const ex = exploding(() => explode(graph, assembly.id, a.qty, a.use_stock ? { stock } : {}));
@@ -256,7 +258,7 @@ const explodeAssembly = tool({
 			const cost = calc.part(r.part.id);
 			const extended = calc.extended(r.part.id, r.qtyMilli);
 			total += extended;
-			const onHand = stock.get(r.part.id) ?? 0;
+			const onHand = stock.get(stockKey(r.part.id, r.optionValues)) ?? 0;
 			return {
 				ref: r.part.ref,
 				name: r.part.name,
@@ -502,12 +504,12 @@ const getBuildTool = tool({
 			};
 		}
 		if (build.status === "cancelled") return { build: header, files };
-		const [graph, onHand] = await Promise.all([loadGraph(db), onHandAt(db)]);
-		const pick = exploding(() => buildPickList(graph, onHand, build, part, {}, false));
+		const [graph, onHand, picks] = await Promise.all([loadGraph(db), onHandByKey(db), buildPicks(db, build.id)]);
+		const pick = exploding(() => buildPickList(graph, onHand, { ...build, picks }, part, {}, false));
 		return {
 			build: header,
 			pickList: pick.explosion.requirements.map((r) => {
-				const stock = onHand.get(r.part.id) ?? 0;
+				const stock = onHand.get(stockKey(r.part.id, r.optionValues)) ?? 0;
 				return {
 					ref: r.part.ref,
 					name: r.part.name,

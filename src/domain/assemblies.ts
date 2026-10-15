@@ -27,6 +27,8 @@ import {
 	type GraphPart,
 } from "./assembly-graph";
 import { copyFilesStatement } from "./files";
+import { idsOf, keyOf, type OptionDef } from "./option-keys";
+import { loadOptions } from "./options";
 import { priceRecordStatement } from "./prices";
 
 export const assemblyInput = z.object({
@@ -108,9 +110,9 @@ export function setProductionStatement(db: Db, assemblyId: number, p: Production
 export const DEFAULT_CODE = "std";
 export const DEFAULT_REVISION = "Rev1";
 
-/** Loads every part, assembly, line and machine type into memory (the catalogue is small). */
+/** Loads every part (with its options), assembly, line and machine type into memory (the catalogue is small). */
 export async function loadGraph(db: Db): Promise<AssemblyGraph> {
-	const [p, b, l, m] = await Promise.all([
+	const [p, b, l, m, options] = await Promise.all([
 		db
 			.select({
 				id: parts.id,
@@ -143,13 +145,21 @@ export async function loadGraph(db: Db): Promise<AssemblyGraph> {
 				qtyMilli: assemblyLines.qtyMilli,
 				position: assemblyLines.position,
 				notes: assemblyLines.notes,
+				fixed: assemblyLines.fixedOptionValues,
+				chosen: assemblyLines.chosenOptionIds,
 			})
 			.from(assemblyLines),
 		db
 			.select({ id: machineTypes.id, name: machineTypes.name, rateCents: machineTypes.hourlyRateCents })
 			.from(machineTypes),
+		loadOptions(db),
 	]);
-	return buildGraph(p, b, l, m);
+	return buildGraph(
+		p.map((part) => ({ ...part, options: options.get(part.id) ?? [] })),
+		b,
+		l.map(({ fixed, chosen, ...line }) => ({ ...line, fixedValueIds: idsOf(fixed), chosenOptionIds: idsOf(chosen) })),
+		m,
+	);
 }
 
 export type AssemblyFilters = { q?: string; status?: string; partId?: number | null };
@@ -205,6 +215,8 @@ export async function getAssemblyLines(db: Db, assemblyId: number) {
 			qtyMilli: assemblyLines.qtyMilli,
 			position: assemblyLines.position,
 			notes: assemblyLines.notes,
+			fixedOptionValues: assemblyLines.fixedOptionValues,
+			chosenOptionIds: assemblyLines.chosenOptionIds,
 			partId: parts.id,
 			ref: parts.ref,
 			name: parts.name,
@@ -484,7 +496,8 @@ export function createAssemblyStatements(
 		// INSERT ... SELECT over every column of assembly_lines, in table order (id is assigned).
 		stmts.push(
 			db.insert(assemblyLines).select(sql`
-				SELECT NULL, ${created}, component_part_id, qty_milli, position, notes, ${now}, ${now}, ${user}, ${user}
+				SELECT NULL, ${created}, component_part_id, qty_milli, position, notes, ${now}, ${now}, ${user}, ${user},
+					fixed_option_values, chosen_option_ids
 				FROM assembly_lines WHERE assembly_id = ${sourceAssemblyId}`),
 			// The files go with the revision they describe: same objects, only the rows are copied (D164).
 			copyFilesStatement(db, b, sourceAssemblyId, user, now),
@@ -539,6 +552,48 @@ export function updateAssemblyLineQtyStatements(
 	];
 }
 
+/** A line's rule for each option of its component (D171): fixed value ids, chosen option ids; the rest follows. */
+export type LineOptions = { fixedValueIds: number[]; chosenOptionIds: number[] };
+
+/** The stored form of a line's option rule (null columns when every option follows). */
+export const lineOptionColumns = (o: LineOptions | undefined) => ({
+	fixedOptionValues: keyOf(o?.fixedValueIds ?? []),
+	chosenOptionIds: keyOf(o?.chosenOptionIds ?? []),
+});
+
+/**
+ * Reads a line's option rules from form fields `rule:<optionId>`: "" follows the build, "*" is chosen when a build is
+ * planned, a value id is that value always. Unknown values follow.
+ */
+export function readLineOptions(options: OptionDef[], form: Record<string, unknown>): LineOptions {
+	const fixedValueIds: number[] = [];
+	const chosenOptionIds: number[] = [];
+	for (const o of options) {
+		const raw = form[`rule:${o.id}`];
+		const v = typeof raw === "string" ? raw : "";
+		if (v === "*") chosenOptionIds.push(o.id);
+		else if (o.values.some((x) => String(x.id) === v)) fixedValueIds.push(Number(v));
+	}
+	return { fixedValueIds, chosenOptionIds };
+}
+
+export function updateAssemblyLineOptionsStatements(
+	db: Db,
+	assemblyId: number,
+	lineId: number,
+	options: LineOptions,
+	user: string,
+	now: string,
+): Statement[] {
+	return [
+		db
+			.update(assemblyLines)
+			.set({ ...lineOptionColumns(options), updatedAt: now, updatedBy: user })
+			.where(and(eq(assemblyLines.id, lineId), eq(assemblyLines.assemblyId, assemblyId))),
+		touchAssemblyStatement(db, assemblyId, user, now),
+	];
+}
+
 export function deleteAssemblyLineStatements(
 	db: Db,
 	assemblyId: number,
@@ -559,7 +614,7 @@ export function deleteAssemblyLineStatements(
 export function replaceAssemblyLinesStatements(
 	db: Db,
 	assembly: number | { parentPartId: number; code: string; revision: string },
-	lines: { componentPartId: number; qtyMilli: number; notes: string }[],
+	lines: { componentPartId: number; qtyMilli: number; notes: string; options?: LineOptions }[],
 	user: string,
 	now: string,
 ): Statement[] {
@@ -575,6 +630,7 @@ export function replaceAssemblyLinesStatements(
 				componentPartId: l.componentPartId,
 				qtyMilli: l.qtyMilli,
 				notes: l.notes,
+				...lineOptionColumns(l.options),
 				position: i + 1,
 				createdBy: user,
 				updatedBy: user,
