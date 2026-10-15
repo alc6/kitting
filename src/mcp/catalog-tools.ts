@@ -26,6 +26,7 @@ import {
 	setAssemblyStatusStatement,
 	setProductionStatement,
 } from "../domain/assemblies";
+import { copyFilesStatement } from "../domain/files";
 import { findMachineTypeByName, machineTypeOptions } from "../domain/machines";
 import { getOffer } from "../domain/offers";
 import { archivePartStatement, checkPart, getPart, partToForm, savePartStatements } from "../domain/parts";
@@ -398,6 +399,8 @@ const setAssemblyLines = tool({
 						ctx.user,
 						stamp,
 					),
+					// The lines are new, the files are those of the revision it replaces (D164).
+					copyFilesStatement(ctx.db, target, assembly.id, ctx.user, stamp),
 					...replaceAssemblyLinesStatements(ctx.db, target, lines, ctx.user, stamp),
 				],
 			);

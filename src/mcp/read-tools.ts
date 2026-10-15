@@ -1,6 +1,6 @@
 // The read-only MCP tools (D119): catalogue, stock, builds and purchasing, over the existing domain queries.
 import { z } from "zod";
-import { BUILD_STATUSES, MOVE_REASONS, PART_KINDS, PO_STATUSES } from "../db/schema";
+import { BUILD_STATUSES, type FileRow, MOVE_REASONS, PART_KINDS, PO_STATUSES } from "../db/schema";
 import { loadGraph, partAssemblySummary, whereUsed } from "../domain/assemblies";
 import { CostCalculator, centsOf, type ExplodedNode, explode, type MachineNeed } from "../domain/assembly-graph";
 import {
@@ -11,6 +11,7 @@ import {
 	makeNodes,
 	serialCount,
 } from "../domain/builds";
+import { assemblyFiles, partFiles } from "../domain/files";
 import { listMachines, listMachineTypes } from "../domain/machines";
 import { partOffers } from "../domain/offers";
 import { listParts, onHandMap, onHandOf } from "../domain/parts";
@@ -35,6 +36,25 @@ import {
 
 // ---------------------------------------------------------------------------
 // catalog:read
+
+/**
+ * Attached files (D165): what they are, and where the user downloads them in the app (behind Access, so the link
+ * is for the person, not for the assistant). Uploading or changing files is not available over MCP.
+ */
+function filesView(files: FileRow[], origin: string, attachedTo?: "assembly" | "part") {
+	return files.map((f) => ({
+		name: f.name,
+		kind: f.kind,
+		format: f.format,
+		sizeBytes: f.sizeBytes,
+		uploadedAt: f.uploadedAt,
+		uploadedBy: f.uploadedBy,
+		note: f.note || undefined,
+		attachedTo,
+		downloadPath: `/files/${f.id}/download`,
+		downloadUrl: `${origin}/files/${f.id}/download`,
+	}));
+}
 
 /** Machine time of an explosion, with its cost (D148). */
 function machineTimeView(needs: MachineNeed[], calc: CostCalculator) {
@@ -85,16 +105,17 @@ const getPartTool = tool({
 	name: "get_part",
 	title: "Part details",
 	description:
-		"One part: details, standard cost and selling price, supplier offers (preferred first), on-hand quantity, its assemblies with their unit cost, and where it is used (directly or through sub-assemblies).",
+		"One part: details, standard cost and selling price, supplier offers (preferred first), on-hand quantity, its assemblies with their unit cost, where it is used (directly or through sub-assemblies), and its own files (drawings, datasheets…; a revision's files are in get_assembly).",
 	rule: { scope: "catalog:read" },
 	input: z.object({ ref: partRef }),
-	run: async (a, { db }) => {
+	run: async (a, { db, origin }) => {
 		const part = await partByRef(db, a.ref);
-		const [onHand, summary, used, offers] = await Promise.all([
+		const [onHand, summary, used, offers, files] = await Promise.all([
 			onHandOf(db, part.id),
 			partAssemblySummary(db, part.id),
 			whereUsed(db, part.id),
 			partOffers(db, part.id),
+			partFiles(db, part.id),
 		]);
 		const ref = (id: number) => summary.refs.get(id) ?? String(id);
 		return {
@@ -148,6 +169,7 @@ const getPartTool = tool({
 				qtyPerParentMilli: w.qtyMilli,
 				batchMilli: w.batchMilli,
 			})),
+			files: filesView(files, origin),
 		};
 	},
 });
@@ -175,10 +197,10 @@ const getAssemblyTool = tool({
 	name: "get_assembly",
 	title: "Assembly tree",
 	description:
-		"The full structure of an assembly as a tree: per line the quantity per parent (per_parent: per batch of the parent when it makes batches, parent_batch units at a time) and the cumulative quantity for the requested quantity (qty), with unit and extended costs and the cost roll-up per unit. Sub-assemblies (make) and kits are expanded through their active assemblies.",
+		"The full structure of an assembly as a tree: per line the quantity per parent (per_parent: per batch of the parent when it makes batches, parent_batch units at a time) and the cumulative quantity for the requested quantity (qty), with unit and extended costs and the cost roll-up per unit. Sub-assemblies (make) and kits are expanded through their active assemblies. Also the files of this revision (print files, assembly instructions…).",
 	rule: { scope: "catalog:read" },
 	input: z.object({ ...assemblySelector, qty: quantity.optional().describe('How many to build (default "1").') }),
-	run: async (a, { db }) => {
+	run: async (a, { db, origin }) => {
 		const graph = await loadGraph(db);
 		const { assembly, part } = await resolveAssembly(db, graph, a);
 		const qty = a.qty ?? MILLI;
@@ -210,6 +232,7 @@ const getAssemblyTool = tool({
 			},
 			lines: ex.tree.map((n) => treeNode(n, calc)),
 			machineTime: machineTimeView(ex.machines, calc),
+			files: filesView(await assemblyFiles(db, assembly.id), origin),
 		};
 	},
 });
@@ -426,11 +449,13 @@ const getBuildTool = tool({
 	name: "get_build",
 	title: "Build details",
 	description:
-		"One build by number (e.g. B-0001). A done build returns its as-built record (consumed components with serials and frozen unit costs, and which build made each serial sub-assembly). An open build returns its pick list from current stock: components, shortfalls, serials to scan, sub-assemblies taken from stock or built, and problems blocking completion.",
+		"One build by number (e.g. B-0001). A done build returns its as-built record (consumed components with serials and frozen unit costs, and which build made each serial sub-assembly). An open build returns its pick list from current stock: components, shortfalls, serials to scan, sub-assemblies taken from stock or built, and problems blocking completion. Every build lists the files to make it: its assembly revision's, then the part's own.",
 	rule: { scope: "builds:read" },
 	input: z.object({ number: z.string().trim().min(1).max(32).describe('The build number, e.g. "B-0001".') }),
-	run: async (a, { db }) => {
+	run: async (a, { db, origin }) => {
 		const { build, part, assembly } = await buildByNumber(db, a.number);
+		const [revisionFiles, ownFiles] = await Promise.all([assemblyFiles(db, assembly.id), partFiles(db, part.id)]);
+		const files = [...filesView(revisionFiles, origin, "assembly"), ...filesView(ownFiles, origin, "part")];
 		const header = {
 			number: build.number,
 			status: build.status,
@@ -471,9 +496,10 @@ const getBuildTool = tool({
 				machineTime,
 				totalCostCents: total,
 				costIncomplete: !known,
+				files,
 			};
 		}
-		if (build.status === "cancelled") return { build: header };
+		if (build.status === "cancelled") return { build: header, files };
 		const [graph, onHand] = await Promise.all([loadGraph(db), onHandAt(db)]);
 		const pick = exploding(() => buildPickList(graph, onHand, build, part, {}, false));
 		return {
@@ -503,6 +529,7 @@ const getBuildTool = tool({
 			fees: pick.explosion.fees.map((f) => ({ ref: f.part.ref, name: f.part.name, qtyMilli: f.qtyMilli })),
 			machineTime: machineTimeView(pick.explosion.machines, new CostCalculator(graph)),
 			problems: pick.problems.map((p) => ({ problem: p.key, ...p.vars })),
+			files,
 		};
 	},
 });

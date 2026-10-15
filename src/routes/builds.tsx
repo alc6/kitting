@@ -32,6 +32,7 @@ import {
 	unitsToBuild,
 	updateBuildStatement,
 } from "../domain/builds";
+import { assemblyFiles, filesBucket, partFiles } from "../domain/files";
 import { buildActualCost, marginOf, salePriceOf } from "../domain/margins";
 import { can } from "../domain/permissions";
 import { computeShortages, type ToMakeLine } from "../domain/purchasing";
@@ -54,6 +55,7 @@ import { type FieldErrors, validate } from "../lib/validation";
 import { forbidden, requirePermission } from "../middleware/roles";
 import type { AppEnv } from "../types";
 import { useApp } from "../views/context";
+import { BuildFilesCard } from "../views/files";
 import { Icon, icons } from "../views/icons";
 import { Duration, MachineLoadCard, MachineTimeCard } from "../views/machines";
 import { idParam, notFound, nowIso, page, redirectOk, saveChanges, translateErrors } from "../views/render";
@@ -1446,6 +1448,8 @@ async function renderBuild(
 			</>
 		);
 	}
+	// What the person building needs to open: the revision's files, then the part's own (D159).
+	const [revisionFiles, ownFiles] = await Promise.all([assemblyFiles(db, data.assembly.id), partFiles(db, part.id)]);
 	return page(
 		c,
 		`${build.number} · ${part.ref}`,
@@ -1457,7 +1461,15 @@ async function renderBuild(
 			<div class={cn("mb-6 grid grid-cols-2 gap-3 md:grid-cols-4", build.status === "done" && "md:grid-cols-3")}>
 				{stats}
 			</div>
-			<div class="flex flex-col gap-6">{body}</div>
+			<div class="flex flex-col gap-6">
+				<BuildFilesCard
+					revision={`${data.assembly.code} ${data.assembly.revision}`}
+					assemblyFiles={revisionFiles}
+					partFiles={ownFiles}
+					enabled={filesBucket(c.env) !== null}
+				/>
+				{body}
+			</div>
 		</>,
 		opts.status ?? 200,
 	);

@@ -42,6 +42,7 @@ import {
 	explode,
 	walkTree,
 } from "../domain/assembly-graph";
+import { assemblyFiles, filesBucket } from "../domain/files";
 import { type Margin, marginOf, salePriceOf } from "../domain/margins";
 import { onHandMap, partOptions } from "../domain/parts";
 import { can } from "../domain/permissions";
@@ -67,6 +68,7 @@ import type { AppEnv } from "../types";
 import { CostView, missingNames, StatusBadge } from "../views/assembly";
 import { AssemblyDiagram, type DiagramView, diagramTree, treeDepth } from "../views/assembly-diagram";
 import { useApp } from "../views/context";
+import { FilesCard } from "../views/files";
 import { Icon, type IconNode, icons } from "../views/icons";
 import { Duration, MachineTimeCard, type MachineTimeRow } from "../views/machines";
 import { PartPicker, PartPickerDialog, PartSelectPicker } from "../views/part-picker";
@@ -1010,7 +1012,7 @@ async function renderEditor(
 	const { price, production } = side;
 	const db = c.var.db;
 	const { assembly, part } = data;
-	const [lines, graph, options, siblings] = await Promise.all([
+	const [lines, graph, options, siblings, files] = await Promise.all([
 		getAssemblyLines(db, assembly.id),
 		loadGraph(db),
 		partOptions(db),
@@ -1019,6 +1021,7 @@ async function renderEditor(
 			.from(assemblies)
 			.where(eq(assemblies.parentPartId, part.id))
 			.orderBy(asc(assemblies.code), asc(assemblies.revision)),
+		assemblyFiles(db, assembly.id),
 	]);
 	const calc = new CostCalculator(graph);
 	const costs = new Map(lines.map((l) => [l.partId, calc.part(l.partId)]));
@@ -1066,6 +1069,16 @@ async function renderEditor(
 				values={form.values}
 				errors={translateErrors(c, form.errors, form.vars)}
 			/>
+			{files.length > 0 || can(c.var, "files.edit") ? (
+				<div class="mt-6">
+					<FilesCard
+						files={files}
+						uploadAction={`/assemblies/${assembly.id}/files`}
+						enabled={filesBucket(c.env) !== null}
+						editable={assembly.status !== "archived"}
+					/>
+				</div>
+			) : null}
 			<div class="mt-6 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
 				<SalePriceCard
 					assembly={assembly}

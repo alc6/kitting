@@ -204,6 +204,41 @@
 		}
 	});
 
+	// <input type="file" data-max-bytes data-too-large>: a file over the server's limit (D161) is refused before a long
+	// upload starts, with the server's own message.
+	document.addEventListener("change", (event) => {
+		const input = event.target;
+		if (!(input instanceof HTMLInputElement) || input.dataset.maxBytes === undefined) return;
+		const file = input.files?.[0];
+		const tooLarge = file !== undefined && file.size > Number(input.dataset.maxBytes);
+		input.setCustomValidity(tooLarge ? (input.dataset.tooLarge ?? "") : "");
+		if (tooLarge) input.reportValidity();
+	});
+
+	// <form data-upload-form data-busy="Uploading…">: a large file takes a while on the workshop's Wi-Fi, so the
+	// button says so and cannot send it twice.
+	const busyButtons = [];
+	document.addEventListener("submit", (event) => {
+		const form = event.target;
+		if (event.defaultPrevented || !(form instanceof HTMLFormElement) || form.dataset.uploadForm === undefined) return;
+		const button = form.querySelector("button:not([type]), button[type='submit']");
+		if (!button) return;
+		const label = [...button.childNodes].find((n) => n.nodeType === Node.TEXT_NODE && n.textContent?.trim());
+		busyButtons.push({ button, label, text: label?.textContent ?? "" });
+		if (label && form.dataset.busy) label.textContent = form.dataset.busy;
+		// Disabled after the event, so the submission it started goes on.
+		setTimeout(() => {
+			button.disabled = true;
+		});
+	});
+	// Back from the next page (bfcache): the buttons work again.
+	window.addEventListener("pageshow", () => {
+		for (const { button, label, text } of busyButtons.splice(0)) {
+			button.disabled = false;
+			if (label) label.textContent = text;
+		}
+	});
+
 	// Part picker (D138): a field with a hidden [data-picker-open] "Browse" button and a <dialog data-part-picker>
 	// next to its form. Where <dialog> works, the button appears and the datalist is dropped (it would fight the
 	// dialog); results are loaded by htmx from /parts/pick. A [data-pick] result writes its reference into the field

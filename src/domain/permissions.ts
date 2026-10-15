@@ -24,6 +24,9 @@ export const PERMISSIONS = {
 	"prices.edit": { min: "planner" },
 	// Machine types (with their hourly rate) and machines, retiring included (D147).
 	"machines.edit": { min: "planner" },
+	// Files of parts and assembly revisions: attach, rename, replace, remove (D165). Removing only detaches the file
+	// (its object stays and the undo brings it back), so it is not an admin delete.
+	"files.edit": { min: "planner" },
 	// Deleting a wrong row of a price history that is not the current price (D143).
 	"prices.delete": { min: "admin" },
 	// Shop floor
@@ -65,6 +68,7 @@ export const PERMISSION_GROUPS = [
 	{ key: "assemblies", actions: ["assemblies.edit", "assemblies.archive", "assemblies.delete"] },
 	{ key: "suppliers", actions: ["suppliers.edit", "suppliers.delete"] },
 	{ key: "machines", actions: ["machines.edit"] },
+	{ key: "files", actions: ["files.edit"] },
 	{ key: "costs", actions: ["costs.view", "prices.edit", "prices.delete"] },
 	{ key: "builds", actions: ["builds.plan", "builds.complete"] },
 	{ key: "stock", actions: ["stock.adjust", "stock.count"] },
