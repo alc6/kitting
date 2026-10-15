@@ -50,17 +50,17 @@ Find parts by reference, name or any supplier's reference. Use it before relying
 - **Example:** `search_parts({ "query": "felt" })`
 
 ### `get_part`
-One part in full: details, prices, supplier offers (preferred first), on hand, its assemblies with unit cost, and where it is used.
+One part in full: details, prices, supplier offers (preferred first), on hand, its assemblies with unit cost, where it is used, and its own files.
 - **Scope:** `catalog:read` · **Permission:** none
 - **Inputs:** `ref` (part reference).
-- **Returns:** `part` (`ref`, `name`, `kind`, `unit`, `track_serial`, `archived`, `notes`, `on_hand`, `standard_cost`, `sale_price`), `offers[]` (`supplier`, `preferred`, `supplier_ref`, `price`, `moq`, `pack_size`, `lead_days`), `assemblies[]` (`assembly_id`, `code`, `revision`, `status`, `batch`, `unit_cost`, `cost_incomplete`, `sale_price`), `rolled_up_cost`, `where_used[]` (`parent`, `assembly_id`, `code`, `revision`, `status`, `depth`, `via`, `qty_per_parent` for one batch of `batch` units of the parent).
+- **Returns:** `part` (`ref`, `name`, `kind`, `unit`, `track_serial`, `archived`, `notes`, `on_hand`, `standard_cost`, `sale_price`), `offers[]` (`supplier`, `preferred`, `supplier_ref`, `price`, `moq`, `pack_size`, `lead_days`), `assemblies[]` (`assembly_id`, `code`, `revision`, `status`, `batch`, `unit_cost`, `cost_incomplete`, `sale_price`), `rolled_up_cost`, `where_used[]` (`parent`, `assembly_id`, `code`, `revision`, `status`, `depth`, `via`, `qty_per_parent` for one batch of `batch` units of the parent), `files[]` attached to the part whatever its assembly (`name`, `kind`: cad, print, drawing, instructions, datasheet or other, `format`, `size_bytes`, `uploaded_at`, `uploaded_by`, `note`, `download_path`, `download_url`).
 - **Example:** `get_part({ "ref": "PAD-FELT" })`
 
 ### `get_assembly`
 The structure of an assembly as a tree with cost roll-up. Kits and sub-assemblies are expanded through their active assemblies.
 - **Scope:** `catalog:read` · **Permission:** none
 - **Inputs:** `assembly`, `code`, `revision` (selector), `qty` (how many to build, default 1).
-- **Returns:** `assembly` (`assembly_id`, `part`, `code`, `revision`, `status`, `batch`, `machine_type`, `machine_minutes` per batch), `qty`, `cost` (`unit_cost`, `total_cost`, `incomplete`, `missing_costs` with machine types without a rate), `machine_time[]` for `qty`, `lines[]` as a tree: `ref`, `kind`, `per_parent` (per batch of the parent; `parent_batch` gives its size when it is not 1), `qty` (cumulative), `mode`, `unit_cost`, `extended_cost`, `cost_incomplete`, `children`.
+- **Returns:** `assembly` (`assembly_id`, `part`, `code`, `revision`, `status`, `batch`, `machine_type`, `machine_minutes` per batch), `qty`, `cost` (`unit_cost`, `total_cost`, `incomplete`, `missing_costs` with machine types without a rate), `machine_time[]` for `qty`, `lines[]` as a tree: `ref`, `kind`, `per_parent` (per batch of the parent; `parent_batch` gives its size when it is not 1), `qty` (cumulative), `mode`, `unit_cost`, `extended_cost`, `cost_incomplete`, `children`; `files[]` of this revision (print files, assembly instructions; same fields as in `get_part`).
 - **Example:** `get_assembly({ "assembly": "LAMP-DESK", "code": "warm", "qty": 3 })`
 
 ### `explode_assembly`
@@ -113,7 +113,7 @@ Builds (production orders), newest first. The query also matches the serials of 
 One build. Done: the as-built record. Open: the pick list from current stock.
 - **Scope:** `builds:read` · **Permission:** none
 - **Inputs:** `number` (e.g. `B-0001`).
-- **Returns:** `build` (`number`, `status`, `part`, `qty`, `serial`, `assembly`, `planned_for`, `done_at`). Done: `as_built[]` (`ref`, `qty`, `serial`, `unit_cost` frozen, `made_by_build`), `machine_time[]` recorded at completion with its rate, `total_cost`. Open: `pick_list[]` (`ref`, `qty`, `on_hand`, `short`, `serials_to_scan` count to give), `sub_assemblies[]` (`ref`, `path`, `qty`, `from_stock`, `to_build`), `fees`, `machine_time[]`, `problems` (what blocks completion).
+- **Returns:** `build` (`number`, `status`, `part`, `qty`, `serial`, `assembly`, `planned_for`, `done_at`). Done: `as_built[]` (`ref`, `qty`, `serial`, `unit_cost` frozen, `made_by_build`), `machine_time[]` recorded at completion with its rate, `total_cost`. Open: `pick_list[]` (`ref`, `qty`, `on_hand`, `short`, `serials_to_scan` count to give), `sub_assemblies[]` (`ref`, `path`, `qty`, `from_stock`, `to_build`), `fees`, `machine_time[]`, `problems` (what blocks completion). Always: `files[]` to make it, those of its assembly revision then the part's own (`attached_to`: assembly or part; same fields as in `get_part`).
 - **Example:** `get_build({ "number": "B-0001" })`
 
 ## Reading: `purchasing:read`

@@ -8,7 +8,7 @@ Cloudflare Access decides who can sign in. Kitting decides what each person can 
 | --- | --- |
 | Viewer | See everything, change nothing. |
 | Operator | Shop-floor work: run builds, adjust and count stock, receive deliveries. |
-| Planner | Office work as well: edit parts, assemblies, suppliers, machines, offers, prices and purchase orders, export data and preview imports. |
+| Planner | Office work as well: edit parts, assemblies, files, suppliers, machines, offers, prices and purchase orders, export data and preview imports. |
 | Administrator | Everything: confirm imports, delete and archive, restore backups, manage users. |
 
 The people listed in `ADMIN_EMAILS` are always administrators. They give everyone else a role on the **Users**
@@ -41,6 +41,8 @@ it came from (a page, an import, an undo or an AI assistant), and each record it
   either: the price history is a log that is never edited. An administrator can delete a wrong row with the bin
   button on the part's price history, except the current price of its series (change that one on the part's
   form). The deletion is recorded in Recent changes and can't be undone either.
+- Removing a file from a part or an assembly revision can be undone: the file itself stays in storage, and the undo
+  attaches it again. So can replacing one, which brings the previous file back.
 - To undo a change, you need the right to make every edit it contains. An operator can undo a planned build but
   not a part edit, and only an administrator can undo archiving a part.
 
@@ -61,9 +63,12 @@ history included, in one JSON file. It can be restored on the same deployment or
 version of Kitting. A preview shows what the file contains, then everything is replaced in one transaction. A
 restore appears in Recent changes and can't be undone, except by restoring another backup.
 
-Product photos aren't in that file, only which photo each part uses. The photos stay in the R2 bucket; copy it
-with any S3-compatible tool if you want an offsite copy. If a photo was replaced or removed after the backup,
-the restored part has no photo.
+Product photos and attached files aren't in that file, only which photo each part uses and the list of files (name,
+kind, size, who uploaded them, where they are stored). Their content stays in the R2 bucket, under `parts/` for
+photos and `files/` for files; copy the bucket with any S3-compatible tool if you want an offsite copy. Restored on
+another deployment without that copy, the files are listed but their downloads say the file is missing from storage.
+If a photo was replaced or removed after the backup, the restored part has no photo; removed and replaced files are
+kept in the bucket, so the files of a restored backup are still there.
 
 D1 also keeps 30 days of point-in-time history (Time Travel), and wrangler can export the database as SQL:
 

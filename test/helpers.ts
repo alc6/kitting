@@ -30,6 +30,7 @@ const TABLES = [
 	"purchase_orders",
 	"stock_moves",
 	"price_history",
+	"files",
 	"part_suppliers",
 	"assembly_lines",
 	"assemblies",

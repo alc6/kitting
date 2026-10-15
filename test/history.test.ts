@@ -170,6 +170,16 @@ const CASES: Record<string, { insert: (f: Fixtures) => D1PreparedStatement; upda
 			),
 		update: "UPDATE machines SET status = 'maintenance' WHERE id = ?",
 	},
+	files: {
+		insert: (f) =>
+			stmt(
+				`INSERT INTO files (part_id, name, kind, format, size_bytes, sha256, object_key, uploaded_at, uploaded_by,
+					created_by, updated_by) VALUES (?, 'bolt.step', 'cad', 'step', 120, 'ab12', 'files/k', '2026-01-01', 'u', 'u', 'u')
+					RETURNING id`,
+				f.buy,
+			),
+		update: "UPDATE files SET name = 'BOLT M4.step', kind = 'drawing' WHERE id = ?",
+	},
 };
 
 const TRACKED = HISTORY_TABLES.map((t) => getTableName(t));

@@ -955,6 +955,103 @@ change (no migration).
   **Completed** or **Planned** / *Terminée* ou *Planifiée*; the Builds page lists **Production requirements** /
   *Besoins de fabrication* (Required, Available, Required by; Plan build, Record), next to **Purchase requirements**;
   a machine type asks for the **Number of machines**. Keys and behaviour are unchanged.
+
+## Files
+
+A part could carry one photo. The workshop also needs the files its parts and assemblies are made from: STEP models
+and PDF drawings sent to suppliers, 3MF plates printed in-house, PDF assembly guides, datasheets of bought parts. They
+lived in folders and chat threads, and nobody knew which version went with which part or revision. D159–D165 attach
+them to parts and to assembly revisions.
+
+- **D159. Files belong to a part or to one assembly revision.** `files` (migration 0008, a new table only) has one row
+  per attachment: `part_id` or `assembly_id` (a CHECK allows exactly one), `name`, `kind`, `format`, `size_bytes`,
+  `sha256`, `object_key`, `note`, `uploaded_at`, `uploaded_by` and the audit columns. A part's own files hold whatever
+  its recipe (a bought part's drawing or datasheet); a revision's files describe that recipe (the 3MF of a plate, the
+  assembly guide), so Rev2 of a printed part can have a new 3MF while Rev1 keeps its own. The **kind** is what the file
+  is for, chosen by people: CAD model, print file, drawing, instructions, datasheet, other; the upload form defaults to
+  "Automatic" (STEP → CAD model, 3MF/STL → print file, PDF/DXF → drawing, images → other), changed on the file's page.
+  The **format** is what the file is, detected (D162); content type and extension are derived from it in code, never
+  stored as text a client sent. `uploaded_at`/`uploaded_by` are the upload itself: a copy into a new revision keeps
+  them (its audit columns say who attached it there), a replacement resets them. Files of an archived revision are
+  read-only, like its lines (`assembly_archived`, repeated in the statements' WHERE: a revision archived while a file
+  uploads gets nothing attached, and the page says why rather than "Saved"). Both owner keys cascade: deleting
+  a part or an assembly (admin) deletes its file rows in the same change set, logged, so its undo brings them back.
+  The table is tracked (`HISTORY_TABLES`, triggers, `TABLE_ACTIONS.files = files.edit`, History tabs of parts and
+  assemblies); kinds and formats have CHECKs, which a later value would change by rebuilding this leaf table (as D108).
+- **D160. One bucket, random immutable keys, objects never deleted by the app.** Files go in the optional `IMAGES` bucket
+  under `files/`, so a deployment with photos has files with no new binding, setting or Terraform change, and one
+  without has neither (every file control is hidden, existing rows are listed without links). Keys are
+  `files/<uuid>`: a streamed upload (D161) must name its R2 multipart upload before the content is known, so the key
+  cannot be the content's hash as for photos (D100); it is still never reused for other content. The SHA-256 is
+  recorded instead, and an upload whose content is already stored (same hash, an object of the same size) points at
+  that object and aborts its own. New revisions copy file rows, not objects (D164), so one object can serve several rows:
+  **removing a file only deletes its row**, the object stays, and undoing the removal re-attaches it (change sets
+  touching files stay revertible, unlike photos, D111). Replacing a file points its row at a new object; the old one
+  stays for the undo. Unreferenced objects (removed files, aborted attempts that reached R2) are not purged yet: a
+  purge of objects no row references, photos included, is in "After v1". The JSON backup holds the rows, not the
+  objects (docs/administration.md).
+- **D161. Uploads are streamed, up to 100 MB.** `request.formData()` holds the whole body in memory, briefly about
+  twice, and a Worker isolate has 128 MB for every request it serves: a 100 MB file would not fit. `src/lib/multipart.ts`
+  reads `multipart/form-data` as a stream (no dependency): `next()` moves to the next part, `text(max)` reads a field,
+  `body()` yields a file's bytes as they arrive, holding one chunk plus the delimiter's length. The delimiter is found
+  with the native `indexOf` of its first byte; headers are at most 8 KB a part, fields 16 KB, 20 parts, and the whole
+  body is counted, so a body without Content-Length is cut off at the limit too. Filenames are UTF-8 with the HTML form
+  escapes (`%22`, `%0D`, `%0A`), `filename*` accepted, paths dropped. `storeFile()` hashes the stream (native
+  `DigestStream`), keeps its first 64 KiB and last 66 KiB for detection and sends it in 5 MiB parts (R2's minimum; it
+  wants equal parts but the last) to an R2 multipart upload, which is not an object until completed: a refused file,
+  or a body that fails half way, is aborted. Each part goes through a `FixedLengthStream` made of the chunks received,
+  never a second copy, so an upload holds about one part: several at once fit in an isolate. A file smaller than one
+  part is written only once recognised. The limit, `MAX_FILE_BYTES` = 100 MB, is checked on the
+  Content-Length before the body is read (with 64 KiB of room for the form), then while reading; `app.js` checks the
+  chosen file's size first, so a too large file never starts a long upload, and shows "Uploading…" on the button. 100
+  MB is also Cloudflare's request limit on the Free and Pro plans, so a file within a few hundred bytes of it gets
+  Cloudflare's 413 page rather than Kitting's message. Hashing and reading 100 MB take a few hundred milliseconds of
+  CPU: nothing on Workers Paid (30 s), but over the 10 ms of Workers Free, where a large upload may fail with error 1102
+  (docs/deploy.md). Rejected: buffering like photos (memory caps it near 25 MB), uploads straight to R2 from the
+  browser (S3 credentials in the Worker, CORS, and no plain form), a multipart package (a dependency for 200 lines).
+  The upload form puts the file last and has no `accept` attribute: iPadOS greys out extensions it does not know
+  (.step, .3mf), and the server checks the content anyway.
+- **D162. Formats are recognised from their content.** `detectFormat(head, tail, size)` (`src/domain/file-types.ts`):
+  PDF (`%PDF-` in the first 1024 bytes), JPEG/PNG/WebP (`sniffImage`, D100), STEP (`ISO-10303-21;` after an optional
+  BOM and blanks), 3MF (a ZIP whose central directory, read from the tail, ZIP64 included, lists `3D/3dmodel.model`;
+  a directory larger than the tail is refused), binary STL (`84 + 50 × triangles` equals the size, checked before ASCII
+  since some exporters start a binary header with `solid`), ASCII STL (`solid`, no NUL, and `facet` or `endsolid`),
+  DXF (group code `0` then `SECTION`, after optional `999` comments, or the binary DXF sentinel), PDF last, since its
+  marker may follow a few bytes and a text format may quote it. Anything else is refused (`file_type`), whatever its
+  name: SVG, HTML, scripts, GIF, other ZIPs.
+- **D163. Downloads are attachments; only PDFs and images open inline.** `/files/:id/download` answers with the format's
+  content type (`model/step`, `model/3mf`, `model/stl`, `application/pdf`, `image/vnd.dxf`…), `Content-Length`,
+  `Content-Disposition: attachment` with an ASCII `filename` and an RFC 5987 `filename*` (the name, plus the format's
+  extension when it has none of its own), `X-Content-Type-Options: nosniff`, `Cache-Control: private, no-cache` with an
+  ETag naming the object and the row's last change (a rename changes the download name; 304 on match), and `Content-Security-Policy: default-src 'none'; sandbox`. `/files/:id/open`
+  is inline for PDFs and images only (other formats redirect to the download), under `default-src 'none'; img-src
+  'self'; object-src 'self'; frame-ancestors 'none'`: Chromium's PDF viewer needs `object-src` and no `sandbox`. The
+  security middleware now keeps a policy a handler set (only these two routes do), as it keeps their Cache-Control. A
+  row whose object is gone answers a 404 page saying so.
+- **D164. New revisions copy their source's files by reference.** `copyFilesStatement()` inserts, in the batch that
+  creates the revision, a copy of each row of the source revision (same object, name, kind, note and upload date and
+  author), found by the new revision's (part, code, revision), and only from an assembly of the same part: a new
+  assembly copied from another part's takes its lines, not that part's guide or print file. `createAssemblyStatements` calls it whenever there is a
+  source: New revision, Copy as new variant, and over MCP `new_assembly_revision`, `create_assembly` with `copy_from`
+  and `set_assembly_production` on an active assembly; `set_assembly_lines`, which creates its revision without a
+  source (D128: new lines), calls it explicitly, as the files still describe the part. Only the files that change are
+  then replaced on the new revision. A revision created by `assemblies.csv` starts without files (the file says
+  nothing about them). Build pages, planned, in progress, done and the "Record a finished build" result alike, list
+  the files of the revision being built then the part's own, as downloads, above the pick list (outside `#picklist`,
+  which htmx swaps).
+- **D165. Planners manage files; assistants only read them.** One new action, `files.edit` (planner, its own group on
+  the Users matrix): attach, rename, change the kind or note, replace, remove. Removing is not an admin delete: it
+  detaches an undoable row and destroys nothing (D160), and designers swap files on new revisions as part of their
+  work. Downloads need no permission, like every page. Over MCP, `get_part` lists the part's own files, `get_assembly`
+  the revision's, `get_build` both (`attached_to`), with `name`, `kind`, `format`, `size_bytes`, `uploaded_at`,
+  `uploaded_by`, `note`, `download_path` and `download_url` (behind Access: a link for the person). `files.edit` is in
+  `NEVER_OVER_MCP`: uploads and their edits stay in the app, like photo uploads.
+
+## Variant prices across revisions
+
+A variant's own selling price is stored on each revision, and Margins lists active variants only: a new
+revision that started without the price made the product disappear from Margins once activated. D166 keeps it.
+
 - **D166. A new revision keeps the variant's selling price; a new variant does not** (amends D146). A variant's own
   price (`assemblies.sale_price_cents`, D93) is stored on each revision, and Margins lists active variants only, so a
   new revision that started without it silently dropped the product from Margins once activated. The price belongs to

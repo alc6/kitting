@@ -41,6 +41,11 @@ worked conversations in [references/examples.md](references/examples.md).
   cancelled. A done build keeps an **as-built record** with the serial and frozen unit cost of every component.
 - **Serials**: parts with `track_serial` carry one serial per unit, from the receipt (or adjustment) through the
   build that consumes it to the finished product. That chain is the traceability.
+- **Files**: a part and each assembly revision can carry files (CAD model, print file, drawing, instructions,
+  datasheet, other). A part's own files (a datasheet, a drawing for the supplier) are in `get_part`; a revision's
+  (the 3MF of a plate, the assembly guide) in `get_assembly`; a build's page lists both (`get_build`). Give the user
+  the `download_url`: it opens in the app, you cannot download it. Uploading, renaming or removing files is done in
+  the app only.
 - **Purchase orders** `PO-0001`: draft, sent, partial, received, cancelled. Kitting does not email suppliers:
   "sent" means the user sent it.
 - **Costs** (standard cost, roll-ups, prices, margins) may be hidden for the user's role: the result then says
@@ -109,6 +114,12 @@ it plans and completes in one step, now. Check the part and its batch first (`ge
 quantity (`batches` or `qty`) and that it cannot be undone, then call it and report the as-built record and the
 machine time. It is refused when serial-tracked components need serials: then `plan_build` and `complete_build`
 with the serials.
+
+### Find the file to print or assemble
+"Which file do I print for B-0042?" or "Where is the drawing of the bracket?": `get_build` lists the files of the
+revision being built, then the part's own; otherwise `get_assembly` (the active revision, or `revision`) or `get_part`.
+Name the file, its kind and when it was uploaded, and give its `download_url`. A new revision starts with the files of
+the one it came from, so an older revision may still hold an older file: say which revision a file belongs to.
 
 ### Inventory count
 1. `stock_on_hand` (filter or `query`) for the parts to count; the user gives the counted quantities.

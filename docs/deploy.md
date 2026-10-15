@@ -18,8 +18,11 @@ repository.
 
 Two more resources are optional:
 
-- **Product photos** are stored in an R2 bucket. Create it with `npx wrangler r2 bucket create kitting-images`.
-  Without it, delete the `r2_buckets` block from `wrangler.jsonc`: the app works and hides the photo controls.
+- **Product photos and files** (CAD models, print files, drawings, instructions, datasheets) are stored in an R2
+  bucket. Create it with `npx wrangler r2 bucket create kitting-images`. Without it, delete the `r2_buckets` block
+  from `wrangler.jsonc`: the app works and hides the photo and file controls. Files are uploaded up to 100 MB, read as
+  a stream; hashing a large file takes more CPU than the Workers Free plan's 10 ms per request, so on that plan an
+  upload of more than a few MB may fail with error 1102. The Workers Paid plan has no such problem.
 - **The MCP server** for AI assistants needs a KV namespace. See [AI assistants](mcp.md). Without it, delete
   the `kv_namespaces` block.
 
@@ -90,11 +93,11 @@ committed.
 Under *Settings → Secrets and variables → Actions*, add:
 
 - the secrets `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`. The token needs *Workers Scripts: Edit*,
-  *D1: Edit*, *Workers Routes: Edit* and *Zone: Read* on your zone, plus *Workers R2 Storage: Edit* for photos
+  *D1: Edit*, *Workers Routes: Edit* and *Zone: Read* on your zone, plus *Workers R2 Storage: Edit* for photos and files
   and *Workers KV Storage: Edit* for the MCP server;
 - the variables `KITTING_DOMAIN`, `D1_DATABASE_ID`, `TEAM_DOMAIN`, `ACCESS_AUD` and `ADMIN_EMAILS`;
 - optionally `DEFAULT_LOCALE`, `CURRENCY`, `WORKER_NAME`, `D1_DATABASE_NAME`, `IMAGES_BUCKET` (the name of
-  the R2 bucket; photos are off without it) and `OAUTH_KV_ID` (the ID of the KV namespace; MCP is off without
+  the R2 bucket; photos and files are off without it) and `OAUTH_KV_ID` (the ID of the KV namespace; MCP is off without
   it).
 
 Then run *Actions → Deploy → Run workflow*. The generated configuration always sets `ENVIRONMENT=production`, an

@@ -10,7 +10,19 @@ import {
 	redactCosts,
 	redactCsv,
 } from "../src/domain/permissions";
-import { assemblyId, loadDemo, NOT_ADMIN, one, partId, postForm, request, setRole } from "./helpers";
+import {
+	assemblyId,
+	changeSql,
+	loadDemo,
+	NOT_ADMIN,
+	one,
+	partId,
+	postForm,
+	request,
+	returnedId,
+	setRole,
+	stmt,
+} from "./helpers";
 
 /** Demo data plus a draft PO, a sent PO and a planned build, as an admin would set them up. */
 async function seed() {
@@ -41,7 +53,18 @@ async function seed() {
 	// The change set that planned the build: operators may undo it (they plan builds).
 	const planning = (await one<{ id: number }>("SELECT max(id) AS id FROM change_sets")).id;
 	const price = (await one<{ id: number }>("SELECT min(id) AS id FROM price_history WHERE part_id = ?", part)).id;
-	return { part, supplier, draft, sent, line, lamp, assembly, build, planning, price };
+	// A file attached to the assembly (no R2 object is needed to rename it).
+	const [attached] = await changeSql(
+		"Attach a file",
+		stmt(
+			`INSERT INTO files (assembly_id, name, kind, format, size_bytes, sha256, object_key, uploaded_at, uploaded_by,
+				created_by, updated_by) VALUES (?, 'guide.pdf', 'instructions', 'pdf', 10, 'abc', 'files/x', '2026-01-01', 'u', 'u', 'u')
+				RETURNING id`,
+			assembly,
+		),
+	);
+	const file = returnedId(attached);
+	return { part, supplier, draft, sent, line, lamp, assembly, build, planning, price, file };
 }
 
 type Ids = Awaited<ReturnType<typeof seed>>;
@@ -56,6 +79,10 @@ const CALLS: Record<Action, (ids: Ids) => Call> = {
 	"suppliers.edit": () => ({ path: "/suppliers", form: { name: "Acme", email: "", phone: "", notes: "" } }),
 	"suppliers.delete": (i) => ({ path: `/suppliers/${i.supplier}/delete` }),
 	"machines.edit": () => ({ path: "/machines/types", form: { name: "Laser cutter", hourly_rate: "", notes: "" } }),
+	"files.edit": (i) => ({
+		path: `/files/${i.file}`,
+		form: { name: "Assembly guide.pdf", kind: "instructions", note: "" },
+	}),
 	"assemblies.edit": (i) => ({ path: `/assemblies/${i.assembly}/revision` }),
 	"assemblies.archive": (i) => ({ path: `/assemblies/${i.assembly}/archive` }),
 	// Used by the planned build: refused with a redirect (in_use), after the permission check.
