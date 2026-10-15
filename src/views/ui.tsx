@@ -389,7 +389,8 @@ const MENU_ITEM_DESTRUCTIVE =
 
 /**
  * The "⋯" button of a page header and its menu (shadcn DropdownMenu look, on the Popover API like Dialog: no
- * JavaScript, Esc or a click outside closes it, the menu is anchored to its button by CSS). It holds what is not an
+ * JavaScript, Esc or a click outside closes it, the menu is anchored to its button by CSS). It is a plain popover of
+ * links and buttons, reached with Tab: no ARIA menu roles, which would promise arrow-key navigation it does not have). It holds what is not an
  * everyday action: archive, delete, retire, cancel. Falsy entries are skipped, and without any entry nothing is
  * rendered, so a role that may use none of them sees no button. Entries are links or POST forms (`data-confirm`
  * still asks first); destructive ones come last, in the destructive colour.
@@ -410,13 +411,10 @@ export function MoreMenu(props: { id?: string; items: (MenuItem | false | null |
 				popovertarget={id}
 				aria-label={t.common.moreActions}
 				title={t.common.moreActions}
-				aria-haspopup="menu"
 			/>
 			<div
 				id={id}
 				popover="auto"
-				role="menu"
-				aria-label={t.common.moreActions}
 				data-slot="dropdown-menu-content"
 				class="m-0 mt-1 min-w-44 overflow-visible rounded-md border bg-popover p-1 text-popover-foreground shadow-md [position-area:bottom_span-left] [position-try-fallbacks:flip-block]"
 			>
@@ -433,12 +431,12 @@ export function MoreMenu(props: { id?: string; items: (MenuItem | false | null |
 						<>
 							{separator ? <hr data-slot="dropdown-menu-separator" class="-mx-1 my-1 h-px border-0 bg-border" /> : null}
 							{item.href !== undefined ? (
-								<a href={item.href} role="menuitem" data-slot="dropdown-menu-item" class={cls}>
+								<a href={item.href} data-slot="dropdown-menu-item" class={cls}>
 									{body}
 								</a>
 							) : (
-								<form method="post" action={item.action} data-confirm={item.confirm} role="none" class="contents">
-									<button type="submit" role="menuitem" data-slot="dropdown-menu-item" class={cls}>
+								<form method="post" action={item.action} data-confirm={item.confirm} class="contents">
+									<button type="submit" data-slot="dropdown-menu-item" class={cls}>
 										{body}
 									</button>
 								</form>

@@ -1123,7 +1123,8 @@ A survey of every page (before/after mockups approved by the user, P0–P13) led
   script, Esc or an outside click closes it, and CSS anchor positioning (`position-area`, the invoker is the implicit
   anchor) places it under its button, with a small `app.js` fallback that computes the place for a browser without it.
   Entries are links or POST forms (`data-confirm` still asks first); non-destructive ones come first, then a
-  separator and the destructive ones in the destructive colour. Falsy entries are skipped and no entry renders
+  separator and the destructive ones in the destructive colour. It is a plain popover of links and buttons reached with Tab, so it carries no ARIA
+  menu roles (they would promise arrow-key navigation it does not have). Falsy entries are skipped and no entry renders
   nothing at all, so a role that may do none of them sees no button: the `can()` checks stay where the entries are
   built, and the routes keep their `requirePermission`. What moved: Archive/Unarchive and Delete (parts,
   assemblies), Delete (suppliers, purchase orders), Close and Cancel (purchase orders), Cancel build, Retire (machines),

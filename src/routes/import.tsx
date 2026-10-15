@@ -196,7 +196,7 @@ function ImporterList() {
 						<IconTile icon={TYPE_ICONS[i.type]} />
 						<div class="flex min-w-48 flex-1 flex-col">
 							<span class="text-sm font-medium">{t.import.types[i.type]}</span>
-							<span class="truncate text-sm text-muted-foreground">{t.import.summaries[i.type]}</span>
+							<span class="text-sm text-muted-foreground md:truncate">{t.import.summaries[i.type]}</span>
 						</div>
 						<div class="flex flex-wrap items-center gap-2">
 							<Button href={`/import/${i.type}/template.csv`} variant="ghost" size="sm" icon={icons.fileSpreadsheet}>

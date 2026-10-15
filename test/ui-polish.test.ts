@@ -48,11 +48,10 @@ describe("More actions menu (D176)", () => {
 		const id = await insertPart("BOLT", "buy");
 		const page = await html(`/parts/${id}`);
 		expect(page).toContain(MORE);
-		expect(page).toContain('aria-haspopup="menu"');
 		const menu = menuOf(page);
 		expect(menu).toContain(`action="/parts/${id}/archive"`);
 		expect(menu).toContain(`action="/parts/${id}/delete"`);
-		expect(menu).toContain('role="menuitem"');
+		expect(menu).toContain('data-slot="dropdown-menu-item"');
 		expect(menu).toContain('data-slot="dropdown-menu-separator"');
 		expect(menu.indexOf("/archive")).toBeLessThan(menu.indexOf("/delete"));
 		expect(menu).toMatch(/action="\/parts\/\d+\/delete" data-confirm="[^"]+"/);
