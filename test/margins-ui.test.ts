@@ -110,6 +110,64 @@ describe("margins page", () => {
 		expect(await (await request("/margins?show=built&format=csv")).text()).not.toContain("LAMP-DESK");
 	});
 
+	it("switches between the planned and the actual cost columns, keeping the row filter and the whole CSV", async () => {
+		await loadDemo({ stock: false });
+		await completeLampBuild();
+		const std = await assemblyId("LAMP-DESK");
+		const heads = (page: string) =>
+			[...page.slice(page.indexOf("<thead"), page.indexOf("</thead>")).matchAll(/<th[^>]*>([\s\S]*?)<\/th>/g)].map(
+				(m) => m[1]?.replace(/<[^>]+>/g, "").trim(),
+			);
+
+		// Default: the planned group, no sideways scroll needed (8 columns).
+		const planned = await html("/margins");
+		expect(heads(planned)).toEqual([
+			"Product",
+			"Variant",
+			"Selling price",
+			"Cost",
+			"Margin",
+			"Rate",
+			"Markup",
+			"History",
+		]);
+		expect(planned).toMatch(/href="\/margins"[^>]*data-state="on"[^>]*>Planned cost/);
+		expect(planned).toMatch(/href="\/margins\?cost=actual"[^>]*data-state="off"[^>]*>Actual cost/);
+		expect(rowWith(planned, `/assemblies/${std}`)).toContain("€37.83");
+
+		const actual = await html("/margins?cost=actual");
+		expect(heads(actual)).toEqual([
+			"Product",
+			"Variant",
+			"Selling price",
+			"Builds",
+			"Cost",
+			"Margin",
+			"Rate",
+			"History",
+		]);
+		expect(actual).toMatch(/href="\/margins\?cost=actual"[^>]*data-state="on"[^>]*>Actual cost/);
+		const row = rowWith(actual, `/assemblies/${std}`);
+		expect(row).toContain("€89.00");
+		expect(row).not.toContain("135.3"); // the planned markup is not in this group
+		// Anything else than "actual" is the planned group.
+		expect(heads(await html("/margins?cost=nonsense"))).toContain("Markup");
+
+		// The row filter and the cost group travel together; the CSV link keeps both.
+		const both = await html("/margins?show=built&cost=actual");
+		expect(both).toContain('href="/margins?show=planned&amp;cost=actual"');
+		expect(both).toContain('href="/margins?show=built"'); // back to the planned group
+		expect(both).toContain('href="/margins?show=built&amp;cost=actual&amp;format=csv"');
+		expect(both).toContain(`href="/assemblies/${std}"`);
+		expect(both).not.toContain(`href="/assemblies/${await assemblyId("LAMP-DESK", "warm")}"`);
+
+		// The CSV has every column whichever group is shown.
+		const csvPlanned = await (await request("/margins?format=csv")).text();
+		const csvActual = await (await request("/margins?cost=actual&format=csv")).text();
+		expect(csvActual).toBe(csvPlanned);
+		expect(csvPlanned.split("\n")[0]).toContain("planned_markup_pct,done_builds,actual_cost");
+	});
+
 	it("points to the parts list when nothing has a selling price", async () => {
 		const page = await html("/margins");
 		expect(page).toContain("No selling price yet");

@@ -69,6 +69,7 @@ const RESULT_FIELDS = [
 	"preferred_supplier",
 	"supplier_ref",
 	"lead_days",
+	"min_stock",
 	"pack_size",
 	"order_milli",
 	"planned_for",
@@ -92,7 +93,7 @@ const RESULT_FIELDS = [
 	// Values of enum inputs and records.
 	"assembly_id",
 	"below_zero",
-	"below_moq",
+	"below_min",
 	"in_stock",
 	"in_progress",
 	"build_consume",

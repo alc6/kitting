@@ -19,7 +19,7 @@ Suppliers are matched by name: an existing supplier is updated, a new one is cre
 
 ## parts.csv
 
-`ref,name,kind,unit,cost,sale_price,supplier,supplier_ref,moq,pack_size,lead_days,track_serial,notes`
+`ref,name,kind,unit,cost,sale_price,supplier,supplier_ref,moq,pack_size,lead_days,min_stock,track_serial,notes`
 
 Parts are matched by `ref`, the only required column. Columns you leave out keep their current values, so a file
 with just `ref,cost` updates standard costs and nothing else.
@@ -28,6 +28,8 @@ with just `ref,cost` updates standard costs and nothing else.
 - An empty `cost` means the cost is unknown. `sale_price` excludes VAT.
 - `supplier` is the name of the preferred supplier, and `supplier_ref` to `lead_days` are that supplier's terms.
   Use `part_suppliers.csv` for more than one supplier per part.
+- `min_stock` is the part's minimum stock, in its unit (buy and make parts only). The dashboard and the stock page
+  flag the part when its on-hand quantity falls below it; empty means no alert.
 
 ## part_suppliers.csv
 

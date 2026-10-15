@@ -9,6 +9,7 @@ import {
 	adjustInput,
 	adjustmentErrors,
 	adjustmentStatement,
+	belowMinimum,
 	type CountGroup,
 	countStatements,
 	isStocked,
@@ -119,7 +120,7 @@ const dateParam = (v: string | undefined) => (v && /^\d{4}-\d{2}-\d{2}$/.test(v)
 // ---------------------------------------------------------------------------
 // On-hand list
 
-const FILTERS = ["all", "below_zero", "below_moq", "in_stock"] as const;
+const FILTERS = ["all", "below_zero", "below_min", "in_stock"] as const;
 type Filter = (typeof FILTERS)[number];
 
 stockRoutes.get("/", async (c) => {
@@ -131,7 +132,7 @@ stockRoutes.get("/", async (c) => {
 	const all = (await listParts(c.var.db, { q })).filter((p) => isStocked(p.kind));
 	const rows = all.filter((p) => {
 		if (filter === "below_zero") return p.onHandMilli < 0;
-		if (filter === "below_moq") return p.moqMilli > 0 && p.onHandMilli < p.moqMilli;
+		if (filter === "below_min") return belowMinimum(p);
 		if (filter === "in_stock") return p.onHandMilli > 0;
 		return true;
 	});
@@ -162,7 +163,7 @@ stockRoutes.get("/", async (c) => {
 									<TableHead>{t.parts.ref}</TableHead>
 									<TableHead>{t.parts.name}</TableHead>
 									<TableHead>{t.parts.kind}</TableHead>
-									<TableHead class="text-right">{t.parts.moq}</TableHead>
+									<TableHead class="text-right">{t.parts.minStock}</TableHead>
 									<TableHead class="text-right">{t.stock.onHand}</TableHead>
 									{canAdjust ? (
 										<TableHead class="w-0">
@@ -173,7 +174,7 @@ stockRoutes.get("/", async (c) => {
 							</TableHeader>
 							<TableBody>
 								{rows.map((p) => {
-									const low = p.moqMilli > 0 && p.onHandMilli < p.moqMilli;
+									const low = belowMinimum(p);
 									return (
 										<TableRow>
 											<TableCell class="font-medium">
@@ -184,12 +185,12 @@ stockRoutes.get("/", async (c) => {
 												<KindBadge kind={p.kind} />
 											</TableCell>
 											<TableCell class="text-right text-muted-foreground">
-												{p.moqMilli ? <Qty milli={p.moqMilli} unit={p.unit} /> : ""}
+												{p.minStockMilli !== null ? <Qty milli={p.minStockMilli} unit={p.unit} /> : ""}
 											</TableCell>
 											<TableCell class={cn("text-right whitespace-nowrap", low && "font-medium text-warning")}>
 												{low ? (
 													<Badge variant="warning" class="mr-2">
-														{t.stock.filters.below_moq}
+														{t.stock.filters.below_min}
 													</Badge>
 												) : null}
 												<Qty milli={p.onHandMilli} unit={p.unit} />
