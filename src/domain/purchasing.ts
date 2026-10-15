@@ -558,7 +558,8 @@ export const shipmentInput = z.object({
 	tracking_number: field.required(100),
 	tracking_url: field.url(),
 	shipped_at: field.date(),
-	notes: field.text(),
+	// Not "notes": the PO's own form, on the same page, has that field (one id per page).
+	shipment_notes: field.text(),
 });
 
 export type ShipmentValues = Pick<PoShipment, "carrier" | "trackingNumber" | "trackingUrl" | "shippedAt" | "notes">;
@@ -569,7 +570,7 @@ export function shipmentValues(d: z.output<typeof shipmentInput>): ShipmentValue
 		trackingNumber: d.tracking_number,
 		trackingUrl: d.tracking_url,
 		shippedAt: d.shipped_at,
-		notes: d.notes,
+		notes: d.shipment_notes,
 	};
 }
 
@@ -580,7 +581,7 @@ export function shipmentFormValues(s: ShipmentValues): Record<string, string> {
 		tracking_number: s.trackingNumber,
 		tracking_url: s.trackingUrl,
 		shipped_at: s.shippedAt ?? "",
-		notes: s.notes,
+		shipment_notes: s.notes,
 	};
 }
 

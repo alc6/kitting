@@ -128,7 +128,7 @@ What to make, then what to buy, for all planned and in-progress builds. To make:
 ### `list_purchase_orders`
 Purchase orders, newest first.
 - **Scope:** `purchasing:read` · **Permission:** none
-- **Inputs:** `query` (PO number, supplier name), `status` (open, all, draft, sent, partial, received, cancelled; default open), `limit` (default 50, max 500).
+- **Inputs:** `query` (PO number, supplier name, tracking number), `status` (open, all, draft, sent, partial, received, cancelled; default open), `limit` (default 50, max 500).
 - **Returns:** `status`, `count`, `truncated`, `purchase_orders[]` (`number`, `status`, `supplier`, `created_at`, `sent_at`, `expected_at`, `lines`, `total`).
 - **Example:** `list_purchase_orders({ "status": "sent" })`
 
@@ -344,6 +344,6 @@ Closes a sent or partly received PO whose remaining quantities will not come: th
 ### `record_po_shipment`
 Records a parcel the supplier sent for a PO: carrier, tracking number, and optionally the carrier's tracking link, the shipping date and a note, so the whole team can follow it. Recording a tracking number already on the PO (any case) updates that shipment; fields left out keep their value, an empty `tracking_url` removes the link. Only on sent, partial and received POs. Kitting never contacts the carrier: take the details from what the supplier sent, never guess a link.
 - **Scope:** `purchasing:write` · **Permission:** `purchasing.order` (planner)
-- **Inputs:** `number`, `tracking_number`, `carrier` (required for a new shipment), `tracking_url` (`https://…`), `shipped_at` (date), `notes`.
+- **Inputs:** `number`, `tracking_number`, `carrier` (required for a new shipment), `tracking_url` (`https://…`), `shipped_at` (date; `null` clears it), `notes`.
 - **Returns:** the write envelope, `purchase_order`, `lines`, `total`, `shipments`.
 - **Example:** `record_po_shipment({ "number": "PO-0001", "carrier": "Parcel Co", "tracking_number": "PC123456789", "tracking_url": "https://track.example/PC123456789" })`

@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "519e35cc-7577-4881-9d53-a83181777448",
+  "id": "8375ffbd-5699-4270-bee5-7212dffab07a",
   "prevId": "f9d38a39-2030-49ea-a856-9d6f9fa0ad2e",
   "tables": {
     "assemblies": {
@@ -2058,7 +2058,7 @@
           "name": "po_shipments_tracking_unique",
           "columns": [
             "po_id",
-            "tracking_number"
+            "lower(\"tracking_number\")"
           ],
           "isUnique": true
         }
@@ -2783,6 +2783,14 @@
     "columns": {}
   },
   "internal": {
-    "indexes": {}
+    "indexes": {
+      "po_shipments_tracking_unique": {
+        "columns": {
+          "lower(\"tracking_number\")": {
+            "isExpression": true
+          }
+        }
+      }
+    }
   }
 }

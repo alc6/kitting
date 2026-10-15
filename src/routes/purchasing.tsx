@@ -1184,7 +1184,7 @@ function ShipmentsCard(props: {
 								errors={props.errors}
 							/>
 							<div class="md:col-span-2">
-								<TextField name="notes" label={t.common.notes} values={props.values} errors={props.errors} />
+								<TextField name="shipment_notes" label={t.common.notes} values={props.values} errors={props.errors} />
 							</div>
 						</div>
 						<datalist id="carriers">

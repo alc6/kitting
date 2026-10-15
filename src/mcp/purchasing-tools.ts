@@ -392,7 +392,7 @@ const recordPoShipment = tool({
 			.describe(
 				"The carrier's tracking page for this parcel (https://…), when the supplier gave one. Empty removes it.",
 			),
-		shipped_at: date.optional().describe("When the supplier shipped it, YYYY-MM-DD."),
+		shipped_at: date.nullable().optional().describe("When the supplier shipped it, YYYY-MM-DD; null clears it."),
 		notes: z.string().trim().max(2000).optional(),
 	}),
 	run: async (a, ctx) => {
@@ -401,13 +401,16 @@ const recordPoShipment = tool({
 		const existing = shipmentByTracking(shipments, a.tracking_number);
 		// The form as the Shipments card would post it: the shipment being updated, with the fields given.
 		const values: Record<string, string> = {
-			...(existing ? shipmentFormValues(existing) : { carrier: "", tracking_url: "", shipped_at: "", notes: "" }),
+			...(existing
+				? shipmentFormValues(existing)
+				: { carrier: "", tracking_url: "", shipped_at: "", shipment_notes: "" }),
 			tracking_number: existing?.trackingNumber ?? a.tracking_number,
 		};
-		for (const key of ["carrier", "tracking_url", "shipped_at", "notes"] as const)
+		for (const key of ["carrier", "tracking_url", "shipped_at"] as const)
 			if (a[key] !== undefined) values[key] = formValue(a[key]);
+		if (a.notes !== undefined) values.shipment_notes = a.notes;
 		const v = validate(shipmentInput, values);
-		if (!v.ok) refuse(v.errors);
+		if (!v.ok) refuse(v.errors, {}, { shipment_notes: "notes" });
 		const errors = shipmentRuleErrors(po, shipments, v.data.tracking_number, existing?.id);
 		if (Object.keys(errors).length) refuse(errors);
 		const s = shipmentValues(v.data);

@@ -1200,6 +1200,16 @@ describe("purchasing tools", () => {
 				shipped_at: "2026-10-14",
 			},
 		]);
+		const cleared = await write(token, "record_po_shipment", {
+			number: s.sentPo,
+			tracking_number: "PC1",
+			tracking_url: "",
+			shipped_at: null,
+			notes: "Two boxes",
+		});
+		expect(cleared.data.shipments).toEqual([
+			{ carrier: "Parcel Co", tracking_number: "PC1", shipped_at: null, notes: "Two boxes" },
+		]);
 		const again = await write(token, "record_po_shipment", {
 			number: s.sentPo,
 			tracking_number: "PC1",

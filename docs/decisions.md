@@ -1123,9 +1123,11 @@ a tracking link) arrived in one person's mailbox and was passed on by chat. D168
     receive what arrives. The PO list (and the dashboard's open POs) has a Tracking column, only when some listed PO
     has a shipment, with the last recorded one and how many more. Searching a tracking number (the PO list, the
     global search) finds its PO.
-  - *One shipment per tracking number on a PO*, ignoring case (`shipmentRuleErrors`; a unique index on `(po_id,
-    tracking_number)` backs it). The form refuses a second one; `record_po_shipment` updates it instead (fields left
-    out keep their value, an identical call changes nothing), as an assistant has no row id to edit by.
+  - *One shipment per tracking number on a PO*, ignoring case (`shipmentRuleErrors`, and a unique index on `(po_id,
+    lower(tracking_number))`, so an undo or a restore cannot bring back `pc1` next to `PC1`: the undo reports a
+    duplicate). The form refuses a second one; `record_po_shipment` updates it instead (fields left out keep their
+    value, an identical call changes nothing), as an assistant has no row id to edit by. The shipment's notes field is
+    `shipment_notes` in the form, as the PO's own form on the same page has `notes`.
   - *Links.* `tracking_url` is optional and only `http://` or `https://` (`field.url()`): the page renders it as a
     link (new tab, `noopener noreferrer`), so `javascript:` and `data:` are refused. Building links from a carrier
     and a number would need each carrier's URL pattern, real domains this public repository cannot carry; a list of

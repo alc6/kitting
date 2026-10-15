@@ -606,7 +606,12 @@ const listPurchaseOrders = tool({
 	description: "Purchase orders, newest first. Status defaults to open (draft, sent and partly received).",
 	rule: { scope: "purchasing:read" },
 	input: z.object({
-		query: z.string().trim().max(100).optional().describe("Text to look for in PO numbers and supplier names."),
+		query: z
+			.string()
+			.trim()
+			.max(100)
+			.optional()
+			.describe("Text to look for in PO numbers, supplier names and shipment tracking numbers."),
 		status: z.enum(PO_FILTERS).default("open"),
 		limit: limit(50, 500),
 	}),

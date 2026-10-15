@@ -322,7 +322,8 @@ export const poShipments = sqliteTable(
 		notes: text("notes").notNull().default(""),
 		...audit(),
 	},
-	(t) => [uniqueIndex("po_shipments_tracking_unique").on(t.poId, t.trackingNumber)],
+	// One shipment per tracking number on a PO, ignoring case (an undo or a restore cannot bring back "pc1" next to "PC1").
+	(t) => [uniqueIndex("po_shipments_tracking_unique").on(t.poId, sql`lower(${t.trackingNumber})`)],
 );
 
 export const builds = sqliteTable(
