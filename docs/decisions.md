@@ -1147,3 +1147,10 @@ A survey of every page (before/after mockups approved by the user, P0–P13) led
   the page, no autofocus: only the "new" forms focus the name). A refused edit re-renders the edit form with its errors.
   A role that may not edit sees the same page without the button. Machine types keep their form on the page (their rate
   history lives below it).
+- **D179. Import is one list in import order; a type's form opens in a dialog.** Eight importer cards made a page of
+  nearly 3,000 px for a task done one type at a time. The page is now a numbered list (the order a dependent type
+  needs) with, per row, the type, a one-line summary, Template, Export and "Import…". "Import…" opens that type's form
+  (column list with required marks, file or pasted CSV, Preview) in a `Dialog`: unlike a form with inline errors
+  (D168), this one never shows errors, because Preview posts to its own page where the file's problems are listed, so
+  a dialog is safe, with or without JavaScript. The full help text of the type moved from the card to the dialog's
+  description. Preview, confirm and the Backup card are unchanged.

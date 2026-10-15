@@ -1,5 +1,7 @@
-// UI polish (D176-D178): the "More actions" menu, forms folded in place, read views for suppliers and machines.
+// UI polish (D176-D179): the "More actions" menu, forms folded in place, read views for suppliers and machines,
+// and the import list.
 import { describe, expect, it } from "vitest";
+import { IMPORTERS } from "../src/domain/import";
 import {
 	assemblyId,
 	insertPart,
@@ -295,5 +297,46 @@ describe("machine pages (D178)", () => {
 		const planner = await html(`/machines/${machine.id}`, await as("planner"));
 		expect(planner).toContain(`/machines/${machine.id}/edit`);
 		expect((await request("/machines/999/edit")).status).toBe(404);
+	});
+});
+
+describe("import list (D179)", () => {
+	it("lists the importers in order, each with template, export and its own form", async () => {
+		const page = await html("/import");
+		const types = IMPORTERS.map((i) => i.type);
+		const positions = types.map((t) => page.indexOf(`id="import-${t}"`));
+		expect(positions.every((p) => p > 0)).toBe(true);
+		expect([...positions].sort((a, b) => a - b)).toEqual(positions);
+		for (const type of types) {
+			expect(page).toContain(`href="/import/${type}/template.csv"`);
+			expect(page).toContain(`href="/import/${type}/export.csv"`);
+			expect(page).toContain(`popovertarget="import-form-${type}"`);
+			expect(page).toContain(`id="import-form-${type}"`);
+			expect(page).toContain(`action="/import/${type}/preview"`);
+		}
+		expect(page).toContain("Import…");
+		expect(page).toContain("Backup");
+		expect(page).not.toMatch(/\sstyle=/);
+	});
+
+	it("keeps the preview flow: a valid file previews, a refused one gets its own page, both back to the list", async () => {
+		const good = new FormData();
+		good.set("csv", "name\nAcme\n");
+		const ok = await request("/import/suppliers/preview", { method: "POST", body: good });
+		expect(ok.status).toBe(200);
+		const okText = await ok.text();
+		expect(okText).toContain('href="/import#import-suppliers"');
+		expect(okText).toContain("Confirm import");
+		const bad = new FormData();
+		bad.set("csv", "nothing,here\n1,2\n");
+		const refused = await request("/import/suppliers/preview", { method: "POST", body: bad });
+		expect(refused.status).toBe(422);
+		expect(await refused.text()).toContain('href="/import#import-suppliers"');
+	});
+
+	it("still shows the import list to a planner, without the restore form", async () => {
+		const page = await html("/import", await as("planner"));
+		expect(page).toContain('id="import-form-parts"');
+		expect(page).not.toContain("/import/restore/preview");
 	});
 });

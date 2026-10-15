@@ -33,6 +33,8 @@ import {
 	CardFooter,
 	CardHeader,
 	CardTitle,
+	Dialog,
+	DialogFooter,
 	FieldGroup,
 	FieldLabel,
 	Flash,
@@ -111,74 +113,114 @@ function IconTile(props: { icon: IconNode }) {
 // ---------------------------------------------------------------------------
 // Import page
 
-function ImporterCard(props: { importer: Importer }) {
+/** The form of one importer, in its dialog: columns, file or pasted text, then Preview (which opens its own page). */
+function ImportDialog(props: { importer: Importer }) {
 	const { t } = useApp();
 	const i = props.importer;
+	const id = `import-form-${i.type}`;
 	return (
-		<Card id={`import-${i.type}`} class="scroll-mt-20">
-			<CardHeader>
-				<CardTitle class="flex items-center gap-3">
-					<IconTile icon={TYPE_ICONS[i.type]} />
-					{t.import.types[i.type]}
-				</CardTitle>
-				<CardDescription class="pt-1">{t.import.help[i.type]}</CardDescription>
+		<Dialog
+			id={id}
+			title={fmt(t.import.importTitle, { type: t.import.types[i.type] })}
+			description={t.import.help[i.type]}
+		>
+			<div class="flex flex-col gap-2">
+				<span class="text-xs font-medium tracking-wide text-muted-foreground uppercase">{t.import.columns}</span>
+				<ul class="m-0 flex list-none flex-wrap gap-1.5 p-0">
+					{headerOf(i).map((col) => {
+						const required = i.required.includes(col);
+						return (
+							<li>
+								<Badge variant={required ? "secondary" : "outline"} class="font-mono font-normal">
+									{col}
+									{required ? (
+										<>
+											<span class="text-destructive" aria-hidden="true">
+												*
+											</span>
+											<span class="sr-only">({t.import.required})</span>
+										</>
+									) : null}
+								</Badge>
+							</li>
+						);
+					})}
+				</ul>
+				<p class="text-xs text-muted-foreground">
+					<span class="text-destructive">*</span> {t.import.required}
+				</p>
+			</div>
+			<form
+				method="post"
+				action={`/import/${i.type}/preview`}
+				enctype="multipart/form-data"
+				class="flex flex-col gap-4"
+			>
+				<FieldGroup class="gap-3">
+					<div data-slot="field" class="flex w-full min-w-0 flex-col gap-2">
+						<FieldLabel for={`file-${i.type}`}>{t.import.file}</FieldLabel>
+						<input id={`file-${i.type}`} type="file" name="file" accept=".csv,text/csv,text/plain" />
+					</div>
+					<details class="text-sm">
+						<summary class="text-muted-foreground hover:text-foreground">{t.import.orPaste}</summary>
+						<textarea name="csv" rows={6} aria-label={t.import.orPaste} class="mt-2" />
+					</details>
+				</FieldGroup>
+				<DialogFooter dialog={id}>
+					<Button icon={icons.eye}>{t.import.preview}</Button>
+				</DialogFooter>
+			</form>
+		</Dialog>
+	);
+}
+
+/**
+ * The importers as one list, in the order to import them (a dependent type needs the earlier ones). Each row has its
+ * template, its export and "Import…", which opens that type's form in a dialog: the form never shows errors inline
+ * (a refused file gets its own preview page), so a dialog is fine here.
+ */
+function ImporterList() {
+	const { t } = useApp();
+	return (
+		<Card class="mb-6 gap-0 overflow-hidden py-0">
+			<CardHeader class="border-b px-4 py-3 [.border-b]:pb-3">
+				<CardDescription>{t.import.order}</CardDescription>
 			</CardHeader>
-			<CardContent class="flex flex-1 flex-col gap-6">
-				<div class="flex flex-col gap-2">
-					<span class="text-xs font-medium tracking-wide text-muted-foreground uppercase">{t.import.columns}</span>
-					<ul class="m-0 flex list-none flex-wrap gap-1.5 p-0">
-						{headerOf(i).map((col) => {
-							const required = i.required.includes(col);
-							return (
-								<li>
-									<Badge variant={required ? "secondary" : "outline"} class="font-mono font-normal">
-										{col}
-										{required ? (
-											<>
-												<span class="text-destructive" aria-hidden="true">
-													*
-												</span>
-												<span class="sr-only">({t.import.required})</span>
-											</>
-										) : null}
-									</Badge>
-								</li>
-							);
-						})}
-					</ul>
-					<p class="text-xs text-muted-foreground">
-						<span class="text-destructive">*</span> {t.import.required}
-					</p>
-				</div>
-				<form
-					method="post"
-					action={`/import/${i.type}/preview`}
-					enctype="multipart/form-data"
-					class="mt-auto flex flex-col gap-4"
-				>
-					<FieldGroup class="gap-3">
-						<div data-slot="field" class="flex w-full min-w-0 flex-col gap-2">
-							<FieldLabel for={`file-${i.type}`}>{t.import.file}</FieldLabel>
-							<input id={`file-${i.type}`} type="file" name="file" accept=".csv,text/csv,text/plain" />
+			<ol class="m-0 flex list-none flex-col p-0">
+				{IMPORTERS.map((i, n) => (
+					<li
+						id={`import-${i.type}`}
+						class="flex scroll-mt-20 flex-wrap items-center gap-x-4 gap-y-2 border-b px-4 py-3 last:border-b-0"
+					>
+						<span class="w-4 shrink-0 text-right text-sm text-muted-foreground tabular-nums">{n + 1}</span>
+						<IconTile icon={TYPE_ICONS[i.type]} />
+						<div class="flex min-w-48 flex-1 flex-col">
+							<span class="text-sm font-medium">{t.import.types[i.type]}</span>
+							<span class="truncate text-sm text-muted-foreground">{t.import.summaries[i.type]}</span>
 						</div>
-						<details class="text-sm">
-							<summary class="text-muted-foreground hover:text-foreground">{t.import.orPaste}</summary>
-							<textarea name="csv" rows={6} aria-label={t.import.orPaste} class="mt-2" />
-						</details>
-					</FieldGroup>
-					<Button icon={icons.eye} class="self-start">
-						{t.import.preview}
-					</Button>
-				</form>
-			</CardContent>
-			<CardFooter class="flex-wrap border-t">
-				<Button href={`/import/${i.type}/template.csv`} variant="outline" size="sm" icon={icons.fileSpreadsheet}>
-					{t.import.template}
-				</Button>
-				<Button href={`/import/${i.type}/export.csv`} variant="outline" size="sm" icon={icons.download}>
-					{t.import.export}
-				</Button>
-			</CardFooter>
+						<div class="flex flex-wrap items-center gap-2">
+							<Button href={`/import/${i.type}/template.csv`} variant="ghost" size="sm" icon={icons.fileSpreadsheet}>
+								{t.import.template}
+							</Button>
+							<Button href={`/import/${i.type}/export.csv`} variant="ghost" size="sm" icon={icons.download}>
+								{t.import.export}
+							</Button>
+							<Button
+								type="button"
+								variant="outline"
+								size="sm"
+								icon={icons.upload}
+								popovertarget={`import-form-${i.type}`}
+							>
+								{t.import.importAction}
+							</Button>
+						</div>
+					</li>
+				))}
+			</ol>
+			{IMPORTERS.map((i) => (
+				<ImportDialog importer={i} />
+			))}
 		</Card>
 	);
 }
@@ -493,12 +535,7 @@ importRoutes.get("/", (c) => {
 				/>
 			) : null}
 			{c.req.query("restored") ? <Flash message={t.import.restored} /> : null}
-			<Alert>{t.import.order}</Alert>
-			<div class="mb-6 grid gap-4 md:grid-cols-2">
-				{IMPORTERS.map((i) => (
-					<ImporterCard importer={i} />
-				))}
-			</div>
+			<ImporterList />
 			<BackupCard />
 		</>,
 	);
