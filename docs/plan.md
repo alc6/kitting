@@ -203,8 +203,20 @@ CAD models, print files, drawings, instructions and datasheets on parts and asse
 - [x] `files.edit` (planner); `get_part`, `get_assembly` and `get_build` list files over MCP, uploads stay in the app
       (D165)
 
+## M17: Shipments ✅
+
+Carrier and tracking number of the parcels a supplier sent, on the PO, for the whole team (D168).
+
+- [x] `po_shipments` table (migration 0009, a new tracked table): carrier, tracking number, optional tracking link,
+      shipping date and notes, one row per parcel
+- [x] Shipments card on sent and received POs: planners add, edit and remove; everyone follows the links
+- [x] Tracking column on the PO list and the dashboard; a tracking number finds its PO in the searches
+- [x] `get_purchase_order` lists shipments; `record_po_shipment` adds or updates one over MCP
+
 ## After v1 (ideas, not planned)
 
+- Shipments, beyond M17: carriers with a tracking URL pattern entered by an administrator (a link from the number
+  alone), which receipt came with which shipment.
 - MCP: Client ID Metadata Documents (needs the `global_fetch_strictly_public` compatibility flag, D123).
 - Serial inventory (which serials are in stock) enforced at build time, if the shop starts scanning receipts.
 - Reservations of stock for planned builds; build scheduling.
