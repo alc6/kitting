@@ -4,7 +4,7 @@ import { listBuilds } from "../domain/builds";
 import { listParts } from "../domain/parts";
 import { can } from "../domain/permissions";
 import { computeShortages, listPos } from "../domain/purchasing";
-import { isStocked, valuation } from "../domain/stock";
+import { belowMinimum, isStocked, valuation } from "../domain/stock";
 import { fmt } from "../i18n";
 import { cn } from "../lib/cn";
 import { formatMoney } from "../lib/units";
@@ -113,14 +113,14 @@ dashboardRoutes.get("/", async (c) => {
 	const today = nowIso().slice(0, 10);
 	const stocked = allParts.filter((p) => isStocked(p.kind));
 	const belowZero = stocked.filter((p) => p.onHandMilli < 0);
-	const belowMoq = stocked.filter((p) => p.moqMilli > 0 && p.onHandMilli >= 0 && p.onHandMilli < p.moqMilli);
+	const belowMin = stocked.filter((p) => p.onHandMilli >= 0 && belowMinimum(p));
 	const shortageLines = shortages.groups.flatMap((g) => g.lines.map((l) => ({ ...l, supplierName: g.supplierName })));
 	const shortSuppliers = new Set(shortageLines.map((l) => l.supplierName)).size;
 	const overdue = openPos.filter((p) => p.expectedAt && p.expectedAt < today).length;
 	const inProgress = open.filter((b) => b.status === "in_progress").length;
 	const alerts = [
 		...belowZero.map((p) => ({ p, label: t.dashboard.belowZero, negative: true })),
-		...belowMoq.map((p) => ({ p, label: t.dashboard.belowMoq, negative: false })),
+		...belowMin.map((p) => ({ p, label: t.dashboard.belowMin, negative: false })),
 	];
 	return page(
 		c,

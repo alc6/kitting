@@ -72,6 +72,7 @@ const partView = (p: Part) => ({
 	trackSerial: p.trackSerial,
 	archived: p.archived,
 	notes: p.notes,
+	minStockMilli: p.minStockMilli,
 });
 
 const assemblyView = (
@@ -109,13 +110,16 @@ const partFields = {
 	unit: z.string().max(20).describe('Unit of quantities, e.g. "pcs" (the default), "m", "kg".'),
 	track_serial: z.boolean().describe("One serial number per unit (buy and make parts only)."),
 	notes: z.string().max(2000),
+	min_stock: decimal(
+		'Minimum stock in the part\'s unit, e.g. "20": the part raises a stock alert when its on-hand quantity falls below it (buy and make parts only; null: none).',
+	).nullable(),
 };
 
 const createPart = tool({
 	name: "create_part",
 	title: "Create a part",
 	description:
-		"Creates a part in the catalogue, with the same checks as the part form (unique reference ignoring case, serial tracking only for buy and make parts). Prices and supplier offers are set separately (set_standard_cost, set_sale_price, upsert_supplier_offer).",
+		"Creates a part in the catalogue, with the same checks as the part form (unique reference ignoring case, serial tracking and a minimum stock only for buy and make parts). Prices and supplier offers are set separately (set_standard_cost, set_sale_price, upsert_supplier_offer).",
 	rule: { scope: "catalog:write", action: "parts.edit" },
 	annotations: writes({ destructive: false, idempotent: false }),
 	input: z.object({
@@ -125,6 +129,7 @@ const createPart = tool({
 		unit: partFields.unit.optional(),
 		track_serial: partFields.track_serial.default(false),
 		notes: partFields.notes.default(""),
+		min_stock: partFields.min_stock.optional(),
 	}),
 	run: async (a, ctx) => {
 		const form = {
@@ -134,6 +139,7 @@ const createPart = tool({
 			unit: a.unit ?? "",
 			track_serial: formValue(a.track_serial),
 			notes: a.notes,
+			min_stock: formValue(a.min_stock),
 		};
 		const v = await checkPart(ctx.db, form);
 		if (!v.ok) refuse(v.errors, { ref: v.clashRef ?? "" });
@@ -151,7 +157,7 @@ const updatePart = tool({
 	name: "update_part",
 	title: "Edit a part",
 	description:
-		"Changes a part's reference, name, kind, unit, serial tracking or notes; fields left out keep their value. Same checks as the part form (a part with stock moves cannot become a kit or fee, a part with assemblies stays make or kit). Prices and offers are not changed here.",
+		"Changes a part's reference, name, kind, unit, serial tracking, minimum stock (null: none) or notes; fields left out keep their value. Same checks as the part form (a part with stock moves cannot become a kit or fee, a part with assemblies stays make or kit). Prices and offers are not changed here.",
 	rule: { scope: "catalog:write", action: "parts.edit" },
 	annotations: writes({ destructive: true, idempotent: true }),
 	input: z.object({
@@ -162,6 +168,7 @@ const updatePart = tool({
 		unit: partFields.unit.optional(),
 		track_serial: partFields.track_serial.optional(),
 		notes: partFields.notes.optional(),
+		min_stock: partFields.min_stock.optional(),
 	}),
 	run: async (a, ctx) => {
 		const part = await partByRef(ctx.db, a.ref);
@@ -174,6 +181,7 @@ const updatePart = tool({
 		if (a.unit !== undefined) form.unit = a.unit;
 		if (a.track_serial !== undefined) form.track_serial = formValue(a.track_serial);
 		if (a.notes !== undefined) form.notes = a.notes;
+		if (a.min_stock !== undefined) form.min_stock = formValue(a.min_stock);
 		const v = await checkPart(ctx.db, form, part);
 		if (!v.ok) refuse(v.errors, { ref: v.clashRef ?? "" }, { ref: "new_ref" });
 		const { change } = await saveChange(

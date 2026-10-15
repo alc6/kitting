@@ -53,7 +53,7 @@ Find parts by reference, name or any supplier's reference. Use it before relying
 One part in full: details, prices, supplier offers (preferred first), on hand, its assemblies with unit cost, where it is used, and its own files.
 - **Scope:** `catalog:read` · **Permission:** none
 - **Inputs:** `ref` (part reference).
-- **Returns:** `part` (`ref`, `name`, `kind`, `unit`, `track_serial`, `archived`, `notes`, `on_hand`, `standard_cost`, `sale_price`), `offers[]` (`supplier`, `preferred`, `supplier_ref`, `price`, `moq`, `pack_size`, `lead_days`), `assemblies[]` (`assembly_id`, `code`, `revision`, `status`, `batch`, `unit_cost`, `cost_incomplete`, `sale_price`), `rolled_up_cost`, `where_used[]` (`parent`, `assembly_id`, `code`, `revision`, `status`, `depth`, `via`, `qty_per_parent` for one batch of `batch` units of the parent), `files[]` attached to the part whatever its assembly (`name`, `kind`: cad, print, drawing, instructions, datasheet or other, `format`, `size_bytes`, `uploaded_at`, `uploaded_by`, `note`, `download_path`, `download_url`).
+- **Returns:** `part` (`ref`, `name`, `kind`, `unit`, `track_serial`, `archived`, `notes`, `min_stock` (null: no alert), `on_hand`, `standard_cost`, `sale_price`), `offers[]` (`supplier`, `preferred`, `supplier_ref`, `price`, `moq`, `pack_size`, `lead_days`), `assemblies[]` (`assembly_id`, `code`, `revision`, `status`, `batch`, `unit_cost`, `cost_incomplete`, `sale_price`), `rolled_up_cost`, `where_used[]` (`parent`, `assembly_id`, `code`, `revision`, `status`, `depth`, `via`, `qty_per_parent` for one batch of `batch` units of the parent), `files[]` attached to the part whatever its assembly (`name`, `kind`: cad, print, drawing, instructions, datasheet or other, `format`, `size_bytes`, `uploaded_at`, `uploaded_by`, `note`, `download_path`, `download_url`).
 - **Example:** `get_part({ "ref": "PAD-FELT" })`
 
 ### `get_assembly`
@@ -89,9 +89,9 @@ The change history (who, when, from where, which rows and fields before/after), 
 ### `stock_on_hand`
 On-hand quantities of stocked parts (buy and make; kits and fees are never stocked).
 - **Scope:** `stock:read` · **Permission:** none
-- **Inputs:** `query`, `filter` (all, below_zero, below_moq, in_stock; default all), `limit` (default 100, max 1000).
-- **Returns:** `filter`, `count`, `truncated`, `parts[]` (`ref`, `name`, `kind`, `unit`, `on_hand`, `moq`, `preferred_supplier`).
-- **Example:** `stock_on_hand({ "filter": "below_moq" })`
+- **Inputs:** `query`, `filter` (all, below_zero, below_min: under a set minimum stock, in_stock; default all), `limit` (default 100, max 1000).
+- **Returns:** `filter`, `count`, `truncated`, `parts[]` (`ref`, `name`, `kind`, `unit`, `on_hand`, `min_stock`, `preferred_supplier`).
+- **Example:** `stock_on_hand({ "filter": "below_min" })`
 
 ### `list_moves`
 The stock ledger, newest first. On hand is the sum of the signed moves.
@@ -144,14 +144,14 @@ One PO with its lines.
 ### `create_part`
 Creates a part. Prices and offers are separate calls.
 - **Scope:** `catalog:write` · **Permission:** `parts.edit` (planner)
-- **Inputs:** `ref` (unique, letters, digits and `- _ . /`), `name`, `kind` (buy, make, kit, fee), `unit` (default pcs), `track_serial` (buy and make only), `notes`.
-- **Returns:** the write envelope and `part`.
+- **Inputs:** `ref` (unique, letters, digits and `- _ . /`), `name`, `kind` (buy, make, kit, fee), `unit` (default pcs), `track_serial` (buy and make only), `min_stock` (buy and make only; the stock alert level), `notes`.
+- **Returns:** the write envelope and `part` (with `min_stock`).
 - **Example:** `create_part({ "ref": "PAD-RUBBER", "name": "Rubber pad 20mm", "kind": "buy" })`
 
 ### `update_part`
 Changes a part's fields; fields left out keep their value. Never prices.
 - **Scope:** `catalog:write` · **Permission:** `parts.edit` (planner)
-- **Inputs:** `ref`, `new_ref`, `name`, `kind`, `unit`, `track_serial`, `notes`. A part with stock moves cannot become a kit or fee; a part with assemblies stays make or kit.
+- **Inputs:** `ref`, `new_ref`, `name`, `kind`, `unit`, `track_serial`, `min_stock` (null removes it), `notes`. A part with stock moves cannot become a kit or fee; a part with assemblies stays make or kit.
 - **Returns:** the write envelope and `part`.
 - **Example:** `update_part({ "ref": "PAD-FELT", "notes": "Self-adhesive" })`
 

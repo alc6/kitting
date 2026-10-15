@@ -1116,3 +1116,17 @@ A survey of every page (before/after mockups approved by the user, P0–P13) led
   repeated inside the dialog because the page alert sits under the backdrop, and without JavaScript the page alert is
   still there. A form whose errors are rendered inline next to its fields never goes in a dialog: without JavaScript
   they would stay hidden (those forms fold in place instead).
+
+- **D172. Stock alerts come from a minimum stock per part, not from the supplier's MOQ.** The dashboard rail and the stock
+  list flagged "Below MOQ" (13 of the 23 demo parts), but the MOQ is the smallest quantity a supplier sells, not a level
+  at which to reorder. `parts.min_stock_milli` (nullable, additive migration `0009_min_stock`) is the level the owner
+  chooses: `belowMinimum()` (`src/domain/stock.ts`) is true for a buy or make part with a minimum set and on hand strictly
+  under it, so a part without one never alerts (0 is a minimum: it alerts under zero stock). "Below zero" stays a
+  separate alert, and a negative part is listed once on the dashboard, as below zero. The stock list filter
+  `below_moq` becomes `below_min` ("Below minimum", also on the MCP `stock_on_hand`, with `min_stock` in place of `moq`)
+  and its MOQ column shows the minimum. The field is on the part form (always shown, as no script may hide it by kind),
+  in `parts.csv` (`min_stock`, empty means none, absent keeps the value), the part's page and the backup (generic over
+  the columns), and `get_part`, `create_part` and `update_part` (`min_stock`, `null` removes it). A kit or a fee cannot
+  have one (`min_stock_kind`, like `serial_kind`: an explicit refusal rather than a silent drop). There is no CHECK
+  constraint, as SQLite cannot add one to `parts` without a table rebuild: `field.optionalQty()` refuses negatives. The
+  two example datasets carry a few minimums so the alerts show on first launch.

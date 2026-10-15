@@ -88,6 +88,38 @@ describe("parts import", () => {
 		expect(await rows("SELECT * FROM parts")).toHaveLength(0);
 	});
 
+	it("imports and exports the minimum stock, empty meaning none", async () => {
+		await importOk("parts", "ref,name,kind,min_stock\nA,Alpha,buy,25\nB,Beta,make,2.5\nC,Gamma,buy,\n");
+		expect(await rows("SELECT ref, min_stock_milli FROM parts ORDER BY ref")).toEqual([
+			{ ref: "A", min_stock_milli: 25000 },
+			{ ref: "B", min_stock_milli: 2500 },
+			{ ref: "C", min_stock_milli: null },
+		]);
+		const csv = await (await request("/import/parts/export.csv")).text();
+		expect(csv).toContain(",min_stock,");
+		expect(csv).toMatch(/^A,Alpha,buy,pcs,.*,25,no,$/m);
+		expect(await (await preview("parts", csv)).text()).toContain("0 to create, 0 to update, 3 unchanged.");
+		// The diff shows the change; a file without the column keeps the value; an empty cell removes it.
+		const diff = await (await preview("parts", "ref,min_stock\nA,30\nB,\n")).text();
+		expect(diff).toContain("min_stock: 25 → 30");
+		expect(diff).toContain("min_stock: 2.5 → ∅");
+		await importOk("parts", "ref,name\nA,Alpha 2\n");
+		expect(await one("SELECT min_stock_milli FROM parts WHERE ref = 'A'")).toEqual({ min_stock_milli: 25000 });
+		await importOk("parts", "ref,min_stock\nA,\n");
+		expect(await one("SELECT min_stock_milli FROM parts WHERE ref = 'A'")).toEqual({ min_stock_milli: null });
+	});
+
+	it("refuses a negative or invalid minimum, and a minimum on a kit or a fee", async () => {
+		const html = await (
+			await preview("parts", "ref,name,kind,min_stock\nA,A,buy,-1\nB,B,buy,lots\nC,C,kit,5\nD,D,fee,1\n")
+		).text();
+		expect(html).toContain("Must be zero or more.");
+		expect(html).toContain("Not a valid quantity");
+		expect(html.match(/Only buy and make parts have a minimum stock\./g)).toHaveLength(2);
+		expect((await commit("parts", "ref,name,kind,min_stock\nC,C,kit,5\n")).status).toBe(422);
+		expect(await rows("SELECT * FROM parts")).toHaveLength(0);
+	});
+
 	it("upserts by ref and only touches the columns present", async () => {
 		await insertSupplier("Acme");
 		await importOk(
@@ -180,7 +212,7 @@ describe("parts import", () => {
 		expect(res.headers.get("Content-Disposition")).toContain("parts-template.csv");
 		const csv = await res.text();
 		expect(csv).toContain(
-			"ref,name,kind,unit,cost,sale_price,supplier,supplier_ref,moq,pack_size,lead_days,track_serial,notes",
+			"ref,name,kind,unit,cost,sale_price,supplier,supplier_ref,moq,pack_size,lead_days,min_stock,track_serial,notes",
 		);
 		expect((await request("/import/nope/template.csv")).status).toBe(404);
 	});

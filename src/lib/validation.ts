@@ -39,6 +39,17 @@ export const field = {
 				if (!opts.positive && n < 0) return issue(ctx, "negative");
 				return n;
 			}),
+	/** Optional quantity in milli, zero or more; empty -> null ("not set"). */
+	optionalQty: () =>
+		z
+			.string()
+			.trim()
+			.transform((v, ctx): number | null => {
+				if (v === "") return null;
+				const n = parseMilli(v);
+				if (n === null) return issue(ctx, "invalid_quantity");
+				return n < 0 ? issue(ctx, "negative") : n;
+			}),
 	/** Signed quantity in milli (adjustments). Empty is an error. */
 	signedQty: () =>
 		z

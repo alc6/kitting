@@ -138,6 +138,7 @@ export async function insertPart(
 		moqMilli?: number;
 		packSizeMilli?: number;
 		offerPriceCents?: number | null;
+		minStockMilli?: number | null;
 		unit?: string;
 	} = {},
 ): Promise<number> {
@@ -145,8 +146,8 @@ export async function insertPart(
 	const supplierId = opts.supplierId ?? (needsOffer ? await insertSupplier(`Supplier of ${ref}`) : null);
 	const [r] = await seedSql(
 		stmt(
-			`INSERT INTO parts (ref, name, kind, unit, cost_cents, supplier_id, track_serial, created_by, updated_by)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, 'seed', 'seed') RETURNING id`,
+			`INSERT INTO parts (ref, name, kind, unit, cost_cents, supplier_id, track_serial, min_stock_milli, created_by, updated_by)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'seed', 'seed') RETURNING id`,
 			ref,
 			`Part ${ref}`,
 			kind,
@@ -154,6 +155,7 @@ export async function insertPart(
 			opts.costCents === undefined ? null : opts.costCents,
 			supplierId,
 			opts.trackSerial ? 1 : 0,
+			opts.minStockMilli ?? null,
 		),
 	);
 	const id = returnedId(r);

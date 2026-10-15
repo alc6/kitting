@@ -16,7 +16,7 @@ import { listMachines, listMachineTypes } from "../domain/machines";
 import { partOffers } from "../domain/offers";
 import { listParts, onHandMap, onHandOf } from "../domain/parts";
 import { computeShortages, getPoLines, listPos } from "../domain/purchasing";
-import { isStocked, listMoves, onHandAt } from "../domain/stock";
+import { belowMinimum, isStocked, listMoves, onHandAt } from "../domain/stock";
 import { lineCostCents, MILLI, machineMillicents, roundDiv } from "../lib/units";
 import {
 	assemblySelector,
@@ -127,6 +127,7 @@ const getPartTool = tool({
 				trackSerial: part.trackSerial,
 				archived: part.archived,
 				notes: part.notes,
+				minStockMilli: part.minStockMilli,
 				onHandMilli: onHand,
 				standardCostCents: part.costCents,
 				salePriceCents: part.salePriceCents,
@@ -324,13 +325,13 @@ const listMachinesTool = tool({
 // ---------------------------------------------------------------------------
 // stock:read
 
-const STOCK_FILTERS = ["all", "below_zero", "below_moq", "in_stock"] as const;
+const STOCK_FILTERS = ["all", "below_zero", "below_min", "in_stock"] as const;
 
 const stockOnHand = tool({
 	name: "stock_on_hand",
 	title: "Stock on hand",
 	description:
-		"On-hand quantities of stocked parts (buy and make), with the preferred supplier's minimum order quantity. Filters: below_zero (negative stock), below_moq (under the MOQ), in_stock (positive).",
+		"On-hand quantities of stocked parts (buy and make), with each part's minimum stock (null: none). Filters: below_zero (negative stock), below_min (under a set minimum stock), in_stock (positive).",
 	rule: { scope: "stock:read" },
 	input: z.object({
 		query: z.string().trim().max(100).optional().describe("Text to look for in references and names."),
@@ -341,7 +342,7 @@ const stockOnHand = tool({
 		const rows = (await listParts(db, { q: a.query ?? "" })).filter((p) => isStocked(p.kind));
 		const kept = rows.filter((p) => {
 			if (a.filter === "below_zero") return p.onHandMilli < 0;
-			if (a.filter === "below_moq") return p.moqMilli > 0 && p.onHandMilli < p.moqMilli;
+			if (a.filter === "below_min") return belowMinimum(p);
 			if (a.filter === "in_stock") return p.onHandMilli > 0;
 			return true;
 		});
@@ -355,7 +356,7 @@ const stockOnHand = tool({
 				kind: p.kind,
 				unit: p.unit,
 				onHandMilli: p.onHandMilli,
-				moqMilli: p.moqMilli,
+				minStockMilli: p.minStockMilli,
 				preferredSupplier: p.supplierName,
 			})),
 		};

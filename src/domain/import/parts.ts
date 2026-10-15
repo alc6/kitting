@@ -26,6 +26,7 @@ const CSV_COLUMNS = [
 	"moq",
 	"pack_size",
 	"lead_days",
+	"min_stock",
 	"track_serial",
 	"notes",
 ] as const;
@@ -51,6 +52,7 @@ export const partsImporter: Importer = {
 			"100",
 			"100",
 			"7",
+			"500",
 			"no",
 			"",
 		],
@@ -66,13 +68,14 @@ export const partsImporter: Importer = {
 			"50",
 			"",
 			"10",
+			"20",
 			"no",
 			"sold by the metre",
 		],
-		["SA-MAIN", "Main sub-assembly", "make", "pcs", "", "", "", "", "", "", "", "yes", ""],
-		["KIT-SCREWS", "Screw kit", "kit", "pcs", "", "", "", "", "", "", "", "no", "phantom"],
-		["FEE-ECO", "Eco-fee", "fee", "pcs", "0.25", "", "", "", "", "", "", "no", ""],
-		["PROD-1", "Finished product", "make", "pcs", "", "149.00", "", "", "", "", "", "yes", "sold at 149.00"],
+		["SA-MAIN", "Main sub-assembly", "make", "pcs", "", "", "", "", "", "", "", "", "yes", ""],
+		["KIT-SCREWS", "Screw kit", "kit", "pcs", "", "", "", "", "", "", "", "", "no", "phantom"],
+		["FEE-ECO", "Eco-fee", "fee", "pcs", "0.25", "", "", "", "", "", "", "", "no", ""],
+		["PROD-1", "Finished product", "make", "pcs", "", "149.00", "", "", "", "", "", "", "yes", "sold at 149.00"],
 	],
 
 	async plan({ db }, table) {
@@ -132,7 +135,7 @@ export const partsImporter: Importer = {
 			if (!v.ok) lineIssues.push(...fieldIssues(rec.line, v.errors, fieldToColumn));
 			else {
 				const rules = partRuleErrors(
-					{ kind: v.data.kind, trackSerial: v.data.track_serial },
+					{ kind: v.data.kind, trackSerial: v.data.track_serial, minStockMilli: v.data.min_stock },
 					{
 						hasMoves: current ? hasMoves.has(current.id) : false,
 						hasAssemblies: current ? ownsAssemblies.has(current.id) : false,
@@ -199,6 +202,7 @@ export const partsImporter: Importer = {
 				o.moqMilli ? formatQtyInput(o.moqMilli, locale) : "",
 				o.packSizeMilli ? formatQtyInput(o.packSizeMilli, locale) : "",
 				o.leadDays ? String(o.leadDays) : "",
+				p.minStockMilli === null ? "" : formatQtyInput(p.minStockMilli, locale),
 				p.trackSerial ? "yes" : "no",
 				p.notes,
 			];
@@ -222,6 +226,7 @@ function flatten(p: Part, offer: OfferTerms | undefined): Flat {
 		moq: p.supplierId === null ? 0 : o.moqMilli,
 		pack_size: p.supplierId === null ? 0 : o.packSizeMilli,
 		lead_days: p.supplierId === null ? 0 : o.leadDays,
+		min_stock: p.minStockMilli,
 		track_serial: p.trackSerial,
 		notes: p.notes,
 	};
@@ -240,6 +245,7 @@ function flattenInput(d: PartInput, offer: OfferTerms | undefined): Flat {
 		moq: d.supplier_id === null ? 0 : t.moqMilli,
 		pack_size: d.supplier_id === null ? 0 : t.packSizeMilli,
 		lead_days: d.supplier_id === null ? 0 : t.leadDays,
+		min_stock: d.min_stock,
 		track_serial: d.track_serial,
 		notes: d.notes,
 	};
@@ -250,6 +256,7 @@ function diffPart(current: Flat, next: Flat, supplierName: Map<number, string>):
 		if (value === null || value === "" || value === undefined) return "∅";
 		if (col === "cost" || col === "sale_price") return formatCentsInput(value as number);
 		if (col === "moq" || col === "pack_size") return value === 0 ? "∅" : formatQtyInput(value as number);
+		if (col === "min_stock") return formatQtyInput(value as number);
 		if (col === "supplier") return supplierName.get(value as number) ?? String(value);
 		return String(value);
 	};

@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
+import { belowMinimum } from "../src/domain/stock";
 import {
 	changeSql,
 	insertMove,
@@ -94,23 +95,59 @@ describe("inventory count", () => {
 });
 
 describe("on-hand list and ledger", () => {
-	it("filters parts below zero and below MOQ", async () => {
+	it("filters parts below zero and below their minimum stock", async () => {
 		const neg = await insertPart("NEG", "buy");
-		const low = await insertPart("LOW", "buy", { moqMilli: 10_000 });
-		const ok = await insertPart("OK", "buy", { moqMilli: 1000 });
+		const low = await insertPart("LOW", "buy", { minStockMilli: 10_000 });
+		const ok = await insertPart("OK", "buy", { minStockMilli: 1000 });
+		// A supplier's MOQ is not a reorder level: with no minimum stock the part never alerts.
+		const moqOnly = await insertPart("MOQONLY", "buy", { moqMilli: 100_000 });
 		await insertPart("KITTY", "kit");
 		await insertMove(neg, -1000);
 		await insertMove(low, 2000);
 		await insertMove(ok, 5000);
+		await insertMove(moqOnly, 1000);
 		const all = await (await request("/stock")).text();
 		expect(all).toContain("NEG");
 		expect(all).not.toContain("KITTY");
 		const below = await (await request("/stock?filter=below_zero")).text();
 		expect(below).toContain("NEG");
 		expect(below).not.toContain(">LOW<");
-		const moq = await (await request("/stock?filter=below_moq")).text();
-		expect(moq).toContain(">LOW<");
-		expect(moq).not.toContain(">OK<");
+		const min = await (await request("/stock?filter=below_min")).text();
+		expect(min).toContain(">LOW<");
+		expect(min).toContain("Below minimum");
+		expect(min).not.toContain(">OK<");
+		expect(min).not.toContain(">MOQONLY<");
+		expect(min).not.toContain(">NEG<");
+		// The list flags only the part under its minimum, not the one under a supplier's MOQ.
+		const list = await (await request("/stock")).text();
+		expect(list.match(/Below minimum/g)).toHaveLength(2); // the filter option and LOW's badge
+	});
+
+	it("applies the alert rule: a set minimum, a stocked kind, on hand strictly under it", () => {
+		const part = { kind: "buy" as const, minStockMilli: 5000, onHandMilli: 4999 };
+		expect(belowMinimum(part)).toBe(true);
+		expect(belowMinimum({ ...part, onHandMilli: 5000 })).toBe(false);
+		expect(belowMinimum({ ...part, minStockMilli: null })).toBe(false);
+		expect(belowMinimum({ ...part, minStockMilli: 0, onHandMilli: 0 })).toBe(false);
+		expect(belowMinimum({ ...part, minStockMilli: 0, onHandMilli: -1 })).toBe(true);
+		expect(belowMinimum({ ...part, kind: "kit" })).toBe(false);
+	});
+
+	it("shows the dashboard alerts for a minimum, not for a MOQ", async () => {
+		const low = await insertPart("LOW", "buy", { minStockMilli: 10_000 });
+		const neg = await insertPart("NEG", "make", { minStockMilli: 3000 });
+		const moqOnly = await insertPart("MOQONLY", "buy", { moqMilli: 100_000 });
+		await insertMove(low, 2000);
+		await insertMove(neg, -1000);
+		await insertMove(moqOnly, 1000);
+		const html = await (await request("/")).text();
+		expect(html).toContain(`/parts/${low}`);
+		expect(html).toContain("Below minimum");
+		// A negative part is reported once, as below zero.
+		expect(html).toContain(`/parts/${neg}`);
+		expect(html.match(new RegExp(`/parts/${neg}"`, "g"))).toHaveLength(1);
+		expect(html).not.toContain(`/parts/${moqOnly}`);
+		expect(html).not.toContain("Below MOQ");
 	});
 
 	it("lists moves with filters and exports them", async () => {
@@ -160,6 +197,10 @@ describe("JSON backup and restore", () => {
 	it("round-trips the whole database", async () => {
 		await loadDemo();
 		await postForm("/stock/adjust", { part: "BOX-LAMP", qty: "-1", serial: "", note: "crushed" });
+		const minBefore = await rows(
+			"SELECT ref, min_stock_milli FROM parts WHERE min_stock_milli IS NOT NULL ORDER BY ref",
+		);
+		expect(minBefore.length).toBeGreaterThan(0);
 		const backupRes = await request("/import/backup.json");
 		expect(backupRes.headers.get("Content-Disposition")).toContain("kitting-backup-");
 		const json = await backupRes.text();
@@ -185,6 +226,9 @@ describe("JSON backup and restore", () => {
 		expect(await one("SELECT name FROM parts WHERE id = ?", await partId("LAMP-DESK"))).toEqual({
 			name: "Modular desk lamp",
 		});
+		expect(await rows("SELECT ref, min_stock_milli FROM parts WHERE min_stock_milli IS NOT NULL ORDER BY ref")).toEqual(
+			minBefore,
+		);
 		expect(await one("SELECT count(*) AS n FROM assembly_lines")).toEqual({ n: 40 });
 		expect(await one("SELECT machine_minutes FROM assemblies WHERE machine_type_id IS NOT NULL")).toEqual({
 			machine_minutes: 190,

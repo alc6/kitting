@@ -253,6 +253,9 @@ function PartForm(props: {
 								<DecimalField name="cost" label={t.parts.cost} hint={t.parts.costHint} {...p} />
 								<DecimalField name="sale_price" label={t.parts.salePrice} hint={t.parts.salePriceHint} {...p} />
 							</div>
+							<div class="grid gap-4 md:grid-cols-3">
+								<DecimalField name="min_stock" label={t.parts.minStock} hint={t.parts.minStockHint} {...p} />
+							</div>
 							<CheckboxField name="track_serial" label={t.parts.trackSerial} {...p} />
 						</FieldGroup>
 						<datalist id="units">
@@ -565,6 +568,15 @@ function PartDetail(props: {
 								items={[
 									{ label: t.parts.unit, value: p.unit },
 									{ label: t.parts.trackSerial, value: p.trackSerial ? t.common.yes : t.common.no },
+									...(stocked
+										? [
+												{
+													label: t.parts.minStock,
+													value:
+														p.minStockMilli === null ? t.common.none : <Qty milli={p.minStockMilli} unit={p.unit} />,
+												},
+											]
+										: []),
 									...(stocked || props.supplier
 										? [
 												{
