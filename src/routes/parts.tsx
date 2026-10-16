@@ -1234,7 +1234,7 @@ function OffersCard(props: { part: Part; offers: PartOffer[]; lastPaid: LastPaid
 										<TableCell class="text-right whitespace-nowrap">
 											{last ? (
 												<span class="flex flex-col items-end gap-0.5">
-													<Money cents={last.unitCostCents} />
+													<Money cents={last.unitPriceCents} />
 													<span class="text-xs text-muted-foreground tabular-nums">{last.at.slice(0, 10)}</span>
 												</span>
 											) : (
@@ -1398,6 +1398,8 @@ function PriceHistoryCard(props: {
 	const view = useApp();
 	const { t } = view;
 	const { history, paid } = props;
+	// A landed cost column once a receipt entered stock above its line price (charges spread, D204).
+	const landed = paid.some((r) => r.unitPriceCents !== null && r.unitPriceCents !== r.unitCostCents);
 	// Deleting a wrong, non-current row is an admin correction (D143); the route refuses the current row.
 	const canDelete = can(view, "prices.delete");
 	// The chart plots known standard costs and paid prices only (not offer or selling prices).
@@ -1497,6 +1499,7 @@ function PriceHistoryCard(props: {
 										<TableHead>{t.parts.supplier}</TableHead>
 										<TableHead class="text-right">{t.parts.qty}</TableHead>
 										<TableHead class="text-right">{t.parts.unitPrice}</TableHead>
+										{landed ? <TableHead class="text-right">{t.parts.landedCost}</TableHead> : null}
 									</TableRow>
 								</TableHeader>
 								<TableBody>
@@ -1515,8 +1518,13 @@ function PriceHistoryCard(props: {
 												<Qty milli={r.qtyMilli} unit={props.part.unit} />
 											</TableCell>
 											<TableCell class="text-right">
-												<Money cents={r.unitCostCents} />
+												<Money cents={r.unitPriceCents ?? r.unitCostCents} />
 											</TableCell>
+											{landed ? (
+												<TableCell class="text-right">
+													<Money cents={r.unitCostCents} />
+												</TableCell>
+											) : null}
 										</TableRow>
 									))}
 								</TableBody>

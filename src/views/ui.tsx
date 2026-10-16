@@ -306,9 +306,21 @@ export function CardEmpty(props: { icon?: IconNode; children?: Child; large?: bo
  * A card that folds open (native <details>, no JavaScript), e.g. an "Edit" form below a detail page.
  * The chevron rotates only when its own <details> is open, not when an ancestor is.
  */
-export function CollapsibleCard(props: { title: Child; icon?: IconNode; open?: boolean; children: Child }) {
+export function CollapsibleCard(props: {
+	title: Child;
+	icon?: IconNode;
+	open?: boolean;
+	/** An anchor, for a redirect back to the card. */
+	id?: string;
+	children: Child;
+}) {
 	return (
-		<details data-slot="card" open={props.open} class="rounded-xl border bg-card text-card-foreground shadow-sm">
+		<details
+			data-slot="card"
+			id={props.id}
+			open={props.open}
+			class="rounded-xl border bg-card text-card-foreground shadow-sm"
+		>
 			<summary class="flex min-h-(--control-h) list-none items-center gap-2 rounded-xl px-6 py-4 text-sm font-semibold outline-none hover:bg-accent/50 focus-visible:ring-[3px] focus-visible:ring-ring/50 [&::-webkit-details-marker]:hidden">
 				{props.icon ? <Icon icon={props.icon} class="size-4 text-muted-foreground" /> : null}
 				<span class="flex-1">{props.title}</span>

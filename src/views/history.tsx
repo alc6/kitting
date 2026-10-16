@@ -140,6 +140,8 @@ function FieldValue(props: { table: string; column: string; value: unknown; labe
 		};
 		return <span>{statuses[table]?.[text] ?? text}</span>;
 	}
+	if (column === "charges_spread")
+		return <span>{(t.purchasing.charges.spreads as Record<string, string>)[text] ?? text}</span>;
 	if (column.endsWith("_at")) return <span class="tabular-nums">{shortDateTime(text)}</span>;
 	return <span class="break-words">{text}</span>;
 }

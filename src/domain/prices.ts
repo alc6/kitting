@@ -83,13 +83,20 @@ export async function partPriceHistory(db: Db, partId: number) {
 		.orderBy(desc(priceHistory.validFrom), desc(priceHistory.id));
 }
 
-/** Prices actually paid for a part: its receipts (at the PO price), newest first. */
+/**
+ * Prices actually paid for a part: its receipts, newest first, with the PO line's price (what the supplier charged)
+ * and the unit cost the receipt entered stock at (the landed cost when the PO spreads charges, D204). Moves name their
+ * PO, not their line: the line is the first of the same part and option values (null when none matches).
+ */
 export async function paidPrices(db: Db, partId: number, limit = 50) {
 	return db
 		.select({
 			at: stockMoves.at,
 			qtyMilli: stockMoves.qtyMilli,
 			unitCostCents: stockMoves.unitCostCents,
+			unitPriceCents: sql<number | null>`(SELECT l.unit_price_cents FROM po_lines l
+				WHERE l.po_id = ${stockMoves.refId} AND l.part_id = ${stockMoves.partId} AND l.option_values IS ${stockMoves.optionValues}
+				ORDER BY l.id LIMIT 1)`,
 			poId: purchaseOrders.id,
 			poNumber: purchaseOrders.number,
 			supplierId: suppliers.id,
@@ -103,12 +110,13 @@ export async function paidPrices(db: Db, partId: number, limit = 50) {
 		.limit(limit);
 }
 
-/** Last price paid to each supplier for a part (for the offers card). */
+/** Last price paid to each supplier for a part (for the offers card): its price, before charges (D204). */
 export async function lastPaidBySupplier(db: Db, partId: number) {
 	const rows = await paidPrices(db, partId, 500);
-	const last = new Map<number, { unitCostCents: number | null; at: string }>();
+	const last = new Map<number, { unitPriceCents: number | null; at: string }>();
 	for (const r of rows)
-		if (!last.has(r.supplierId)) last.set(r.supplierId, { unitCostCents: r.unitCostCents, at: r.at });
+		if (!last.has(r.supplierId))
+			last.set(r.supplierId, { unitPriceCents: r.unitPriceCents ?? r.unitCostCents, at: r.at });
 	return last;
 }
 

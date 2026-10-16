@@ -360,7 +360,7 @@ const receivePo = tool({
 			names[qtyField] = `${label} qty`;
 			names[serialsField] = `${label} serials`;
 		}
-		const { receipts, errors } = planReceipts(lines, values);
+		const { receipts, errors } = planReceipts(po, lines, values);
 		if (Object.keys(errors).length) {
 			const messages = Object.entries(errors).map(([f, key]) => {
 				// serial_count names the quantity received on that line.

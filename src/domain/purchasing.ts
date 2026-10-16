@@ -3,6 +3,7 @@ import { and, asc, desc, eq, inArray, type SQL, sql } from "drizzle-orm";
 import { z } from "zod";
 import {
 	builds,
+	CHARGE_SPREADS,
 	machines,
 	type PoShipment,
 	type PoStatus,
@@ -16,7 +17,7 @@ import {
 } from "../db/schema";
 import type { Statement } from "../lib/db";
 import { likePattern } from "../lib/sql";
-import { lineCostCents, MILLI, parseMilli, roundOrderQty } from "../lib/units";
+import { formatCentsInput, lineCostCents, MILLI, parseMilli, roundDiv, roundOrderQty } from "../lib/units";
 import { type FieldErrors, field } from "../lib/validation";
 import type { Db } from "../types";
 import { loadGraph } from "./assemblies";
@@ -31,6 +32,7 @@ import {
 	walkTree,
 } from "./assembly-graph";
 import { OPEN_STATUSES, openBuildPicks } from "./builds";
+import { type PoCharges, spreadCharges } from "./landed-cost";
 import { NO_TERMS, type OfferTerms, offersByPart, poUnitPrice } from "./offers";
 import { idsOf, keyLabel, keyValues, type OptionKey, splitStockKey, stockKey } from "./option-keys";
 import { loadOptions } from "./options";
@@ -40,6 +42,8 @@ import { moveValues, onHandByKey } from "./stock";
 export const OPEN_PO_STATUSES: PoStatus[] = ["draft", "sent", "partial"];
 /** POs that can receive goods. */
 export const RECEIVABLE_PO_STATUSES: PoStatus[] = ["draft", "sent", "partial"];
+/** POs whose charges can change (D201): open ones, since the real freight is often known after sending. */
+export const CHARGES_PO_STATUSES: PoStatus[] = ["draft", "sent", "partial"];
 
 // ---------------------------------------------------------------------------
 // Shortages
@@ -426,6 +430,41 @@ export const poEditInput = z.object({
 	notes: field.text(),
 });
 
+/** The charges form of a PO (D201): amounts in the workshop's currency, empty = 0. */
+export const poChargesInput = z.object({
+	shipping: field.money(),
+	duties: field.money(),
+	discount: field.money(),
+	charges_spread: field.oneOf(CHARGE_SPREADS),
+});
+
+export type ChargeValues = PoCharges;
+
+export function chargeValues(d: z.output<typeof poChargesInput>): ChargeValues {
+	return {
+		shippingCents: d.shipping ?? 0,
+		dutiesCents: d.duties ?? 0,
+		discountCents: d.discount ?? 0,
+		chargesSpread: d.charges_spread,
+	};
+}
+
+/** The charges of a PO as its form shows them (to edit them, or to build the form an MCP call would post). */
+export function chargeFormValues(c: ChargeValues): Record<string, string> {
+	const amount = (cents: number) => (cents ? formatCentsInput(cents) : "");
+	return {
+		shipping: amount(c.shippingCents),
+		duties: amount(c.dutiesCents),
+		discount: amount(c.discountCents),
+		charges_spread: c.chargesSpread,
+	};
+}
+
+/** Rules shared by the charges form and update_draft_po (D201): a discount cannot exceed the rest of the order. */
+export function chargeRuleErrors(c: ChargeValues, partsCents: number): FieldErrors {
+	return c.discountCents > partsCents + c.shippingCents + c.dutiesCents ? { discount: "discount_too_large" } : {};
+}
+
 export const poLineInput = z.object({
 	part: field.required(64),
 	qty: field.qty({ positive: true }),
@@ -554,6 +593,13 @@ export function updatePoStatement(
 		.update(purchaseOrders)
 		.set({ ...d, updatedAt: now, updatedBy: user })
 		.where(eq(purchaseOrders.id, poId));
+}
+
+export function updatePoChargesStatement(db: Db, poId: number, c: ChargeValues, user: string, now: string) {
+	return db
+		.update(purchaseOrders)
+		.set({ ...c, updatedAt: now, updatedBy: user })
+		.where(and(eq(purchaseOrders.id, poId), inArray(purchaseOrders.status, CHARGES_PO_STATUSES)));
 }
 
 export function addPoLineStatement(
@@ -738,7 +784,9 @@ export async function listPos(db: Db, f: PoFilters = {}) {
 			supplierId: suppliers.id,
 			supplierName: suppliers.name,
 			lineCount: sql<number>`(SELECT count(*) FROM po_lines l WHERE l.po_id = ${purchaseOrders.id})`,
-			totalCents: sql<number>`(SELECT COALESCE(SUM((l.qty_milli * l.unit_price_cents + 500) / 1000), 0) FROM po_lines l WHERE l.po_id = ${purchaseOrders.id})`,
+			// Lines and charges (D201), as the PO page totals them.
+			totalCents: sql<number>`(SELECT COALESCE(SUM((l.qty_milli * l.unit_price_cents + 500) / 1000), 0) FROM po_lines l WHERE l.po_id = ${purchaseOrders.id})
+				+ ${purchaseOrders.shippingCents} + ${purchaseOrders.dutiesCents} - ${purchaseOrders.discountCents}`,
 			// The shipment recorded last, for the list's tracking column.
 			shipmentCount: sql<number>`(SELECT count(*) FROM po_shipments s WHERE s.po_id = ${purchaseOrders.id})`,
 			carrier: sql<
@@ -778,6 +826,32 @@ export async function getPoLines(db: Db, poId: number) {
 	});
 }
 
+/** The landed unit cost of every line of a PO (D202), keyed by line id; the line price when nothing is spread. */
+export function poLanded(po: PoCharges, lines: { line: { id: number; qtyMilli: number; unitPriceCents: number } }[]) {
+	return spreadCharges(
+		po,
+		lines.map((l) => l.line),
+	);
+}
+
+/**
+ * How much of a PO's charges is in stock value (D203): what its receipt moves added above the line prices. Read from
+ * the ledger, so it is what valuation and costing use: shares rounded per unit, and charges changed after a receipt,
+ * make it differ from the charges.
+ */
+export async function chargesInStockCents(
+	db: Db,
+	poId: number,
+	lines: { line: { receivedQtyMilli: number; unitPriceCents: number } }[],
+): Promise<number> {
+	const rows = await db
+		.select({ value: sql<number | null>`SUM(${stockMoves.qtyMilli} * ${stockMoves.unitCostCents})` })
+		.from(stockMoves)
+		.where(and(eq(stockMoves.refType, "po"), eq(stockMoves.refId, poId), eq(stockMoves.reason, "receipt")));
+	const atPrices = lines.reduce((s, l) => s + l.line.receivedQtyMilli * l.line.unitPriceCents, 0);
+	return roundDiv((rows[0]?.value ?? 0) - atPrices, MILLI);
+}
+
 function queryPoLines(db: Db, poId: number) {
 	return db
 		.select({
@@ -805,7 +879,8 @@ export type Receipt = {
 	/** The line's option values: what is received (D191). */
 	optionValues: OptionKey;
 	qtyMilli: number;
-	unitPriceCents: number;
+	/** What the units enter stock at: the line price, plus the line's share of the charges when they are spread (D202). */
+	unitCostCents: number;
 	serials: string[];
 };
 
@@ -816,14 +891,19 @@ export const receiveSerialsField = (lineId: number) => `serials_${lineId}`;
 /**
  * Reads what was received from the receive form's fields (or the same fields built by an MCP tool): a quantity per
  * line, zero or more, and optionally one serial per unit (newlines, commas or semicolons between them). Errors are
- * keyed by field; nothing received at all is an error too.
+ * keyed by field; nothing received at all is an error too. Each receipt is valued at its line's landed unit cost,
+ * from the PO's charges as they are now and all its lines (D202, D203).
  */
 export function planReceipts(
-	lines: { line: { id: number; partId: number; unitPriceCents: number; optionValues: OptionKey } }[],
+	po: PoCharges,
+	lines: {
+		line: { id: number; partId: number; qtyMilli: number; unitPriceCents: number; optionValues: OptionKey };
+	}[],
 	values: Record<string, string>,
 ): { receipts: Receipt[]; errors: FieldErrors } {
 	const errors: FieldErrors = {};
 	const receipts: Receipt[] = [];
+	const landed = poLanded(po, lines);
 	for (const l of lines) {
 		const qtyName = receiveQtyField(l.line.id);
 		const serialName = receiveSerialsField(l.line.id);
@@ -852,7 +932,7 @@ export function planReceipts(
 			partId: l.line.partId,
 			optionValues: l.line.optionValues,
 			qtyMilli: qty,
-			unitPriceCents: l.line.unitPriceCents,
+			unitCostCents: landed.get(l.line.id)?.landedUnitCents ?? l.line.unitPriceCents,
 			serials,
 		});
 	}
@@ -883,7 +963,7 @@ export function receiptStatements(
 								partId: r.partId,
 								qtyMilli: MILLI,
 								serial,
-								unitCostCents: r.unitPriceCents,
+								unitCostCents: r.unitCostCents,
 								optionValues: r.optionValues,
 							},
 							ctx,
@@ -899,7 +979,7 @@ export function receiptStatements(
 							partId: r.partId,
 							qtyMilli: r.qtyMilli,
 							serial: null,
-							unitCostCents: r.unitPriceCents,
+							unitCostCents: r.unitCostCents,
 							optionValues: r.optionValues,
 						},
 						ctx,
