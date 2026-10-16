@@ -1,0 +1,511 @@
+// Storage locations (D194–D198): bin codes, plan geometry, drawing units, where parts are kept, and where the location
+// shows up (part page, pick list, receipt, inventory count, search), with the permissions and undo.
+import { describe, expect, it } from "vitest";
+import { revertChangeSet } from "../src/domain/revert";
+import {
+	binCode,
+	frontEdge,
+	locationSortKey,
+	type PlanUnit,
+	parseBin,
+	planSize,
+	positionRect,
+} from "../src/domain/storage";
+import { loadDemo, NOT_ADMIN, one, partId, postForm, request, rows, setRole, TESTER, testDb } from "./helpers";
+
+const rack = (front: PlanUnit["front"]): PlanUnit => ({
+	col: 2,
+	row: 1,
+	width: 10,
+	depth: 2,
+	front,
+	positions: 5,
+	kind: "rack",
+});
+
+describe("bin codes and plan geometry", () => {
+	it("reads and writes bin codes", () => {
+		expect(parseBin("a-2-3")).toEqual({ code: "A", level: 2, position: 3 });
+		expect(parseBin(" B2 4 1 ")).toEqual({ code: "B2", level: 4, position: 1 });
+		expect(parseBin("C-4")).toEqual({ code: "C", level: 4, position: null });
+		expect(parseBin("P")).toEqual({ code: "P", level: null, position: null });
+		expect(parseBin("LED-5W-CW")).toBeNull();
+		expect(parseBin("")).toBeNull();
+		expect([binCode("A", 2, 3), binCode("A", 2, null), binCode("P", null, null)]).toEqual(["A-2-3", "A-2", "P"]);
+	});
+
+	it("counts positions from the left of someone facing the front", () => {
+		// Facing a south front you look north: position 1 is at the west end.
+		expect(positionRect(rack("south"), 1)).toEqual({ x: 2, y: 1, w: 2, h: 2 });
+		// Facing a north front you look south: position 1 is at the east end.
+		expect(positionRect(rack("north"), 1)).toEqual({ x: 10, y: 1, w: 2, h: 2 });
+		const cabinet: PlanUnit = { col: 20, row: 2, width: 2, depth: 4, front: "west", positions: 4, kind: "cabinet" };
+		expect(positionRect(cabinet, 1)).toEqual({ x: 20, y: 2, w: 2, h: 1 });
+		expect(positionRect({ ...cabinet, front: "east" }, 1)).toEqual({ x: 20, y: 5, w: 2, h: 1 });
+		expect(frontEdge(rack("south"))).toEqual([2, 3, 12, 3]);
+		expect(frontEdge(cabinet)).toEqual([20, 2, 20, 6]);
+	});
+
+	it("sizes the plan to its units, with a minimum", () => {
+		expect(planSize([])).toEqual({ width: 24, depth: 14 });
+		expect(planSize([{ col: 30, row: 2, width: 4, depth: 20 }])).toEqual({ width: 35, depth: 23 });
+	});
+
+	it("sorts locations by unit, level and position, parts without one last", () => {
+		const loc = (code: string, level: number | null, position: number | null) => ({
+			unit: { id: 1, code, name: "", kind: "rack" as const },
+			level,
+			position,
+			note: "",
+			via: [],
+			room: null,
+			roomId: null,
+		});
+		const keys = [loc("B", 1, 1), undefined, loc("A", 2, 10), loc("A", 2, 3), loc("A", null, null)].map(
+			locationSortKey,
+		);
+		expect([...keys].sort()).toEqual([keys[4], keys[3], keys[2], keys[0], keys[1]]);
+	});
+});
+
+const unitForm = (over: Record<string, string> = {}) => ({
+	code: "A",
+	name: "Electronics",
+	kind: "rack",
+	col: "1",
+	row: "1",
+	width: "10",
+	depth: "2",
+	front: "south",
+	levels: "4",
+	positions: "5",
+	notes: "",
+	...over,
+});
+
+async function drawUnit(over: Record<string, string> = {}): Promise<number> {
+	const res = await postForm("/locations", unitForm(over));
+	expect(res.status).toBe(303);
+	return Number(/\/locations\/(\d+)/.exec(res.headers.get("Location") ?? "")?.[1]);
+}
+
+async function locate(ref: string, bin: string, note = "") {
+	const id = await partId(ref);
+	return postForm(`/locations/parts/${id}?back=/parts/${id}`, { bin, note });
+}
+
+describe("drawing the plan", () => {
+	it("creates units, logged and shown on the plan, and refuses bad ones", async () => {
+		const a = await drawUnit();
+		expect(await one("SELECT code, kind, levels, positions FROM storage_units WHERE id = ?", a)).toEqual({
+			code: "A",
+			kind: "rack",
+			levels: 4,
+			positions: 5,
+		});
+		expect(await one("SELECT summary FROM change_sets ORDER BY id DESC LIMIT 1")).toEqual({
+			summary: "Create storage unit A",
+		});
+		// Codes are upper-cased; a taken code, an overlap or a bad code is refused.
+		const taken = await postForm("/locations", unitForm({ code: "a", col: "15" }));
+		expect(taken.status).toBe(422);
+		expect(await taken.text()).toContain("Another storage unit has this code.");
+		const overlap = await postForm("/locations", unitForm({ code: "B", col: "5" }));
+		expect(await overlap.text()).toContain("Overlaps another storage unit on the plan.");
+		const bad = await postForm("/locations", unitForm({ code: "A-1", col: "15" }));
+		expect(await bad.text()).toContain("Use 1 to 6 letters or digits");
+		// A landmark may surround units; a floor area is stored as one place.
+		await drawUnit({ code: "IN", kind: "landmark", col: "0", row: "0", width: "20", depth: "10" });
+		const p = await drawUnit({ code: "P", kind: "floor", col: "15", row: "5", levels: "9", positions: "9" });
+		expect(await one("SELECT levels, positions FROM storage_units WHERE id = ?", p)).toEqual({
+			levels: 1,
+			positions: 1,
+		});
+		const plan = await (await request("/locations")).text();
+		expect(plan).toContain(`href="/locations/${a}"`);
+		expect(plan).toContain("Electronics");
+	});
+
+	it("draws the front view with a link per bin, and the editor with the unit to drag", async () => {
+		const a = await drawUnit();
+		const page = await (await request(`/locations/${a}`)).text();
+		expect(page).toContain(`href="/locations/${a}?bin=A-4-5#bin"`);
+		expect(page).toContain("4 level(s) × 5 position(s) · front south");
+		const editor = await (await request(`/locations/${a}/edit`)).text();
+		expect(editor).toContain('data-plan-editor=""');
+		expect(editor).toContain('data-form="unit-form"');
+		expect(editor).toContain("data-editing");
+		expect(editor).toContain("data-handle");
+	});
+});
+
+describe("where parts are kept", () => {
+	it("sets, moves and clears a part's location, with readable history and undo", async () => {
+		await loadDemo();
+		await drawUnit();
+		await drawUnit({ code: "P", kind: "floor", col: "15", row: "5" });
+		const led = await partId("LED-5W-CW");
+		const res = await locate("LED-5W-CW", "a-2-3", "Antistatic bags");
+		expect(res.headers.get("Location")).toBe(`/parts/${led}?ok=saved`);
+		expect(await one("SELECT level, position, note FROM part_locations WHERE part_id = ?", led)).toEqual({
+			level: 2,
+			position: 3,
+			note: "Antistatic bags",
+		});
+		const set = await one<{ id: number; summary: string }>(
+			"SELECT id, summary FROM change_sets ORDER BY id DESC LIMIT 1",
+		);
+		expect(set.summary).toBe("Set the location of LED-5W-CW to A-2-3");
+		// The part page shows it in the header and a Location card; its note is on the Location tab.
+		const partPage = await (await request(`/parts/${led}`)).text();
+		expect(partPage).toContain(">A-2-3</a>");
+		expect(partPage).toContain("Rack A · level 2 · position 3");
+		expect(await (await request(`/parts/${led}/location`)).text()).toContain("Antistatic bags");
+		// A floor area takes its code only; a bin outside the unit is refused.
+		expect((await locate("BOX-LAMP", "P")).status).toBe(303);
+		for (const [bin, message] of [
+			["P-1-1", "A floor area has no levels"],
+			["A-5-1", "This unit has fewer levels."],
+			["A-1-6", "This unit has fewer positions."],
+			["Q-1-1", "No storage unit has this code."],
+			["A--", "Not a bin code"],
+		]) {
+			const refused = await locate("DRV-12V", bin as string);
+			expect(refused.status, bin).toBe(422);
+			expect(await refused.text()).toContain(message);
+		}
+		// Moving it is an update; undoing the move brings the old bin back.
+		await locate("LED-5W-CW", "A-1-1");
+		const moved = (await one<{ id: number }>("SELECT max(id) AS id FROM change_sets")).id;
+		expect(
+			await revertChangeSet(testDb(), { role: "operator", seeCosts: false }, moved, {
+				user: TESTER,
+				summary: () => "Undo",
+			}),
+		).toMatchObject({ ok: true });
+		expect(await one("SELECT level, position FROM part_locations WHERE part_id = ?", led)).toEqual({
+			level: 2,
+			position: 3,
+		});
+		const history = await (await request(`/history/${set.id}`)).text();
+		expect(history).toContain("LED-5W-CW");
+		// An empty bin clears the location.
+		await locate("LED-5W-CW", "");
+		expect(await rows("SELECT id FROM part_locations WHERE part_id = ?", led)).toEqual([]);
+		expect(await one("SELECT summary FROM change_sets ORDER BY id DESC LIMIT 1")).toEqual({
+			summary: "Clear the location of LED-5W-CW",
+		});
+	});
+
+	it("assigns a part from a unit's page, and keeps units consistent with what they hold", async () => {
+		await loadDemo();
+		const a = await drawUnit();
+		const res = await postForm(`/locations/${a}/assign`, { part: "drv-12v", bin: "A-4-5", note: "" });
+		expect(res.headers.get("Location")).toBe(`/locations/${a}?bin=A-4-5&ok=saved`);
+		const page = await (await request(`/locations/${a}?bin=A-4-5`)).text();
+		expect(page).toContain("DRV-12V");
+		const unknown = await postForm(`/locations/${a}/assign`, { part: "NOPE", bin: "A-1-1", note: "" });
+		expect(await unknown.text()).toContain("Unknown part reference");
+		// Shrinking under a stored part, turning it into a landmark or deleting it is refused.
+		const shrink = await postForm(`/locations/${a}`, unitForm({ levels: "3" }));
+		expect(await shrink.text()).toContain("A part is stored in a bin this would remove");
+		const landmark = await postForm(`/locations/${a}`, unitForm({ kind: "landmark" }));
+		expect(await landmark.text()).toContain("Parts or units are stored in this unit");
+		const del = await postForm(`/locations/${a}/delete`, {});
+		expect(del.headers.get("Location")).toBe(`/locations/${a}?err=storage_unit_in_use`);
+		// A landmark holds no parts.
+		await drawUnit({ code: "BENCH", kind: "landmark", col: "1", row: "8" });
+		expect(await (await locate("DRV-12V", "BENCH")).text()).toContain("A landmark holds no parts.");
+	});
+
+	it("lets operators put parts away but not draw the plan", async () => {
+		await loadDemo();
+		const a = await drawUnit();
+		await setRole("operator");
+		const id = await partId("DRV-12V");
+		expect((await postForm(`/locations/parts/${id}`, { bin: "A-1-1", note: "" }, NOT_ADMIN)).status).toBe(303);
+		expect((await postForm(`/locations/${a}`, unitForm({ name: "Other" }), NOT_ADMIN)).status).toBe(403);
+		const page = await (await request(`/locations/${a}`, {}, NOT_ADMIN)).text();
+		expect(page).toContain("Assign a part");
+		expect(page).not.toContain(`/locations/${a}/edit`);
+	});
+});
+
+describe("where the location shows up", () => {
+	async function plan() {
+		await loadDemo();
+		await drawUnit();
+		await drawUnit({ code: "B", col: "13" });
+		await drawUnit({
+			code: "C",
+			kind: "cabinet",
+			col: "23",
+			row: "2",
+			width: "2",
+			depth: "5",
+			front: "west",
+			levels: "6",
+			positions: "4",
+		});
+		await locate("PSU-EU-12V", "A-1-1");
+		await locate("BASE-PLATE", "B-1-1");
+		await locate("SCREW-M3X8", "C-4-1");
+		await locate("ARM-ASSY", "C-1-1");
+	}
+
+	it("orders the pick list by location, grouped by unit, with reference order one link away", async () => {
+		await plan();
+		const lamp = await partId("LAMP-DESK");
+		const planned = await postForm("/builds", {
+			part_id: String(lamp),
+			assembly_id: String(
+				(await one<{ id: number }>("SELECT id FROM assemblies WHERE parent_part_id = ? AND status = 'active'", lamp))
+					.id,
+			),
+			qty: "1",
+			serial: "L-9",
+			planned_for: "",
+			notes: "",
+		});
+		const build = /\/builds\/(\d+)/.exec(planned.headers.get("Location") ?? "")?.[1];
+		const html = await (await request(`/builds/${build}`)).text();
+		const pick = html.slice(html.indexOf('id="pick-lines"'));
+		const order = ["PSU-EU-12V", "BASE-PLATE", "ARM-ASSY", "SCREW-M3X8", "BOX-LAMP"].map((r) =>
+			pick.indexOf(`>${r}</a>`),
+		);
+		expect(order.every((i) => i > 0)).toBe(true);
+		expect([...order].sort((x, y) => x - y)).toEqual(order);
+		expect(pick).toContain("Rack A");
+		expect(pick).toContain("No location");
+		expect(pick).toContain(`href="/builds/${build}?order=ref#pick-lines"`);
+		const refPage = await (await request(`/builds/${build}?order=ref`)).text();
+		const byRef = refPage.slice(refPage.indexOf('id="pick-lines"'));
+		expect(byRef.indexOf(">ARM-ASSY</a>")).toBeLessThan(byRef.indexOf(">PSU-EU-12V</a>"));
+	});
+
+	it("filters the inventory count by unit, in bin order, and finds bins and locations in search", async () => {
+		await plan();
+		const c = (await one<{ id: number }>("SELECT id FROM storage_units WHERE code = 'C'")).id;
+		const count = await (await request(`/stock/count?unit=${c}`)).text();
+		const results = count.slice(count.indexOf('id="results"'));
+		expect(results.indexOf(">ARM-ASSY</a>")).toBeGreaterThan(0);
+		expect(results.indexOf(">ARM-ASSY</a>")).toBeLessThan(results.indexOf(">SCREW-M3X8</a>"));
+		expect(results).not.toContain(">PSU-EU-12V</a>");
+		const none = await (await request("/stock/count?unit=none")).text();
+		expect(none).toContain(">DRV-12V</a>");
+		expect(none.slice(none.indexOf('id="results"'))).not.toContain(">PSU-EU-12V</a>");
+		const search = await (await request("/search?q=C-4")).text();
+		expect(search).toContain(`href="/locations/${c}?bin=C-4"`);
+		const found = await (await request("/search?q=SCREW-M3X8")).text();
+		expect(found).toContain(">C-4-1</span>");
+		const onPlan = await (await request("/locations?q=screw-m3x8")).text();
+		expect(onPlan).toContain("Drawer cabinet C · level 4 · position 1");
+	});
+
+	it("shows where each received line goes, in put-away order", async () => {
+		await plan();
+		const supplier = (await one<{ id: number }>("SELECT supplier_id AS id FROM parts WHERE ref = 'PSU-EU-12V'")).id;
+		const created = await postForm("/purchasing/po", { supplier_id: String(supplier), expected_at: "", notes: "" });
+		const po = /\/po\/(\d+)/.exec(created.headers.get("Location") ?? "")?.[1];
+		await postForm(`/purchasing/po/${po}/lines`, { part: "DRV-12V", qty: "5", price: "" });
+		await postForm(`/purchasing/po/${po}/lines`, { part: "PSU-EU-12V", qty: "5", price: "" });
+		await postForm(`/purchasing/po/${po}/send`, {});
+		const html = await (await request(`/purchasing/po/${po}`)).text();
+		const form = html.slice(html.indexOf('id="receive"'));
+		expect(form).toContain("Put away");
+		expect(form.indexOf(">PSU-EU-12V</a>")).toBeLessThan(form.indexOf(">DRV-12V</a>"));
+		const drv = await partId("DRV-12V");
+		expect(form).toContain(`href="/locations/parts/${drv}?back=%2Fpurchasing%2Fpo%2F${po}%23receive"`);
+	});
+});
+
+describe("rooms, doors and units inside units", () => {
+	it("draws rooms and doors without a code, and refuses overlapping rooms", async () => {
+		await drawUnit({ kind: "room", code: "", name: "Stockroom", col: "0", row: "0", width: "20", depth: "10" });
+		await drawUnit({ kind: "door", code: "", name: "", col: "8", row: "9", width: "2", depth: "2" });
+		await drawUnit({ kind: "door", code: "", name: "", col: "12", row: "9", width: "2", depth: "2" });
+		expect(await rows("SELECT code, kind FROM storage_units ORDER BY id")).toEqual([
+			{ code: "STOC", kind: "room" },
+			{ code: "DOOR", kind: "door" },
+			{ code: "DOOR2", kind: "door" },
+		]);
+		const overlap = await postForm(
+			"/locations",
+			unitForm({ kind: "room", code: "", name: "Office", col: "15", row: "5", width: "10", depth: "10" }),
+		);
+		expect(await overlap.text()).toContain("Overlaps another room.");
+		// A rack needs a code; inside the room it takes the room's name in its locations.
+		expect(await (await postForm("/locations", unitForm({ code: "" }))).text()).toContain("Required.");
+		await loadDemo();
+		await drawUnit();
+		await locate("DRV-12V", "A-2-1");
+		const part = await (await request(`/parts/${await partId("DRV-12V")}`)).text();
+		expect(part).toContain("Stockroom · Rack A · level 2 · position 1");
+	});
+
+	it("puts a drawer cabinet in a bin of a rack, and reads its locations through it", async () => {
+		await loadDemo();
+		const a = await drawUnit();
+		const s1 = await drawUnit({
+			code: "S1",
+			kind: "cabinet",
+			placement: "bin",
+			parent_bin: "a-3-3",
+			levels: "4",
+			positions: "3",
+		});
+		expect(
+			await one("SELECT parent_unit_id, parent_level, parent_position FROM storage_units WHERE id = ?", s1),
+		).toEqual({
+			parent_unit_id: a,
+			parent_level: 3,
+			parent_position: 3,
+		});
+		// The rack's front view shows it in its bin, linked to its page; its page says where it stands.
+		const rack = await (await request(`/locations/${a}`)).text();
+		expect(rack).toContain(`href="/locations/${s1}"`);
+		const cabinet = await (await request(`/locations/${s1}`)).text();
+		expect(cabinet).toContain("in A-3-3");
+		// A part in it is found on the plan through the rack, and listed in walking order.
+		await locate("SCREW-M3X8", "S1-2-1");
+		await locate("DIFF-OPAL", "A-3-2");
+		await locate("SWITCH-INL", "A-3-4");
+		const plan = await (await request("/locations?q=SCREW-M3X8")).text();
+		expect(plan).toContain("A-3-3 › S1-2-1");
+		expect(plan).toContain("Rack A · level 3 · position 3 › Drawer cabinet S1 · level 2 · position 1");
+		const order = ["DIFF-OPAL", "SCREW-M3X8", "SWITCH-INL"];
+		const count = await (await request(`/stock/count?unit=${a}`)).text();
+		const results = count.slice(count.indexOf('id="results"'));
+		const at = order.map((r) => results.indexOf(`>${r}</a>`));
+		expect(at.every((i) => i > 0)).toBe(true);
+		expect([...at].sort((x, y) => x - y)).toEqual(at);
+	});
+
+	it("refuses a unit in a bin that cannot hold it, in itself, or too deep", async () => {
+		const a = await drawUnit();
+		await drawUnit({ code: "P", kind: "floor", col: "15", row: "5" });
+		const refused = async (over: Record<string, string>, message: string, path = "/locations") => {
+			const res = await postForm(path, unitForm(over));
+			expect(res.status, message).toBe(422);
+			expect(await res.text()).toContain(message);
+		};
+		await refused({ code: "S1", placement: "bin", parent_bin: "P" }, "This unit has no bins to stand in.");
+		await refused({ code: "S1", placement: "bin", parent_bin: "A-9-1" }, "This unit has fewer levels.");
+		await refused({ code: "S1", placement: "bin", parent_bin: "" }, "Required.");
+		const s1 = await drawUnit({
+			code: "S1",
+			kind: "cabinet",
+			placement: "bin",
+			parent_bin: "A-1-1",
+			levels: "2",
+			positions: "2",
+		});
+		const s2 = await drawUnit({
+			code: "S2",
+			kind: "cabinet",
+			placement: "bin",
+			parent_bin: "S1-2-2",
+			levels: "2",
+			positions: "2",
+		});
+		await drawUnit({
+			code: "S3",
+			kind: "cabinet",
+			placement: "bin",
+			parent_bin: "S2-1-1",
+			levels: "2",
+			positions: "2",
+		});
+		await refused(
+			{ code: "S4", kind: "cabinet", placement: "bin", parent_bin: "S3-1-1" },
+			"Too many units inside each other",
+		);
+		// Rack A cannot move into a cabinet standing in it.
+		await refused(
+			{ code: "A", placement: "bin", parent_bin: "S2-1-1" },
+			"A unit cannot stand in itself",
+			`/locations/${a}`,
+		);
+		// A rack holding a unit cannot shrink under its bin, and cannot be deleted.
+		await refused(
+			{ code: "S1", kind: "cabinet", placement: "bin", parent_bin: "A-1-1", levels: "2", positions: "1" },
+			"A part is stored in a bin this would remove",
+			`/locations/${s1}`,
+		);
+		const del = await postForm(`/locations/${s2}/delete`, {});
+		expect(del.headers.get("Location")).toBe(`/locations/${s2}?err=storage_unit_in_use`);
+		// Only racks and drawer cabinets stand in bins: a floor area sent with a bin stays on the plan.
+		const floor = await drawUnit({
+			code: "F",
+			kind: "floor",
+			placement: "bin",
+			parent_bin: "A-2-2",
+			col: "1",
+			row: "8",
+		});
+		expect(await one("SELECT parent_unit_id FROM storage_units WHERE id = ?", floor)).toEqual({ parent_unit_id: null });
+	});
+});
+
+describe("rooms as pages", () => {
+	it("shows what a room holds, counts it, and sends doors and landmarks to their editor", async () => {
+		await loadDemo();
+		const room = await drawUnit({
+			kind: "room",
+			code: "",
+			name: "Stockroom",
+			col: "0",
+			row: "0",
+			width: "20",
+			depth: "10",
+		});
+		await drawUnit({ kind: "room", code: "", name: "Office", col: "20", row: "0", width: "10", depth: "10" });
+		await drawUnit();
+		await drawUnit({ code: "S1", kind: "cabinet", placement: "bin", parent_bin: "A-3-3", levels: "2", positions: "2" });
+		await drawUnit({ code: "B", col: "22", row: "2", width: "4", depth: "1" });
+		await locate("DRV-12V", "A-2-1");
+		await locate("SCREW-M3X8", "S1-1-1");
+		await locate("BASE-PLATE", "B-1-1");
+		const page = await (await request(`/locations/${room}`)).text();
+		expect(page).toContain(">DRV-12V</a>");
+		expect(page).toContain(">SCREW-M3X8</a>");
+		expect(page).not.toContain(">BASE-PLATE</a>");
+		expect(page).toContain(`href="/stock/count?unit=${room}"`);
+		const count = await (await request(`/stock/count?unit=${room}`)).text();
+		const results = count.slice(count.indexOf('id="results"'));
+		expect(results).toContain(">SCREW-M3X8</a>");
+		expect(results).not.toContain(">BASE-PLATE</a>");
+		// A door has no page: planners get its editor, the others the plan.
+		const door = await drawUnit({ kind: "door", code: "", col: "8", row: "9", width: "2", depth: "2" });
+		expect((await request(`/locations/${door}`)).headers.get("Location")).toBe(`/locations/${door}/edit`);
+		await setRole("operator");
+		expect((await request(`/locations/${door}`, {}, NOT_ADMIN)).headers.get("Location")).toBe("/locations");
+		// Locations is its own page in the sidebar, no longer a Stock tab.
+		const stock = await (await request("/stock")).text();
+		expect(stock).toContain('href="/locations"');
+		expect(stock).not.toContain('href="/stock/locations"');
+	});
+});
+
+describe("the part's Location tab", () => {
+	it("appears once a plan is drawn, with the plan, the unit's front and the change form", async () => {
+		await loadDemo();
+		const id = await partId("DRV-12V");
+		const tabs = (html: string) =>
+			[...html.matchAll(/data-slot="tabs-trigger"[^>]*>(?:<svg[\s\S]*?<\/svg>)?([^<]+)</g)].map((m) => m[1]);
+		expect(tabs(await (await request(`/parts/${id}`)).text())).not.toContain("Location");
+		expect((await request(`/parts/${id}/location`)).headers.get("Location")).toBe(`/parts/${id}`);
+		const a = await drawUnit();
+		await locate("DRV-12V", "A-2-1", "Top shelf box");
+		const overview = await (await request(`/parts/${id}`)).text();
+		expect(tabs(overview)).toContain("Location");
+		expect(overview).toContain(`href="/parts/${id}/location"`);
+		const tab = await (await request(`/parts/${id}/location`)).text();
+		expect(tab).toContain('aria-label="Workshop plan"');
+		expect(tab).toContain(`href="/locations/${a}?bin=A-2-1"`);
+		expect(tab).toContain(`action="/locations/parts/${id}?back=%2Fparts%2F${id}%2Flocation"`);
+		expect(tab).toContain("Top shelf box");
+		const moved = await postForm(`/locations/parts/${id}?back=%2Fparts%2F${id}%2Flocation`, { bin: "A-1-1", note: "" });
+		expect(moved.headers.get("Location")).toBe(`/parts/${id}/location?ok=saved`);
+	});
+});

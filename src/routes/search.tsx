@@ -1,12 +1,14 @@
 import { Hono } from "hono";
 import type { Child } from "hono/jsx";
 import { globalSearch, SEARCH_GROUP_LIMIT, type SearchResults } from "../domain/search";
+import { fullCode } from "../domain/storage";
 import { fmt } from "../i18n";
 import type { AppEnv } from "../types";
 import { StatusBadge } from "../views/assembly";
 import { useApp } from "../views/context";
 import { Icon, type IconNode, icons } from "../views/icons";
 import { page } from "../views/render";
+import { binHref, LocationBadge, whereText } from "../views/storage";
 import { Badge, Card, CardAction, CardContent, CardHeader, CardTitle, EmptyState, Kbd, KindBadge } from "../views/ui";
 import { BuildStatusBadge } from "./builds";
 import { PoStatusBadge } from "./purchasing";
@@ -57,13 +59,24 @@ function Results(props: { q: string; r: SearchResults }) {
 	const { t } = useApp();
 	const { r, q } = props;
 	const enc = encodeURIComponent(q);
-	const total = r.parts.length + r.assemblies.length + r.builds.length + r.pos.length + r.suppliers.length;
+	const total =
+		r.parts.length + r.assemblies.length + r.builds.length + r.pos.length + r.suppliers.length + r.bins.length;
 	if (total === 0) {
 		return <EmptyState icon={icons.search} title={fmt(t.search.none, { q })} description={t.search.prompt} />;
 	}
 	const top = <T,>(rows: T[]) => rows.slice(0, SEARCH_GROUP_LIMIT);
 	return (
 		<div class="grid gap-4 lg:grid-cols-2">
+			<Group title={t.locations.title} icon={icons.mapPin} count={r.bins.length} all="/locations">
+				{r.bins.map((b) => (
+					<Row
+						href={b.level !== null ? binHref(b) : `/locations/${b.unit.id}`}
+						primary={fullCode(b)}
+						secondary={whereText(t, b)}
+						extra={b.unit.name ? <span class="text-xs text-muted-foreground">{b.unit.name}</span> : null}
+					/>
+				))}
+			</Group>
 			<Group title={t.nav.parts} icon={icons.package} count={r.parts.length} all={`/parts?q=${enc}`}>
 				{top(r.parts).map((p) => (
 					<Row
@@ -73,6 +86,7 @@ function Results(props: { q: string; r: SearchResults }) {
 						extra={
 							<>
 								{p.archived ? <Badge variant="muted">{t.common.archivedLabel}</Badge> : null}
+								{r.locations.has(p.id) ? <LocationBadge location={r.locations.get(p.id)} link={false} /> : null}
 								<KindBadge kind={p.kind} />
 							</>
 						}

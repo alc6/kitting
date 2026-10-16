@@ -42,6 +42,8 @@ const TABLES = [
 	"machine_types",
 	"part_option_values",
 	"part_options",
+	"part_locations",
+	"storage_units",
 	"parts",
 	"suppliers",
 ];

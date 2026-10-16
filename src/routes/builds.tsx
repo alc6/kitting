@@ -53,6 +53,7 @@ import { loadOptions } from "../domain/options";
 import { can } from "../domain/permissions";
 import { computeShortages, type ToMakeLine } from "../domain/purchasing";
 import { onHandByKey, serialsInStock } from "../domain/stock";
+import { type Location, locationSortKey, locationsOf, rootBin } from "../domain/storage";
 import { errorText, fmt } from "../i18n";
 import { cn } from "../lib/cn";
 import { isConstraintError } from "../lib/sql";
@@ -76,11 +77,13 @@ import { Icon, icons } from "../views/icons";
 import { Duration, MachineLoadCard, MachineTimeCard } from "../views/machines";
 import { OptionSelects, OptionValues } from "../views/options";
 import { idParam, notFound, nowIso, page, redirectOk, saveChanges, translateErrors } from "../views/render";
+import { LocationBadge } from "../views/storage";
 import {
 	Alert,
 	Badge,
 	Button,
 	Card,
+	CardAction,
 	CardContent,
 	CardDescription,
 	CardEmpty,
@@ -119,6 +122,7 @@ import {
 	TableRow,
 	TextArea,
 	TextField,
+	ToggleLinks,
 } from "../views/ui";
 import { LOW_MARGIN_BP, marginTone } from "./margins";
 
@@ -1188,12 +1192,34 @@ function PickListForm(props: {
 	pick: PickList;
 	values: Record<string, string>;
 	serialHints: Map<number, string[]>;
+	/** Where the components are kept (D195): a Location column, and rows in walking order unless `order` is "ref". */
+	locations: Map<number, Location>;
+	order: "location" | "ref";
 }) {
 	const view = useApp();
 	const { t, locale } = view;
 	const { build } = props.data;
-	const { pick } = props;
-	const requirements = pick.explosion.requirements;
+	const { pick, locations } = props;
+	const located = pick.explosion.requirements.some((r) => locations.has(r.part.id));
+	const byLocation = located && props.order === "location";
+	const requirements = byLocation
+		? [...pick.explosion.requirements].sort((a, b) => {
+				const ka = locationSortKey(locations.get(a.part.id));
+				const kb = locationSortKey(locations.get(b.part.id));
+				return ka < kb ? -1 : ka > kb ? 1 : a.part.ref < b.part.ref ? -1 : 1;
+			})
+		: pick.explosion.requirements;
+	// Rows are grouped by the unit drawn on the plan: a drawer cabinet on a shelf of rack A is picked with rack A.
+	const unitOf = (partId: number) => {
+		const l = locations.get(partId);
+		return l ? rootBin(l).unit.id : 0;
+	};
+	const groupTitle = (l: Location | undefined) => {
+		if (!l) return t.locations.noLocation;
+		const u = rootBin(l).unit;
+		const unit = `${t.locations.kinds[u.kind]} ${u.code}${u.name ? ` · ${u.name}` : ""}`;
+		return l.room ? `${l.room} › ${unit}` : unit;
+	};
 	const goesNegative = shortLines(pick).length > 0;
 	const hasErrors = Object.keys(pick.errors).length > 0 || pick.problems.length > 0;
 	return (
@@ -1222,6 +1248,18 @@ function PickListForm(props: {
 						<Badge variant="secondary">{requirements.length}</Badge>
 					</CardTitle>
 					<CardDescription>{t.builds.pickIntro}</CardDescription>
+					{located ? (
+						<CardAction>
+							<ToggleLinks
+								label={t.locations.location}
+								items={(["location", "ref"] as const).map((o) => ({
+									href: `/builds/${build.id}${o === "ref" ? "?order=ref" : ""}#pick-lines`,
+									label: t.locations.order[o],
+									active: (byLocation ? "location" : "ref") === o,
+								}))}
+							/>
+						</CardAction>
+					) : null}
 				</CardHeader>
 				{goesNegative ? (
 					<CardContent>
@@ -1235,6 +1273,7 @@ function PickListForm(props: {
 						<TableHeader>
 							<TableRow>
 								<TableHead class="w-px">{t.builds.picked}</TableHead>
+								{located ? <TableHead class="w-px">{t.locations.location}</TableHead> : null}
 								<TableHead>{t.builds.component}</TableHead>
 								<TableHead class="text-right">{t.builds.need}</TableHead>
 								<TableHead class="text-right">{t.builds.onHand}</TableHead>
@@ -1242,56 +1281,76 @@ function PickListForm(props: {
 							</TableRow>
 						</TableHeader>
 						<TableBody>
-							{requirements.map((r) => {
+							{requirements.map((r, i) => {
 								const onHand = onHandOfReq(pick.onHand, r);
 								const short = r.qtyMilli - Math.max(0, onHand);
 								const key = stockKey(r.part.id, r.optionValues);
+								const loc = locations.get(r.part.id);
+								const prev = requirements[i - 1];
+								const newGroup = byLocation && (i === 0 || (prev && unitOf(prev.part.id) !== unitOf(r.part.id)));
+								const inGroup = requirements.filter((x) => unitOf(x.part.id) === unitOf(r.part.id)).length;
 								return (
-									<TableRow class="has-checked:bg-success/10 has-checked:hover:bg-success/15">
-										<TableCell class="w-px py-1 pr-0">
-											<label class="flex size-12 cursor-pointer items-center justify-center rounded-md hover:bg-muted">
-												<input
-													type="checkbox"
-													name={`picked:${key}`}
-													aria-label={`${t.builds.picked} ${r.part.ref}`}
-													class="size-6"
-												/>
-											</label>
-										</TableCell>
-										<TableCell>
-											<div class="flex flex-wrap items-center gap-x-2 gap-y-1">
-												<a href={`/parts/${r.part.id}`} class={REF_LINK}>
-													{r.part.ref}
-												</a>
-												<span>{r.part.name}</span>
-												<KindBadge kind={r.part.kind} />
-											</div>
-											<OptionValues options={r.part.options} values={r.optionValues} class="text-sm" />
-										</TableCell>
-										<TableCell class="text-right text-base font-semibold">
-											<Qty milli={r.qtyMilli} unit={r.part.unit} />
-										</TableCell>
-										<TableCell class="text-right">
-											<div class="flex flex-col items-end gap-1">
-												<Qty milli={onHand} unit={r.part.unit} />
-												{short > 0 ? (
-													<Badge variant="warning">{fmt(t.builds.short, { n: formatQtyInput(short, locale) })}</Badge>
-												) : null}
-											</div>
-										</TableCell>
-										<TableCell>
-											{r.part.trackSerial ? (
-												<SerialInputs
-													stockKey={key}
-													partRef={r.part.ref}
-													count={serialCount(r)}
-													values={props.values}
-													errors={pick.errors}
-													hints={props.serialHints.get(r.part.id) ?? []}
-												/>
+									<>
+										{newGroup ? (
+											<TableRow class="bg-muted/60 hover:bg-muted/60">
+												<TableCell colspan={located ? 6 : 5} class="py-1.5 text-sm font-semibold">
+													{groupTitle(loc)}
+													<span class="font-normal text-muted-foreground"> · {inGroup}</span>
+												</TableCell>
+											</TableRow>
+										) : null}
+										<TableRow class="has-checked:bg-success/10 has-checked:hover:bg-success/15">
+											<TableCell class="w-px py-1 pr-0">
+												<label class="flex size-12 cursor-pointer items-center justify-center rounded-md hover:bg-muted">
+													<input
+														type="checkbox"
+														name={`picked:${key}`}
+														aria-label={`${t.builds.picked} ${r.part.ref}`}
+														class="size-6"
+													/>
+												</label>
+											</TableCell>
+											{located ? (
+												<TableCell class="w-px">
+													<LocationBadge location={loc} class={loc ? "text-sm" : undefined} />
+												</TableCell>
 											) : null}
-										</TableCell>
-									</TableRow>
+											<TableCell>
+												<div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+													<a href={`/parts/${r.part.id}`} class={REF_LINK}>
+														{r.part.ref}
+													</a>
+													<span>{r.part.name}</span>
+													<KindBadge kind={r.part.kind} />
+												</div>
+												<OptionValues options={r.part.options} values={r.optionValues} class="text-sm" />
+												{loc?.note ? <span class="block text-sm text-muted-foreground">{loc.note}</span> : null}
+											</TableCell>
+											<TableCell class="text-right text-base font-semibold">
+												<Qty milli={r.qtyMilli} unit={r.part.unit} />
+											</TableCell>
+											<TableCell class="text-right">
+												<div class="flex flex-col items-end gap-1">
+													<Qty milli={onHand} unit={r.part.unit} />
+													{short > 0 ? (
+														<Badge variant="warning">{fmt(t.builds.short, { n: formatQtyInput(short, locale) })}</Badge>
+													) : null}
+												</div>
+											</TableCell>
+											<TableCell>
+												{r.part.trackSerial ? (
+													<SerialInputs
+														stockKey={key}
+														partRef={r.part.ref}
+														count={serialCount(r)}
+														values={props.values}
+														errors={pick.errors}
+														hints={props.serialHints.get(r.part.id) ?? []}
+													/>
+												) : null}
+											</TableCell>
+										</TableRow>
+									</>
 								);
 							})}
 						</TableBody>
@@ -1528,7 +1587,19 @@ async function renderBuild(
 						chosen={chosenComponents(graph, build.assemblyId)}
 					/>
 				) : null}
-				<PickListForm data={data} pick={pick} values={form} serialHints={hints} />
+				<PickListForm
+					data={data}
+					pick={pick}
+					values={form}
+					serialHints={hints}
+					locations={
+						await locationsOf(
+							db,
+							pick.explosion.requirements.map((r) => r.part.id),
+						)
+					}
+					order={c.req.query("order") === "ref" ? "ref" : "location"}
+				/>
 				{pick.explosion.machines.length ? (
 					<MachineTimeCard
 						id="machine-time"

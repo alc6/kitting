@@ -47,6 +47,7 @@ import {
 	updatePoStatement,
 	updateShipmentStatement,
 } from "../domain/purchasing";
+import { type Location, locationSortKey, locationsOf } from "../domain/storage";
 import { errorText, fmt } from "../i18n";
 import { cn } from "../lib/cn";
 import { isConstraintError } from "../lib/sql";
@@ -68,6 +69,7 @@ import { Icon, icons } from "../views/icons";
 import { OptionSelects } from "../views/options";
 import { PartPicker, PartPickerDialog } from "../views/part-picker";
 import { fragment, idParam, notFound, nowIso, page, redirectOk, saveChanges, translateErrors } from "../views/render";
+import { LocationBadge } from "../views/storage";
 import {
 	Alert,
 	Badge,
@@ -934,10 +936,27 @@ function DraftLines(props: {
 	);
 }
 
-function ReceiveForm(props: { po: PoData["po"]; lines: PoLineRow[]; values: FormValues; errors: FieldErrors }) {
+function ReceiveForm(props: {
+	po: PoData["po"];
+	lines: PoLineRow[];
+	values: FormValues;
+	errors: FieldErrors;
+	/** Where each part goes (D195): a Put away column, lines in put-away order. */
+	locations: Map<number, Location>;
+	canAssign: boolean;
+}) {
 	const { t, locale } = useApp();
-	const { po } = props;
+	const { po, locations } = props;
 	const hasErrors = Object.keys(props.errors).length > 0;
+	const located = props.lines.some((l) => locations.has(l.line.partId));
+	const lines = located
+		? [...props.lines].sort((a, b) => {
+				const ka = locationSortKey(locations.get(a.line.partId));
+				const kb = locationSortKey(locations.get(b.line.partId));
+				return ka < kb ? -1 : ka > kb ? 1 : 0;
+			})
+		: props.lines;
+	const back = encodeURIComponent(`/purchasing/po/${po.id}#receive`);
 	return (
 		<Card>
 			<form method="post" action={`/purchasing/po/${po.id}/receive`} class="flex flex-col gap-6" id="receive">
@@ -946,7 +965,10 @@ function ReceiveForm(props: { po: PoData["po"]; lines: PoLineRow[]; values: Form
 						<Icon icon={icons.truck} class="size-4 text-muted-foreground" />
 						{t.purchasing.receiveTitle}
 					</CardTitle>
-					<CardDescription>{t.purchasing.receiveIntro}</CardDescription>
+					<CardDescription>
+						{t.purchasing.receiveIntro}
+						{located ? ` ${t.locations.putAwayHint}` : ""}
+					</CardDescription>
 				</CardHeader>
 				<CardContent class="px-2">
 					{hasErrors ? (
@@ -959,6 +981,7 @@ function ReceiveForm(props: { po: PoData["po"]; lines: PoLineRow[]; values: Form
 						<TableHeader>
 							<TableRow>
 								<TableHead>{t.purchasing.part}</TableHead>
+								{located ? <TableHead>{t.locations.putAway}</TableHead> : null}
 								<TableHead class="text-right">{t.purchasing.qty}</TableHead>
 								<TableHead class="text-right">{t.purchasing.received}</TableHead>
 								<TableHead class="text-right">{t.purchasing.receiveNow}</TableHead>
@@ -966,7 +989,7 @@ function ReceiveForm(props: { po: PoData["po"]; lines: PoLineRow[]; values: Form
 							</TableRow>
 						</TableHeader>
 						<TableBody>
-							{props.lines.map((l) => {
+							{lines.map((l) => {
 								const remaining = Math.max(0, l.line.qtyMilli - l.line.receivedQtyMilli);
 								const qtyName = receiveQtyField(l.line.id);
 								const serialName = receiveSerialsField(l.line.id);
@@ -975,6 +998,18 @@ function ReceiveForm(props: { po: PoData["po"]; lines: PoLineRow[]; values: Form
 								return (
 									<TableRow>
 										<PartCell id={l.line.partId} ref={l.ref} name={l.name} values={l.values} />
+										{located ? (
+											<TableCell>
+												<div class="flex flex-col items-start gap-1.5">
+													<LocationBadge location={locations.get(l.line.partId)} />
+													{!locations.has(l.line.partId) && props.canAssign ? (
+														<Button href={`/locations/parts/${l.line.partId}?back=${back}`} variant="outline" size="sm">
+															{t.locations.setLocation}
+														</Button>
+													) : null}
+												</div>
+											</TableCell>
+										) : null}
 										<TableCell class="text-right">
 											<Qty milli={l.line.qtyMilli} unit={l.unit} />
 										</TableCell>
@@ -1471,7 +1506,19 @@ async function renderPo(
 					/>
 				) : null}
 				{canReceive ? (
-					<ReceiveForm po={po} lines={lines} values={form.receiveValues ?? {}} errors={form.receiveErrors ?? {}} />
+					<ReceiveForm
+						po={po}
+						lines={lines}
+						values={form.receiveValues ?? {}}
+						errors={form.receiveErrors ?? {}}
+						locations={
+							await locationsOf(
+								c.var.db,
+								lines.map((l) => l.line.partId),
+							)
+						}
+						canAssign={can(c.var, "storage.assign")}
+					/>
 				) : null}
 				{po.notes ? (
 					<Card class="gap-3">

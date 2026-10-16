@@ -21,6 +21,7 @@ import {
 	partOptionValues,
 	parts,
 	purchaseOrders,
+	storageUnits,
 	suppliers,
 } from "../db/schema";
 import { runBatch, type Statement } from "../lib/db";
@@ -360,6 +361,8 @@ export const REFERENCE_COLUMNS: Record<string, string> = {
 	machine_type_id: "machine_types",
 	option_id: "part_options",
 	build_id: "builds",
+	unit_id: "storage_units",
+	parent_unit_id: "storage_units",
 };
 
 /** Columns holding option keys (D184): value ids, or option ids for the options chosen per build. */
@@ -422,6 +425,10 @@ export function rowName(table: string, row: Snapshot | null, labels: Labels): st
 			return `${s("name")} (${labelOf(labels, "part_options", row.option_id)})`;
 		case "build_option_choices":
 			return `${labelOf(labels, "parts", row.part_id)} (${labelOf(labels, "builds", row.build_id)})`;
+		case "storage_units":
+			return s("code");
+		case "part_locations":
+			return labelOf(labels, "parts", row.part_id);
 		case "files":
 			return `${s("name")} (${
 				row.part_id !== null && row.part_id !== undefined
@@ -444,6 +451,7 @@ export async function referenceLabels(db: Db, views: EntryView[]): Promise<Map<s
 		part_options: new Set(),
 		part_option_values: new Set(),
 		builds: new Set(),
+		storage_units: new Set(),
 	};
 	for (const v of views) {
 		for (const [col, table] of Object.entries(REFERENCE_COLUMNS)) {
@@ -495,6 +503,11 @@ export async function referenceLabels(db: Db, views: EntryView[]): Promise<Map<s
 				.innerJoin(partOptions, eq(partOptionValues.optionId, partOptions.id))
 				.where(inArray(partOptionValues.id, part)),
 		builds: (part) => db.select({ id: builds.id, label: builds.number }).from(builds).where(inArray(builds.id, part)),
+		storage_units: (part) =>
+			db
+				.select({ id: storageUnits.id, label: storageUnits.code })
+				.from(storageUnits)
+				.where(inArray(storageUnits.id, part)),
 	};
 	for (const [table, query] of Object.entries(queries)) {
 		for (const part of chunks([...(ids[table] ?? [])])) {

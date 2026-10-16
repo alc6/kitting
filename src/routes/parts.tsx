@@ -1,7 +1,16 @@
 import { asc, desc, eq } from "drizzle-orm";
 import type { Context } from "hono";
 import { Hono } from "hono";
-import { type FileRow, PART_KINDS, type Part, type PartKind, parts, stockMoves, suppliers } from "../db/schema";
+import {
+	type FileRow,
+	PART_KINDS,
+	type Part,
+	type PartKind,
+	parts,
+	type StorageUnit,
+	stockMoves,
+	suppliers,
+} from "../db/schema";
 import {
 	assemblyLabel,
 	createAssemblyStatements,
@@ -55,6 +64,19 @@ import {
 import { can } from "../domain/permissions";
 import { lastPaidBySupplier, paidPrices, partPriceHistory } from "../domain/prices";
 import { averageCosts, stockByKey } from "../domain/stock";
+import {
+	binCodes,
+	hasBins,
+	hasPlan,
+	indexUnits,
+	type Location,
+	listUnits,
+	locationCode,
+	locationOf,
+	nestedIn,
+	planSize,
+	unitContents,
+} from "../domain/storage";
 import { getSupplier } from "../domain/suppliers";
 import { errorText, fmt } from "../i18n";
 import { cn } from "../lib/cn";
@@ -71,6 +93,7 @@ import { Icon, type IconNode, icons } from "../views/icons";
 import { Duration } from "../views/machines";
 import { OptionValues } from "../views/options";
 import { idParam, notFound, nowIso, page, redirectOk, saveChanges, translateErrors } from "../views/render";
+import { binHref, FrontSvg, LocationBadge, LocationLabel, PlanSvg, planHighlight, WhereLine } from "../views/storage";
 import {
 	Alert,
 	Badge,
@@ -440,26 +463,38 @@ partRoutes.post("/", requirePermission("parts.edit"), async (c) => {
 	return redirectOk(c, `/parts/${row?.id}`);
 });
 
-type PartTab = "overview" | "prices" | "stock" | "history";
+type PartTab = "overview" | "prices" | "stock" | "location" | "history";
 
 /**
  * The tabs a part page has (D182), each its own URL. Prices holds the supplier offers (buy and make parts) and the
  * price history (who sees costs); Stock the moves and builds of a part that is stocked. A tab that could never have
  * content for the part is not offered at all, and its URL goes back to the overview (`partHasTab`).
  */
-function partTabs(kind: PartKind, seeCosts: boolean): PartTab[] {
+function partTabs(kind: PartKind, seeCosts: boolean, plan: boolean): PartTab[] {
 	return [
 		"overview",
 		...(isStocked(kind) || seeCosts ? (["prices"] as const) : []),
 		...(isStocked(kind) ? (["stock"] as const) : []),
+		// Where it is kept, once a plan of the workshop is drawn (D197).
+		...(isStocked(kind) && plan ? (["location"] as const) : []),
 		"history",
 	];
 }
 
-const partHasTab = (part: Part, seeCosts: boolean, tab: PartTab) => partTabs(part.kind, seeCosts).includes(tab);
+const partHasTab = (part: Part, seeCosts: boolean, tab: PartTab, plan: boolean) =>
+	partTabs(part.kind, seeCosts, plan).includes(tab);
 
 /** The part's page header (thumbnail, title, actions), the upload dialog and the tabs, shared by every tab. */
-function PartHeader(props: { part: Part; active: PartTab; imagesEnabled: boolean; uploadError?: string | undefined }) {
+function PartHeader(props: {
+	part: Part;
+	active: PartTab;
+	imagesEnabled: boolean;
+	uploadError?: string | undefined;
+	/** Where the part is kept (D195), shown on every tab. */
+	location?: Location | undefined;
+	/** A plan is drawn: the part has a Location tab. */
+	plan: boolean;
+}) {
 	const view = useApp();
 	const { t, seeCosts } = view;
 	const p = props.part;
@@ -474,6 +509,7 @@ function PartHeader(props: { part: Part; active: PartTab; imagesEnabled: boolean
 			href: `/parts/${p.id}/prices`,
 		},
 		stock: { label: t.parts.tabStock, icon: icons.warehouse, href: `/parts/${p.id}/stock` },
+		location: { label: t.locations.location, icon: icons.mapPin, href: `/parts/${p.id}/location` },
 		history: { label: t.history.tab, icon: icons.history, href: `/parts/${p.id}/history` },
 	};
 	return (
@@ -484,6 +520,7 @@ function PartHeader(props: { part: Part; active: PartTab; imagesEnabled: boolean
 				subtitle={
 					<span class="inline-flex flex-wrap items-center gap-2">
 						<KindBadge kind={p.kind} />
+						{props.location ? <LocationBadge location={props.location} /> : null}
 						<span>{t.kindHelp[p.kind]}</span>
 						{p.archived ? <Badge variant="muted">{t.common.archivedLabel}</Badge> : null}
 					</span>
@@ -540,7 +577,9 @@ function PartHeader(props: { part: Part; active: PartTab; imagesEnabled: boolean
 				}
 			/>
 			{canUpload ? <ImageDialog part={p} uploadError={props.uploadError} /> : null}
-			<LinkTabs items={partTabs(p.kind, seeCosts).map((tab) => ({ ...labels[tab], active: tab === props.active }))} />
+			<LinkTabs
+				items={partTabs(p.kind, seeCosts, props.plan).map((tab) => ({ ...labels[tab], active: tab === props.active }))}
+			/>
 		</>
 	);
 }
@@ -567,6 +606,28 @@ function PartNotices(props: { ok?: string | undefined; err?: string | undefined 
 	);
 }
 
+/** Where the part is kept (D195), as one of the figure cards; it opens the Location tab, with the plan. */
+function LocationFigure(props: { part: Part; location: Location | undefined }) {
+	const { t } = useApp();
+	const l = props.location;
+	return (
+		<a
+			href={`/parts/${props.part.id}/location`}
+			class="flex flex-col gap-2 rounded-xl border bg-card p-5 text-card-foreground no-underline shadow-sm transition-colors hover:bg-accent/50"
+			data-slot="stat"
+		>
+			<div class="flex items-center justify-between gap-2">
+				<span class="text-sm font-medium text-muted-foreground">{t.locations.location}</span>
+				<Icon icon={icons.mapPin} class="size-4 text-muted-foreground" />
+			</div>
+			<div>
+				<LocationBadge location={l} link={false} class={l ? "px-2 py-1.5 text-lg" : "text-sm"} />
+			</div>
+			{l ? <WhereLine location={l} class="text-sm text-balance text-muted-foreground" /> : null}
+		</a>
+	);
+}
+
 /**
  * Overview: the figures, how it is made, details and prices side by side, files, where used and the other
  * assemblies. Offers, price history and stock have their own tabs.
@@ -584,6 +645,9 @@ function OverviewTab(props: {
 	/** The part's options (D183) and its stock per values. */
 	options: OptionDef[];
 	stockByValue: { optionValues: OptionKey; qty: number }[];
+	/** Where the part is kept, and the plan to show it on (none drawn: no card). */
+	location: Location | undefined;
+	units: StorageUnit[];
 	err?: string | undefined;
 }) {
 	const view = useApp();
@@ -608,6 +672,7 @@ function OverviewTab(props: {
 				}
 			/>
 		) : null,
+		stocked && props.units.length > 0 ? <LocationFigure part={p} location={props.location} /> : null,
 		seeCosts ? (
 			<StatCard
 				label={t.parts.cost}
@@ -1805,9 +1870,9 @@ export function MovesTable(props: {
 }
 
 /** What the Overview tab shows, loaded together. */
-async function overviewTab(c: Context<AppEnv>, part: Part, imagesEnabled: boolean) {
+async function overviewTab(c: Context<AppEnv>, part: Part, imagesEnabled: boolean, location: Location | undefined) {
 	const db = c.var.db;
-	const [supplierRows, onHand, assemblySummary, usedIn, offers, average, files, options, stockByValue] =
+	const [supplierRows, onHand, assemblySummary, usedIn, offers, average, files, options, stockByValue, units] =
 		await Promise.all([
 			part.supplierId
 				? db
@@ -1823,6 +1888,7 @@ async function overviewTab(c: Context<AppEnv>, part: Part, imagesEnabled: boolea
 			partFiles(db, part.id),
 			optionsOf(db, part.id),
 			stockByKey(db, null, part.id),
+			isStocked(part.kind) ? listUnits(db).then((rows) => rows.map((r) => r.unit)) : Promise.resolve([]),
 		]);
 	return (
 		<OverviewTab
@@ -1837,6 +1903,8 @@ async function overviewTab(c: Context<AppEnv>, part: Part, imagesEnabled: boolea
 			files={files}
 			options={options}
 			stockByValue={stockByValue}
+			location={location}
+			units={units}
 			err={c.req.query("err")}
 		/>
 	);
@@ -1870,6 +1938,103 @@ async function pricesTab(c: Context<AppEnv>, part: Part, pastPrice?: { values: F
 	);
 }
 
+/** The Location tab (D197): where the part is kept, the plan with its bin marked, the unit's front, and the change form. */
+async function locationTab(c: Context<AppEnv>, part: Part, location: Location | undefined) {
+	const t = c.var.t;
+	const units = (await listUnits(c.var.db)).map((r) => r.unit);
+	const unit = location ? units.find((u) => u.id === location.unit.id) : undefined;
+	const [contents, nested] = unit
+		? [await unitContents(c.var.db, unit.id), nestedIn(indexUnits(units), unit.id)]
+		: [[], []];
+	const canAssign = can(c.var, "storage.assign");
+	const back = encodeURIComponent(`/parts/${part.id}/location`);
+	return (
+		<div class="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_22rem]">
+			<div class="flex min-w-0 flex-col gap-4">
+				<Card>
+					<CardHeader>
+						<CardTitle icon={icons.map}>{t.locations.plan}</CardTitle>
+					</CardHeader>
+					<CardContent>
+						<div class="overflow-x-auto rounded-lg border bg-background">
+							<PlanSvg
+								units={units}
+								size={planSize(units)}
+								highlight={location ? planHighlight(location) : undefined}
+								links="view"
+							/>
+						</div>
+					</CardContent>
+				</Card>
+				{location && unit && hasBins(unit.kind) ? (
+					<Card>
+						<CardHeader>
+							<CardTitle>
+								<a
+									href={binHref(location)}
+								>{`${t.locations.kinds[unit.kind]} ${unit.code}${unit.name ? ` · ${unit.name}` : ""}`}</a>
+							</CardTitle>
+							<CardDescription>{t.locations.binsHint}</CardDescription>
+						</CardHeader>
+						<CardContent>
+							<div class="overflow-x-auto">
+								<FrontSvg
+									unit={unit}
+									contents={contents}
+									nested={nested}
+									selected={{ level: location.level, position: location.position }}
+									href={(level, position) => `/locations/${unit.id}?bin=${unit.code}-${level}-${position}#bin`}
+								/>
+							</div>
+						</CardContent>
+					</Card>
+				) : null}
+			</div>
+			<Card>
+				<CardContent class="flex flex-col gap-5">
+					{location ? (
+						<>
+							<LocationLabel location={location} />
+							{location.note ? <p class="text-sm">{location.note}</p> : null}
+						</>
+					) : (
+						<p class="text-sm text-muted-foreground">{fmt(t.locations.findPartNone, { ref: part.ref })}</p>
+					)}
+					{canAssign ? (
+						<form method="post" action={`/locations/parts/${part.id}?back=${back}`} class="flex flex-col gap-4">
+							<FieldGroup>
+								<TextField
+									name="bin"
+									label={t.locations.binField}
+									hint={t.locations.binHint}
+									list="bin-codes"
+									values={{ bin: location ? locationCode(location) : "" }}
+									errors={{}}
+								/>
+								<datalist id="bin-codes">
+									{binCodes(units).map((b) => (
+										<option value={b} />
+									))}
+								</datalist>
+								<TextField
+									name="note"
+									label={t.locations.note}
+									placeholder={t.locations.noteHint}
+									values={{ note: location?.note ?? "" }}
+									errors={{}}
+								/>
+							</FieldGroup>
+							<div>
+								<Button icon={icons.save}>{location ? t.locations.changeLocation : t.locations.setLocation}</Button>
+							</div>
+						</form>
+					) : null}
+				</CardContent>
+			</Card>
+		</div>
+	);
+}
+
 /** What the Stock tab shows. */
 async function stockTab(c: Context<AppEnv>, part: Part) {
 	const db = c.var.db;
@@ -1898,12 +2063,16 @@ async function partPage(
 	status: 200 | 422 = 200,
 ) {
 	const imagesEnabled = imagesBucket(c.env) !== null;
+	const location = isStocked(part.kind) ? await locationOf(c.var.db, part.id) : undefined;
+	const plan = isStocked(part.kind) && (await hasPlan(c.var.db));
 	const body =
 		tab === "overview"
-			? await overviewTab(c, part, imagesEnabled)
+			? await overviewTab(c, part, imagesEnabled, location)
 			: tab === "prices"
 				? await pricesTab(c, part, pastPrice)
-				: await stockTab(c, part);
+				: tab === "location"
+					? await locationTab(c, part, location)
+					: await stockTab(c, part);
 	return page(
 		c,
 		part.ref,
@@ -1913,6 +2082,8 @@ async function partPage(
 				active={tab}
 				imagesEnabled={imagesEnabled}
 				uploadError={uploadErrorText(c.var.t, c.req.query("err"), "image")}
+				location={location}
+				plan={plan}
 			/>
 			<PartNotices ok={c.req.query("ok")} err={c.req.query("err")} />
 			{body}
@@ -1926,15 +2097,16 @@ partRoutes.get("/:id", async (c) => {
 	return part ? partPage(c, part, "overview") : notFound(c);
 });
 
-// Suppliers & prices and Stock: a tab the part cannot have goes back to the overview (D182).
+// Suppliers & prices, Stock and Location: a tab the part cannot have goes back to the overview (D182).
 for (const [path, tab] of [
 	["/:id/prices", "prices"],
 	["/:id/stock", "stock"],
+	["/:id/location", "location"],
 ] as const) {
 	partRoutes.get(path, async (c) => {
 		const part = await partFromParam(c);
 		if (!part) return notFound(c);
-		if (!partHasTab(part, c.var.seeCosts, tab)) return c.redirect(`/parts/${part.id}`, 303);
+		if (!partHasTab(part, c.var.seeCosts, tab, await hasPlan(c.var.db))) return c.redirect(`/parts/${part.id}`, 303);
 		return partPage(c, part, tab);
 	});
 }
@@ -1943,7 +2115,16 @@ partRoutes.get("/:id/history", async (c) => {
 	const part = await partFromParam(c);
 	if (!part) return notFound(c);
 	const title = `${part.ref} · ${part.name}`;
-	const header = <PartHeader part={part} active="history" imagesEnabled={imagesBucket(c.env) !== null} />;
+	const location = isStocked(part.kind) ? await locationOf(c.var.db, part.id) : undefined;
+	const header = (
+		<PartHeader
+			part={part}
+			active="history"
+			imagesEnabled={imagesBucket(c.env) !== null}
+			location={location}
+			plan={isStocked(part.kind) && (await hasPlan(c.var.db))}
+		/>
+	);
 	return recordHistoryPage(c, title, header, { kind: "part", id: part.id });
 });
 

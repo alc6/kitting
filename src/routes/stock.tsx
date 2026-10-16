@@ -30,6 +30,16 @@ import {
 	stockByKey,
 	valuation,
 } from "../domain/stock";
+import {
+	holdsParts,
+	indexUnits,
+	listUnits,
+	locationSortKey,
+	locationsOf,
+	unitsInRoom,
+	unitTree,
+	withNested,
+} from "../domain/storage";
 import { errorText, fmt } from "../i18n";
 import { cn } from "../lib/cn";
 import { formatCentsInput, formatQtyInput, parseMilli } from "../lib/units";
@@ -41,6 +51,7 @@ import { type IconNode, icons } from "../views/icons";
 import { OptionSelects, OptionValues } from "../views/options";
 import { PartPicker, PartPickerDialog } from "../views/part-picker";
 import { fragment, nowIso, page, saveChanges, translateErrors } from "../views/render";
+import { LocationBadge } from "../views/storage";
 import {
 	Alert,
 	Badge,
@@ -435,13 +446,30 @@ stockRoutes.get("/count", requirePermission("stock.count"), async (c) => {
 async function renderCount(c: Context<AppEnv>, values: FormValues, errors: FieldErrors, status: 200 | 422 = 200) {
 	const t = c.var.t;
 	const q = c.req.query("q") ?? "";
-	const [listed, options, onHand] = await Promise.all([
+	// Count one storage unit at a time (D195): `unit` is a unit id, or "none" for the parts without a location.
+	const unitFilter = c.req.query("unit") ?? "";
+	const [listed, options, onHand, locations, unitRows] = await Promise.all([
 		listParts(c.var.db, { q }),
 		loadOptions(c.var.db),
 		onHandByKey(c.var.db),
+		locationsOf(c.var.db),
+		listUnits(c.var.db),
 	]);
+	const units = unitRows.map((r) => r.unit);
+	const idx = indexUnits(units);
+	const storing = unitTree(units).filter((r) => holdsParts(r.unit.kind));
+	const rooms = units.filter((u) => u.kind === "room");
+	const located = locations.size > 0;
+	// A unit's count includes the units standing in its bins (the drawer cabinet on a shelf of the rack); a room's,
+	// every unit in it.
+	const picked = /^\d+$/.test(unitFilter) ? idx.get(Number(unitFilter)) : undefined;
+	const chosen = picked ? (picked.kind === "room" ? unitsInRoom(idx, picked.id) : withNested(idx, picked.id)) : null;
+	const inFilter = (partId: number) => {
+		const l = locations.get(partId);
+		return unitFilter === "none" ? !l : chosen ? l !== undefined && chosen.has(l.unit.id) : true;
+	};
 	// One line per part, and per combination of values for a part with options (D184).
-	const rows = listed
+	const all = listed
 		.filter((p) => isStocked(p.kind))
 		.flatMap((p) => {
 			const partOptions = options.get(p.id) ?? [];
@@ -455,7 +483,20 @@ async function renderCount(c: Context<AppEnv>, values: FormValues, errors: Field
 					onHand: onHand.get(stockKey(p.id, key)) ?? 0,
 				};
 			});
-		});
+		})
+		.filter((r) => inFilter(r.part.id));
+	// Filtered by unit, the rows follow the bins, as people walk along the shelves.
+	const rows = unitFilter
+		? [...all].sort((a, b) => {
+				const ka = locationSortKey(locations.get(a.part.id));
+				const kb = locationSortKey(locations.get(b.part.id));
+				return ka < kb ? -1 : ka > kb ? 1 : 0;
+			})
+		: all;
+	const params = new URLSearchParams();
+	if (q) params.set("q", q);
+	if (unitFilter) params.set("unit", unitFilter);
+	const query = params.toString() ? `?${params}` : "";
 	const done = c.req.query("done");
 	return page(
 		c,
@@ -464,8 +505,29 @@ async function renderCount(c: Context<AppEnv>, values: FormValues, errors: Field
 			<StockHeader tab="count" />
 			{done ? <Flash message={fmt(t.stock.countDone, { n: done, m: c.req.query("adjusted") ?? "0" })} /> : null}
 			<p class="mb-4 max-w-3xl text-sm text-muted-foreground">{t.stock.countIntro}</p>
-			<SearchBar action="/stock/count" q={q} />
-			<form method="post" action={`/stock/count${q ? `?q=${encodeURIComponent(q)}` : ""}`} class="flex flex-col gap-6">
+			<SearchBar action="/stock/count" q={q}>
+				{storing.length > 0 ? (
+					<select name="unit" aria-label={t.locations.location} class="w-auto flex-[0_1_220px]">
+						<option value="" selected={unitFilter === ""}>
+							{t.locations.allUnits}
+						</option>
+						{rooms.map((r) => (
+							<option value={String(r.id)} selected={unitFilter === String(r.id)}>
+								{`${t.locations.kinds.room} · ${r.name || r.code}`}
+							</option>
+						))}
+						{storing.map(({ unit: u, depth }) => (
+							<option value={String(u.id)} selected={unitFilter === String(u.id)}>
+								{`${"\u00a0\u00a0".repeat(depth)}${t.locations.kinds[u.kind]} ${u.code}${u.name ? ` · ${u.name}` : ""}`}
+							</option>
+						))}
+						<option value="none" selected={unitFilter === "none"}>
+							{t.locations.noLocationFilter}
+						</option>
+					</select>
+				) : null}
+			</SearchBar>
+			<form method="post" action={`/stock/count${query}`} class="flex flex-col gap-6">
 				{Object.keys(errors).length > 0 ? (
 					<Alert variant="destructive" class="mb-0">
 						{t.common.fixErrors}
@@ -479,6 +541,7 @@ async function renderCount(c: Context<AppEnv>, values: FormValues, errors: Field
 							<Table>
 								<TableHeader class="bg-muted/50">
 									<TableRow>
+										{located ? <TableHead class="w-px">{t.locations.location}</TableHead> : null}
 										<TableHead>{t.parts.ref}</TableHead>
 										<TableHead>{t.parts.name}</TableHead>
 										<TableHead class="text-right">{t.stock.onHand}</TableHead>
@@ -490,6 +553,11 @@ async function renderCount(c: Context<AppEnv>, values: FormValues, errors: Field
 										const error = errors[name];
 										return (
 											<TableRow class={cn(error && "bg-destructive/5 hover:bg-destructive/10")}>
+												{located ? (
+													<TableCell class="w-px">
+														<LocationBadge location={locations.get(p.id)} />
+													</TableCell>
+												) : null}
 												<TableCell class="font-medium">
 													<a href={`/parts/${p.id}`}>{p.ref}</a>
 												</TableCell>

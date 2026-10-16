@@ -3,6 +3,7 @@ import { listAssemblies } from "./assemblies";
 import { listBuilds } from "./builds";
 import { listParts } from "./parts";
 import { listPos } from "./purchasing";
+import { findBin, locationsOf } from "./storage";
 import { listSuppliers } from "./suppliers";
 
 /** Rows shown per group on the search page; the group links to its full list. */
@@ -24,7 +25,21 @@ export async function globalSearch(db: Db, q: string) {
 	// Exact reference matches first (typing a full ref is the common case on the shop floor).
 	const needle = q.trim().toLowerCase();
 	parts.sort((a, b) => Number(b.ref.toLowerCase() === needle) - Number(a.ref.toLowerCase() === needle));
-	return { parts, assemblies, builds, pos, suppliers };
+	// Where the shown parts are kept, and the bin the text names when it is one of a drawn unit (D195).
+	const [locations, bins] = await Promise.all([
+		locationsOf(
+			db,
+			parts.slice(0, SEARCH_GROUP_LIMIT).map((p) => p.id),
+		),
+		binsMatching(db, q),
+	]);
+	return { parts, assemblies, builds, pos, suppliers, locations, bins };
 }
 
 export type SearchResults = Awaited<ReturnType<typeof globalSearch>>;
+
+/** The bin "A-2-3" (or level "A-2", or unit "A") of an existing storage unit, read with its chain, as a search result. */
+async function binsMatching(db: Db, q: string) {
+	const bin = await findBin(db, q);
+	return bin ? [bin] : [];
+}

@@ -79,9 +79,13 @@ async function fixtures() {
 			returnedId(assembly),
 		),
 	);
+	const [unit] = await seedSql(
+		stmt("INSERT INTO storage_units (code, created_by, updated_by) VALUES ('Z', 'seed', 'seed') RETURNING id"),
+	);
 	return {
 		option: returnedId(option),
 		build: returnedId(build),
+		unit: returnedId(unit),
 		supplier,
 		buy,
 		make,
@@ -227,6 +231,22 @@ const CASES: Record<string, { insert: (f: Fixtures) => D1PreparedStatement; upda
 				f.buy,
 			),
 		update: "UPDATE build_option_choices SET option_values = '6' WHERE id = ?",
+	},
+	storage_units: {
+		insert: () =>
+			stmt(
+				"INSERT INTO storage_units (code, name, kind, levels, positions, created_by, updated_by) VALUES ('A', 'Electronics', 'rack', 4, 5, 'u', 'u') RETURNING id",
+			),
+		update: "UPDATE storage_units SET col = 3, levels = 5 WHERE id = ?",
+	},
+	part_locations: {
+		insert: (f) =>
+			stmt(
+				"INSERT INTO part_locations (part_id, unit_id, level, position, created_by, updated_by) VALUES (?, ?, 1, 1, 'u', 'u') RETURNING id",
+				f.buy,
+				f.unit,
+			),
+		update: "UPDATE part_locations SET note = 'Top drawer' WHERE id = ?",
 	},
 };
 

@@ -18,6 +18,7 @@ import {
 	machineRateHistory,
 	machines,
 	machineTypes,
+	partLocations,
 	partOptions,
 	partOptionValues,
 	partSuppliers,
@@ -28,6 +29,7 @@ import {
 	purchaseOrders,
 	settings,
 	stockMoves,
+	storageUnits,
 	suppliers,
 	users,
 } from "../db/schema";
@@ -57,6 +59,9 @@ const TABLES: SQLiteTable[] = [
 	stockMoves,
 	partSuppliers,
 	priceHistory,
+	// The workshop plan and where parts are kept (D194), after the parts.
+	storageUnits,
+	partLocations,
 	// File rows, not their content: the objects stay in the R2 bucket (D160, docs/administration.md).
 	files,
 	// Roles and admin options: a restore brings back who may do what (ADMIN_EMAILS still apply).
