@@ -45,7 +45,7 @@ the corresponding page.
 | `catalog:write` | `create_part`, `update_part`, `create_supplier`, `update_supplier`, `create_assembly`, `set_assembly_lines`, `set_assembly_production`, `new_assembly_revision`, `activate_assembly` |
 | `prices:write` | `set_standard_cost`, `set_sale_price`, `upsert_supplier_offer` |
 | `catalog:archive` | `archive_part`, `unarchive_part`, `archive_assembly` |
-| `stock:read` | `stock_on_hand`, `list_moves` |
+| `stock:read` | `stock_on_hand`, `list_moves`, `get_location` |
 | `stock:write` | `adjust_stock`, `count_stock` |
 | `builds:read` | `list_builds`, `get_build` |
 | `builds:write` | `plan_build`, `complete_build`, `record_build`, `cancel_build` |
@@ -56,8 +56,12 @@ Parts with options (a colour, a size) are handled by the same tools: they take a
 name → value, such as `{"Colour": "white"}`, for stock, builds, shortages and purchase orders (D193). Defining a part's
 options is done in the app.
 
-Some things are never available to an assistant: permanent deletes, undoing changes, managing users, backups,
-CSV imports and photo uploads. Assemblies only change through draft revisions, so an active assembly stays as it
+Where parts are kept (D208) is read with `get_location`: a part's bin and the way to it (`A-3-3 › S1-2-1`), what a
+bin, unit or room holds, or the whole plan with the stocked parts not put away yet. `get_part` gives the part's
+location too, and `update_part` sets it (`location`: a bin code and a note). Drawing the plan stays in the app.
+
+Some things are never available to an assistant: permanent deletes (storage units included), undoing changes,
+managing users, backups, CSV imports and photo uploads. Assemblies only change through draft revisions, so an active assembly stays as it
 is until someone activates the new revision.
 
 The full description of each tool is in

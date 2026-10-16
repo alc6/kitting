@@ -141,7 +141,8 @@ const CASES: WriteCase[] = [
 		tool: "update_part",
 		scope: "catalog:write",
 		min: "planner",
-		args: () => ({ ref: "BOX-LAMP", name: "Shipping box, large", unit: "box" }),
+		// The location is written in the same change set, and undone with it.
+		args: () => ({ ref: "BOX-LAMP", name: "Shipping box, large", unit: "box", location: { bin: "B-1-2" } }),
 	},
 	{
 		tool: "create_supplier",
@@ -420,6 +421,55 @@ describe("catalog tools", () => {
 		expect(toKit.text).toContain("kind: This part has stock moves");
 		const noAssemblies = await callTool(token, "update_part", { ref: "ARM-ASSY", kind: "buy" });
 		expect(noAssemblies.text).toContain("This part has assemblies");
+	});
+
+	it("puts a part away, moves it and clears its location, with the location page's checks", async () => {
+		await loadDemo();
+		const token = await connect(["catalog:write"]);
+		const summary = async () =>
+			(await one<{ summary: string }>("SELECT summary FROM change_sets ORDER BY id DESC LIMIT 1")).summary;
+		const put = await write(token, "update_part", { ref: "switch-inl", location: { bin: "b-1-2", note: "Bag of 20" } });
+		expect(await summary()).toBe("Set the location of SWITCH-INL to B-1-2");
+		expect(put.data.part).toMatchObject({
+			ref: "SWITCH-INL",
+			location: {
+				bin: "B-1-2",
+				path: "B-1-2",
+				room: "Stockroom",
+				storage_unit: { code: "B", name: "Rack B", kind: "rack" },
+				note: "Bag of 20",
+			},
+		});
+		// The same again changes nothing; a move without a note keeps it.
+		expect((await write(token, "update_part", { ref: "SWITCH-INL", location: { bin: "B-1-2" } })).data).toMatchObject({
+			change_set_id: null,
+		});
+		const moved = await write(token, "update_part", { ref: "SWITCH-INL", location: { bin: "S1-2" } });
+		expect(moved.data.part).toMatchObject({ location: { bin: "S1-2", path: "A-3-3 › S1-2", note: "Bag of 20" } });
+		expect(await summary()).toBe("Set the location of SWITCH-INL to S1-2");
+
+		// With other fields: one change set, named as a part edit.
+		const both = await write(token, "update_part", { ref: "SWITCH-INL", notes: "Spare", location: { bin: "C-1" } });
+		expect(await summary()).toBe("Edit part SWITCH-INL");
+		expect(both.data.part).toMatchObject({ notes: "Spare", location: { bin: "C-1", note: "Bag of 20" } });
+
+		for (const [bin, message] of [
+			["Q-1-1", "location: No storage unit has this code."],
+			["STOC", "location: A landmark holds no parts."],
+			["A-9", "location: This unit has fewer levels."],
+			["P-1", "location: A floor area has no levels: give its code only."],
+			["A-2-3-4", "location: Not a bin code: use A-2-3, A-2 or A."],
+		]) {
+			const refused = await callTool(token, "update_part", { ref: "SWITCH-INL", name: "Renamed", location: { bin } });
+			expect(refused.isError, bin).toBe(true);
+			expect(refused.text, bin).toContain(message);
+		}
+		expect(await one("SELECT name FROM parts WHERE ref = 'SWITCH-INL'")).toEqual({ name: "Inline switch" });
+
+		const cleared = await write(token, "update_part", { ref: "SWITCH-INL", location: { bin: "" } });
+		expect(await summary()).toBe("Clear the location of SWITCH-INL");
+		expect(cleared.data.part).toMatchObject({ location: null });
+		expect(await rows("SELECT id FROM part_locations WHERE part_id = ?", await partId("SWITCH-INL"))).toEqual([]);
 	});
 
 	it("creates and edits suppliers, refusing duplicate names", async () => {

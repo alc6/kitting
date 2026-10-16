@@ -34,6 +34,7 @@ import { getOffer } from "../domain/offers";
 import { idsOf } from "../domain/option-keys";
 import { loadOptions, optionsOf } from "../domain/options";
 import { archivePartStatement, checkPart, getPart, partToForm, savePartStatements } from "../domain/parts";
+import { binCode, locationInput, locationOf, resolveBin, setLocationStatements } from "../domain/storage";
 import {
 	createSupplierStatement,
 	findSupplierByName,
@@ -43,6 +44,7 @@ import {
 	updateSupplierStatement,
 } from "../domain/suppliers";
 import { fmt } from "../i18n";
+import type { Statement } from "../lib/db";
 import { formatQtyInput } from "../lib/units";
 import { validate } from "../lib/validation";
 import type { Db } from "../types";
@@ -64,6 +66,7 @@ import {
 	tool,
 	writes,
 } from "./kit";
+import { locationView } from "./location-tools";
 import { chooseInput, fixedInput, lineRules, rulesView } from "./options";
 
 const now = () => new Date().toISOString();
@@ -157,11 +160,38 @@ const createPart = tool({
 	},
 });
 
+/**
+ * The statements setting a part's home location from update_part's `location` (D208), checked as on the part's
+ * Location page: none when it is already there with this note. A note left out is kept.
+ */
+async function partLocationChange(ctx: ToolContext, part: Part, input: { bin: string; note?: string | undefined }) {
+	const current = await locationOf(ctx.db, part.id);
+	const v = validate(locationInput, { bin: input.bin, note: input.note ?? current?.note ?? "" });
+	if (!v.ok) refuse(v.errors, {}, { bin: "location.bin", note: "location.note" });
+	const resolved = await resolveBin(ctx.db, v.data.bin);
+	if (!resolved.ok) refuse({ bin: resolved.error }, {}, { bin: "location" });
+	const bin = resolved.bin;
+	const level = bin?.level ?? null;
+	const position = level === null ? null : (bin?.position ?? null);
+	const same = bin
+		? current?.unit.id === bin.unit.id &&
+			current.level === level &&
+			current.position === position &&
+			current.note === v.data.note
+		: current === undefined;
+	return {
+		statements: same ? [] : await setLocationStatements(ctx.db, part.id, bin, v.data.note, ctx.user, now()),
+		summary: bin
+			? fmt(ctx.t.history.summaries.partLocationSet, { ref: part.ref, bin: binCode(bin.unit.code, level, position) })
+			: fmt(ctx.t.history.summaries.partLocationClear, { ref: part.ref }),
+	};
+}
+
 const updatePart = tool({
 	name: "update_part",
 	title: "Edit a part",
 	description:
-		"Changes a part's reference, name, kind, unit, serial tracking, minimum stock (null: none) or notes; fields left out keep their value. Same checks as the part form (a part with stock moves cannot become a kit or fee, a part with assemblies stays make or kit). Prices and offers are not changed here.",
+		"Changes a part's reference, name, kind, unit, serial tracking, minimum stock (null: none), notes or location (where it is kept); fields left out keep their value. Same checks as the part form (a part with stock moves cannot become a kit or fee, a part with assemblies stays make or kit) and the part's Location page (a bin of the plan, get_location lists them). Prices and offers are not changed here.",
 	rule: { scope: "catalog:write", action: "parts.edit" },
 	annotations: writes({ destructive: true, idempotent: true }),
 	input: z.object({
@@ -173,28 +203,52 @@ const updatePart = tool({
 		track_serial: partFields.track_serial.optional(),
 		notes: partFields.notes.optional(),
 		min_stock: partFields.min_stock.optional(),
+		location: z
+			.object({
+				bin: z
+					.string()
+					.max(40)
+					.describe(
+						'The bin where the part is kept: "A-2-3" (unit A, level 2 from the floor, position 3 from the left facing it), "A-2" (anywhere on level 2) or "A" (anywhere in the unit, or a floor area). An empty string clears the location.',
+					),
+				note: z
+					.string()
+					.max(200)
+					.optional()
+					.describe('A note for whoever looks for it, e.g. "antistatic bags". Left out: kept.'),
+			})
+			.optional()
+			.describe("Where the part is kept, on the workshop plan: one home location per part."),
 	}),
 	run: async (a, ctx) => {
 		const part = await partByRef(ctx.db, a.ref);
-		const offer = part.supplierId ? await getOffer(ctx.db, part.id, part.supplierId) : undefined;
-		// The current values (prices and preferred offer terms included), with the given fields replaced.
-		const form: Record<string, string> = { ...partToForm(part, "en", offer) };
-		if (a.new_ref !== undefined) form.ref = a.new_ref;
-		if (a.name !== undefined) form.name = a.name;
-		if (a.kind !== undefined) form.kind = a.kind;
-		if (a.unit !== undefined) form.unit = a.unit;
-		if (a.track_serial !== undefined) form.track_serial = formValue(a.track_serial);
-		if (a.notes !== undefined) form.notes = a.notes;
-		if (a.min_stock !== undefined) form.min_stock = formValue(a.min_stock);
-		const v = await checkPart(ctx.db, form, part);
-		if (!v.ok) refuse(v.errors, { ref: v.clashRef ?? "" }, { ref: "new_ref" });
-		const { change } = await saveChange(
-			ctx,
-			fmt(ctx.t.history.summaries.partEdit, { ref: v.data.ref }),
-			savePartStatements(ctx.db, v.data, { part, offer }, "form", ctx.user, now()),
-		);
-		const updated = await getPart(ctx.db, part.id);
-		return { ...change, part: updated ? partView(updated) : null };
+		const fields = [a.new_ref, a.name, a.kind, a.unit, a.track_serial, a.notes, a.min_stock];
+		// Only the location: the part's own row is left alone and the change is named after the location.
+		const onlyLocation = a.location !== undefined && fields.every((f) => f === undefined);
+		let partStatements: Statement[] = [];
+		let ref = part.ref;
+		if (!onlyLocation) {
+			const offer = part.supplierId ? await getOffer(ctx.db, part.id, part.supplierId) : undefined;
+			// The current values (prices and preferred offer terms included), with the given fields replaced.
+			const form: Record<string, string> = { ...partToForm(part, "en", offer) };
+			if (a.new_ref !== undefined) form.ref = a.new_ref;
+			if (a.name !== undefined) form.name = a.name;
+			if (a.kind !== undefined) form.kind = a.kind;
+			if (a.unit !== undefined) form.unit = a.unit;
+			if (a.track_serial !== undefined) form.track_serial = formValue(a.track_serial);
+			if (a.notes !== undefined) form.notes = a.notes;
+			if (a.min_stock !== undefined) form.min_stock = formValue(a.min_stock);
+			const v = await checkPart(ctx.db, form, part);
+			if (!v.ok) refuse(v.errors, { ref: v.clashRef ?? "" }, { ref: "new_ref" });
+			partStatements = savePartStatements(ctx.db, v.data, { part, offer }, "form", ctx.user, now());
+			ref = v.data.ref;
+		}
+		const located = a.location ? await partLocationChange(ctx, part, a.location) : undefined;
+		const statements = [...partStatements, ...(located?.statements ?? [])];
+		const summary = onlyLocation && located ? located.summary : fmt(ctx.t.history.summaries.partEdit, { ref });
+		const { change } = statements.length ? await saveChange(ctx, summary, statements) : { change: NOTHING_CHANGED };
+		const [updated, location] = await Promise.all([getPart(ctx.db, part.id), locationOf(ctx.db, part.id)]);
+		return { ...change, part: updated ? { ...partView(updated), location: locationView(location) } : null };
 	},
 });
 

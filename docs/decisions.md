@@ -1367,7 +1367,7 @@ in values that are counted apart in stock, while it stays one part in the catalo
   `below_zero` also catches a part below zero in one value. Defining options over MCP is left for later
   (docs/plan.md).
 
-## Storage locations (M19, proposal)
+## Storage locations (M19)
 
 - **D194. A drawn plan of rooms and storage units; bins follow from their size.** The workshop is a grid of half-metre
   squares. A storage unit (`storage_units`, tracked) is a rectangle on it with a short upper-case code, a kind and a
@@ -1528,3 +1528,25 @@ every location again, and an assistant could not say where a part is. D207 puts 
     pallet area P, a cabinet of screw drawers S1 on shelf A-3-3) and a location for every stocked part but one, so
     the Locations page, pick lists and counts show them in a first look and in tests. Tests that draw their own plan
     load the demo with `loadDemo({ plan: false })` (no units, no location column).
+- **D208. Over MCP: one read tool, `get_location`, and the location through `update_part`.** The server had 41
+  tools and the user wanted the surface to grow as little as possible, so locations add one tool (42) and two fields,
+  not a location on every read tool nor a tool per action.
+  - `get_location` (`stock:read`, read-only) answers both questions with one `ref`: a part reference (tried first, as
+    the plan's search box does) gives its location; a bin, unit or room code (or a room's name) gives what it holds;
+    nothing gives the plan (rooms, the units that hold parts as a tree with the units in their bins and part counts)
+    and the stocked parts without a location. A location reads `bin` (the label's code, `S1-2-1`), `path` (the way
+    from the plan, `A-3-3 › S1-2-1`), `room`, `storage_unit` and `note`; parts come with `on_hand`, so "where is it"
+    also says whether there is any. A bin lists the parts in exactly that bin, as the plan's search does (a part kept
+    "anywhere on level 2" shows under `A-2`, not under `A-2-3`); a room lists every part in its units, in walking
+    order. Doors and landmarks hold nothing and answer an error saying so.
+  - `get_part` returns `location` (or null). `search_parts`, `stock_on_hand` and `get_build` do not, for now: an
+    assistant asks `get_location` when it needs a place, and pick lists already carry the location in the app.
+  - `update_part` takes `location: { bin, note }`, checked as on the part's Location page (`resolveBin`); `""` clears
+    it, a note left out is kept, the same bin and note again record nothing. Only a location given: the part's row
+    is not rewritten and the change is named after the location (`partLocationSet`, `partLocationClear`); with other
+    fields, one "Edit part" change set holds both. It keeps its rule (`catalog:write`, `parts.edit`), so over MCP
+    only planners set locations, where the app lets operators (`storage.assign`, D196): a separate write tool for
+    operators would be one more tool, and putting away is done on the tablet anyway. Revisit if operators ask.
+  - No tool draws or edits the plan: units and rooms are geometry, edited with the plan in view. `storage.delete`
+    joins `NEVER_OVER_MCP`; `storage.plan` is not offered either, for now.
+  - The skill has two workflows ("Where is it?", "Put it away"), two examples and two eval cases.

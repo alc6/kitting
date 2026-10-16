@@ -154,6 +154,11 @@ function calls(s: Awaited<ReturnType<typeof seed>>): [string, Record<string, unk
 		["get_assembly", { assembly: "LAMP-MINI", qty: "2" }],
 		["explode_assembly", { assembly: "LAMP-MINI", qty: "2", options: { Colour: "black" }, use_stock: true }],
 		["stock_on_hand", { query: "MINI" }],
+		// Where things are kept (D208).
+		["get_location", {}],
+		["get_location", { ref: "BOX-LAMP" }],
+		["get_location", { ref: "STOC" }],
+		["get_location", { ref: "A-3" }],
 	];
 }
 
@@ -445,6 +450,116 @@ describe("read tools", () => {
 		expect(noAssembly.text).toContain("PAD-FELT has no active assembly");
 		const noRevision = await callTool(token, "get_assembly", { assembly: "LAMP-DESK", revision: "Rev9" });
 		expect(noRevision.text).toContain("no revision Rev9");
+	});
+});
+
+describe("where things are kept (get_location)", () => {
+	type Node = { code: string; part_count: number; in_bin?: string; units?: Node[] };
+	type Stored = { ref: string; bin: string; on_hand: string; path?: string };
+
+	it("lists the plan: rooms, the units as a tree with their part counts, the parts not put away", async () => {
+		await loadDemo();
+		const token = await connect(["stock:read"]);
+		const r = await callTool(token, "get_location", {});
+		expect(r.isError, r.text).toBe(false);
+		expect(r.data.rooms).toEqual([
+			{ code: "ASSE", name: "Assembly" },
+			{ code: "STOC", name: "Stockroom" },
+		]);
+		const units = r.data.units as (Node & { room: string })[];
+		expect(units.map((u) => `${u.code} ${u.room} ${u.part_count}`)).toEqual([
+			"A Stockroom 6",
+			"B Stockroom 8",
+			"C Stockroom 1",
+			"D Assembly 6",
+			"P Stockroom 1",
+		]);
+		expect(units[0]?.units).toEqual([
+			expect.objectContaining({ code: "S1", kind: "cabinet", in_bin: "A-3-3", part_count: 3, levels: 3, positions: 4 }),
+		]);
+		expect(r.data.without_location).toEqual([{ ref: "SWITCH-INL", name: "Inline switch" }]);
+		expect(r.data.without_location_count).toBe(1);
+	});
+
+	it("says where a part is kept, through the units it stands in", async () => {
+		await loadDemo();
+		const token = await connect(["stock:read"]);
+		const screws = await callTool(token, "get_location", { ref: "screw-m3x8" });
+		expect(screws.data.part).toMatchObject({ ref: "SCREW-M3X8", on_hand: "350", unit: "pcs" });
+		expect(screws.data.location).toEqual({
+			bin: "S1-1-1",
+			path: "A-3-3 › S1-1-1",
+			room: "Stockroom",
+			storage_unit: { code: "S1", name: "Screw drawers", kind: "cabinet" },
+			note: "",
+		});
+		const unlocated = await callTool(token, "get_location", { ref: "SWITCH-INL" });
+		expect(unlocated.data.location).toBeNull();
+		expect(unlocated.data.hint).toContain("update_part");
+		// get_part gives the same location.
+		const catalog = await connect(["catalog:read"]);
+		const part = await callTool(catalog, "get_part", { ref: "BOX-LAMP" });
+		expect((part.data.part as { location: unknown }).location).toMatchObject({
+			bin: "P",
+			path: "P",
+			room: "Stockroom",
+		});
+		expect((await callTool(catalog, "get_part", { ref: "HEAD-KIT-CW" })).data.part).toMatchObject({ location: null });
+	});
+
+	it("says what a bin, a unit or a room holds", async () => {
+		await loadDemo();
+		const token = await connect(["stock:read"]);
+		const level = await callTool(token, "get_location", { ref: "a-2" });
+		expect(level.data.place).toMatchObject({ kind: "bin", code: "A-2", path: "A-2", room: "Stockroom" });
+		expect((level.data.parts as Stored[]).map((p) => `${p.ref} ${p.bin} ${p.on_hand}`)).toEqual([
+			"SPRING-TENS A-2-1 120",
+			"JOINT-KNOB A-2-2 150",
+			"PAD-FELT A-2-3 400",
+		]);
+		const shelf = await callTool(token, "get_location", { ref: "A-3-3" });
+		expect(shelf.data.parts).toEqual([]);
+		expect((shelf.data.units as Node[]).map((u) => `${u.code} ${u.in_bin} ${u.part_count}`)).toEqual(["S1 A-3-3 3"]);
+		const drawers = await callTool(token, "get_location", { ref: "S1" });
+		expect(drawers.data.place).toMatchObject({ kind: "unit", code: "S1", path: "A-3-3 › S1" });
+		expect((drawers.data.parts as Stored[]).map((p) => p.bin)).toEqual(["S1-1-1", "S1-1-2", "S1-1-3"]);
+
+		// A room, by code or name: its units and every part kept there, in walking order.
+		const room = await callTool(token, "get_location", { ref: "assembly" });
+		expect(room.data.place).toEqual({ kind: "room", code: "ASSE", name: "Assembly" });
+		expect((room.data.units as Node[]).map((u) => u.code)).toEqual(["D"]);
+		expect((room.data.parts as Stored[]).map((p) => `${p.ref} ${p.path}`)).toEqual([
+			"LAMP-DESK D-1-1",
+			"LAMP-MINI D-1-2",
+			"ARM-ASSY D-2-1",
+			"BASE-ASSY D-2-2",
+			"MINI-HEAD D-3-1",
+			"LAMP-CLIP D-3-2",
+		]);
+		const stockroom = await callTool(token, "get_location", { ref: "STOC", limit: 2 });
+		expect((stockroom.data.parts as Stored[]).map((p) => p.path)).toEqual(["A-1-1", "A-1-2"]);
+		expect(stockroom.data.part_count).toBe(19);
+	});
+
+	it("answers codes that hold nothing or do not exist with clear errors", async () => {
+		await loadDemo();
+		const token = await connect(["stock:read"]);
+		expect((await callTool(token, "get_location", { ref: "DOOR" })).text).toContain("DOOR is a door on the plan");
+		expect((await callTool(token, "get_location", { ref: "A-9-1" })).text).toContain(
+			"A has 4 level(s) of 3 position(s): there is no bin A-9-1.",
+		);
+		expect((await callTool(token, "get_location", { ref: "P-1" })).text).toContain("P has no levels");
+		const nothing = await callTool(token, "get_location", { ref: "NOPE" });
+		expect(nothing.isError).toBe(true);
+		expect(nothing.text).toContain('Nothing is called "NOPE"');
+	});
+
+	it("says when no plan is drawn yet", async () => {
+		await loadDemo({ plan: false });
+		const token = await connect(["stock:read"]);
+		const r = await callTool(token, "get_location", {});
+		expect(r.data).toMatchObject({ rooms: [], units: [], without_location_count: 26 });
+		expect(r.data.hint).toContain("Locations page");
 	});
 });
 

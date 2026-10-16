@@ -32,6 +32,12 @@ listed user, but costs need planner (or the cost option set on the Users page).
   `costs_hidden: true`. Never guess an amount.
 - **Lists** have `limit` and say `truncated: true` when there is more; narrow the query instead of paging blindly.
 - A result key named after a quantity (`qty`, `on_hand`, `short`) is in the part's unit.
+- **Locations.** Each stocked part can have one home location on the workshop plan, a **bin code**: `A-2-3` is unit
+  `A`, level 2 counted from the floor, position 3 counted from the left when facing it; `A-2` is anywhere on level 2,
+  `A` anywhere in the unit (a floor area such as `P` has no levels). A rack or a drawer cabinet can stand in a bin of
+  another unit: its bins keep their own code (`S1-2-1`, the label on the drawer) and `path` gives the way to it from
+  the plan (`A-3-3 › S1-2-1`). Rooms (`STOC`) hold units, not parts. Stock is counted per part, not per bin: a location
+  says where to look and where to put away. The plan is drawn in the app.
 - **Batches.** An assembly makes `batch` units at a time (1 unless set, e.g. 24 parts per print plate), and its lines
   are the quantities for the whole batch. Quantities needed for a build are line × units / batch, rounded up to the
   thousandth (whole units for serial-tracked parts); costs are per unit.
@@ -60,7 +66,7 @@ Find parts by reference, name or any supplier's reference. Use it before relying
 One part in full: details, prices, supplier offers (preferred first), on hand, its assemblies with unit cost, where it is used, and its own files.
 - **Scope:** `catalog:read` · **Permission:** none
 - **Inputs:** `ref` (part reference).
-- **Returns:** `part` (`ref`, `name`, `kind`, `unit`, `track_serial`, `archived`, `notes`, `min_stock` (null: no alert), `on_hand`, `standard_cost`, `sale_price`; for a part with options also `options[]` of `name`, `values` in order and `default`, and `stock_by_options[]` of `options` and `on_hand`, the values with stock; `on_hand` is the total), `offers[]` (`supplier`, `preferred`, `supplier_ref`, `price`, `moq`, `pack_size`, `lead_days`), `assemblies[]` (`assembly_id`, `code`, `revision`, `status`, `batch`, `unit_cost`, `cost_incomplete`, `sale_price`), `rolled_up_cost`, `where_used[]` (`parent`, `assembly_id`, `code`, `revision`, `status`, `depth`, `via`, `qty_per_parent` for one batch of `batch` units of the parent), `files[]` attached to the part whatever its assembly (`name`, `kind`: cad, print, drawing, instructions, datasheet or other, `format`, `size_bytes`, `uploaded_at`, `uploaded_by`, `note`, `download_path`, `download_url`).
+- **Returns:** `part` (`ref`, `name`, `kind`, `unit`, `track_serial`, `archived`, `notes`, `min_stock` (null: no alert), `on_hand`, `standard_cost`, `sale_price`; for a part with options also `options[]` of `name`, `values` in order and `default`, and `stock_by_options[]` of `options` and `on_hand`, the values with stock; `on_hand` is the total), `offers[]` (`supplier`, `preferred`, `supplier_ref`, `price`, `moq`, `pack_size`, `lead_days`), `assemblies[]` (`assembly_id`, `code`, `revision`, `status`, `batch`, `unit_cost`, `cost_incomplete`, `sale_price`), `rolled_up_cost`, `where_used[]` (`parent`, `assembly_id`, `code`, `revision`, `status`, `depth`, `via`, `qty_per_parent` for one batch of `batch` units of the parent), `files[]` attached to the part whatever its assembly (`name`, `kind`: cad, print, drawing, instructions, datasheet or other, `format`, `size_bytes`, `uploaded_at`, `uploaded_by`, `note`, `download_path`, `download_url`). `part.location` is where it is kept, as in `get_location` (`bin`, `path`, `room`, `storage_unit`, `note`), or null.
 - **Example:** `get_part({ "ref": "PAD-FELT" })`
 
 ### `get_assembly`
@@ -106,6 +112,22 @@ The stock ledger, newest first. On hand is the sum of the signed moves.
 - **Inputs:** `query` (part refs, names, serials, notes), `reason` (receipt, build_consume, build_output, adjust or count), `from`, `to`, `limit` (default 100, max 500).
 - **Returns:** `count`, `moves[]` (`at`, `ref`, `name`, `unit`, `options` for a part with options, `qty` signed, `reason`, `serial`, `unit_cost`, `source`, `note`, `by`).
 - **Example:** `list_moves({ "query": "LED-5W-CW", "limit": 20 })`
+
+### `get_location`
+Where parts are kept, on the workshop plan: where a part is, what a bin, unit or room holds, or the whole plan.
+- **Scope:** `stock:read` · **Permission:** none
+- **Inputs:** `ref` (a part reference, tried first; else a bin code `A-2-3`, `A-2`, a unit code `A`, or a room's code
+  `STOC` or name; left out: the whole plan), `limit` (parts listed, default 100, max 500).
+- **Returns:** for a part: `part` (`ref`, `name`, `kind`, `unit`, `on_hand`) and `location` (`bin`, `path`, `room`,
+  `storage_unit` with `code`, `name`, `kind`, `note`), null with a `hint` when it has none. For a bin or unit: `place`
+  (`kind` bin or unit, `code`, `path`, `room`, `storage_unit` with its `levels` and `positions`), `parts[]` (`ref`,
+  `name`, `bin`, `on_hand`, `unit`, `note`), `part_count` (all of them), `units[]` standing in it (`code`, `name`,
+  `kind`, `in_bin`, `part_count`, their own `units`). For a room: `place` (`kind` room, `code`, `name`), `units[]`
+  drawn in it as a tree, `parts[]` in walking order with their `path`, `part_count`. Without `ref`: `rooms[]`
+  (`code`, `name`), `units[]` that hold parts as a tree (`code`, `name`, `kind`, `room`, `levels`, `positions`,
+  `part_count`, `units` standing in their bins with `in_bin`), `without_location[]` (stocked parts not put away yet:
+  `ref`, `name`) and `without_location_count`. A door or landmark holds nothing (an error says so).
+- **Example:** `get_location({ "ref": "SCREW-M3X8" })`, `get_location({ "ref": "A-3" })`, `get_location({})`
 
 ## Reading: `builds:read`
 
@@ -158,9 +180,14 @@ Creates a part. Prices and offers are separate calls.
 ### `update_part`
 Changes a part's fields; fields left out keep their value. Never prices.
 - **Scope:** `catalog:write` · **Permission:** `parts.edit` (planner)
-- **Inputs:** `ref`, `new_ref`, `name`, `kind`, `unit`, `track_serial`, `min_stock` (null removes it), `notes`. A part with stock moves cannot become a kit or fee; a part with assemblies stays make or kit.
-- **Returns:** the write envelope and `part`.
-- **Example:** `update_part({ "ref": "PAD-FELT", "notes": "Self-adhesive" })`
+- **Inputs:** `ref`, `new_ref`, `name`, `kind`, `unit`, `track_serial`, `min_stock` (null removes it), `notes`,
+  `location` (where it is kept: `bin`, a bin code of the plan such as `A-2-3`, `A-2` or `P`, `""` to clear it; `note`,
+  left out: kept). A part with stock moves cannot become a kit or fee; a part with assemblies stays make or kit. A bin
+  that is not on the plan is refused (`location: No storage unit has this code.`). Only `location` given: the change
+  is named "Set the location of X to B" (or "Clear the location of X"); the same bin and note again changes nothing.
+- **Returns:** the write envelope and `part`, with its `location` (as in `get_location`).
+- **Example:** `update_part({ "ref": "PAD-FELT", "notes": "Self-adhesive" })`,
+  `update_part({ "ref": "SWITCH-INL", "location": { "bin": "B-1-2", "note": "Bags of 20" } })`
 
 ### `create_supplier`
 - **Scope:** `catalog:write` · **Permission:** `suppliers.edit` (planner)
