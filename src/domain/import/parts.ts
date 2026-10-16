@@ -1,5 +1,15 @@
 import { asc, eq } from "drizzle-orm";
-import { assemblies, type Part, parts, stockMoves, suppliers } from "../../db/schema";
+import {
+	assemblies,
+	type Part,
+	type PartLocation,
+	partLocations,
+	parts,
+	type StorageUnit,
+	stockMoves,
+	storageUnits,
+	suppliers,
+} from "../../db/schema";
 import { formatCentsInput, formatQtyInput } from "../../lib/units";
 import { validate } from "../../lib/validation";
 import { NO_TERMS, type OfferTerms, preferredTerms } from "../offers";
@@ -12,6 +22,7 @@ import {
 	preferredOfferTerms,
 	savePartStatements,
 } from "../parts";
+import { binCode, locationCode, locationStatements, locationsOf, type ResolvedBin, resolveBinIn } from "../storage";
 import { checkHeader, emptyPlan, fieldIssues, type Importer, type PlanRow, type RowIssue } from "./types";
 
 // CSV column -> form field name (they differ only for the supplier).
@@ -35,11 +46,12 @@ type CsvColumn = (typeof CSV_COLUMNS)[number];
 
 const fieldToColumn = (f: string): string => (f === "supplier_id" ? "supplier" : f);
 
-// The supplier columns describe the preferred supplier's offer (part_suppliers.csv adds the others).
+// The supplier columns describe the preferred supplier's offer (part_suppliers.csv adds the others). `location` is the
+// part's home bin (D207): checked against storage_units, empty leaves it as it is, and its note is kept.
 export const partsImporter: Importer = {
 	type: "parts",
 	required: ["ref"],
-	optional: CSV_COLUMNS.filter((c) => c !== "ref"),
+	optional: [...CSV_COLUMNS.filter((c) => c !== "ref"), "location"],
 	example: [
 		[
 			"RES-10K",
@@ -56,6 +68,7 @@ export const partsImporter: Importer = {
 			"500",
 			"no",
 			"",
+			"A-2-3",
 		],
 		[
 			"CBL-2C",
@@ -72,36 +85,49 @@ export const partsImporter: Importer = {
 			"20",
 			"no",
 			"sold by the metre",
+			"P",
 		],
-		["SA-MAIN", "Main sub-assembly", "make", "pcs", "", "", "", "", "", "", "", "", "yes", ""],
-		["KIT-SCREWS", "Screw kit", "kit", "pcs", "", "", "", "", "", "", "", "", "no", "phantom"],
-		["FEE-ECO", "Eco-fee", "fee", "pcs", "0.25", "", "", "", "", "", "", "", "no", ""],
-		["PROD-1", "Finished product", "make", "pcs", "", "149.00", "", "", "", "", "", "", "yes", "sold at 149.00"],
+		["SA-MAIN", "Main sub-assembly", "make", "pcs", "", "", "", "", "", "", "", "", "yes", "", ""],
+		["KIT-SCREWS", "Screw kit", "kit", "pcs", "", "", "", "", "", "", "", "", "no", "phantom", ""],
+		["FEE-ECO", "Eco-fee", "fee", "pcs", "0.25", "", "", "", "", "", "", "", "no", "", ""],
+		["PROD-1", "Finished product", "make", "pcs", "", "149.00", "", "", "", "", "", "", "yes", "sold at 149.00", "A-1"],
 	],
 
 	async plan({ db }, table) {
 		const { errors, warnings } = checkHeader(this, table);
 		if (errors.length) return emptyPlan("parts", errors, warnings);
+		const header = new Set(table.header);
+		const present = (col: string) => header.has(col);
 
-		const [allParts, allSuppliers, withMoves, withAssemblies, offers, options] = await Promise.all([
+		const [allParts, allSuppliers, withMoves, withAssemblies, offers, options, units, located] = await Promise.all([
 			db.select().from(parts),
 			db.select({ id: suppliers.id, name: suppliers.name }).from(suppliers),
 			db.select({ partId: stockMoves.partId }).from(stockMoves).groupBy(stockMoves.partId),
 			db.select({ partId: assemblies.parentPartId }).from(assemblies).groupBy(assemblies.parentPartId),
 			preferredTerms(db),
 			loadOptions(db),
+			present("location") ? db.select().from(storageUnits) : Promise.resolve([] as StorageUnit[]),
+			present("location") ? db.select().from(partLocations) : Promise.resolve([] as PartLocation[]),
 		]);
+		const unitById = new Map(units.map((u) => [u.id, u]));
+		const locationByPart = new Map(located.map((l) => [l.partId, l]));
 		const byRef = new Map(allParts.map((p) => [p.ref, p]));
 		const byLowerRef = new Map(allParts.map((p) => [p.ref.toLowerCase(), p]));
 		const supplierByName = new Map(allSuppliers.map((s) => [s.name.toLowerCase(), s]));
 		const supplierName = new Map(allSuppliers.map((s) => [s.id, s.name]));
 		const hasMoves = new Set(withMoves.map((r) => r.partId));
 		const ownsAssemblies = new Set(withAssemblies.map((r) => r.partId));
-		const present = new Set(table.header);
 
 		const issues: RowIssue[] = [];
 		const rows: PlanRow[] = [];
-		const ops: { data: PartInput; previous?: { part: Part; offer: OfferTerms | undefined } }[] = [];
+		const ops: {
+			data: PartInput;
+			previous?: { part: Part; offer: OfferTerms | undefined };
+			/** Write the part's row (new, or changed); a row that only moves the part's location does not. */
+			part: boolean;
+			/** The new home bin, when it changes. */
+			location?: { bin: ResolvedBin; existing: PartLocation | undefined };
+		}[] = [];
 		const seen = new Map<string, number>();
 
 		for (const rec of table.records) {
@@ -117,7 +143,7 @@ export const partsImporter: Importer = {
 			const input: Record<string, string> = current ? partToForm(current, "en", offer) : {};
 			const lineIssues: RowIssue[] = [];
 			for (const col of CSV_COLUMNS) {
-				if (!present.has(col)) continue;
+				if (!present(col)) continue;
 				const value = rec.values[col] ?? "";
 				if (col === "supplier") {
 					if (value === "") input.supplier_id = "";
@@ -146,6 +172,14 @@ export const partsImporter: Importer = {
 				);
 				lineIssues.push(...fieldIssues(rec.line, rules, fieldToColumn));
 			}
+			// The home bin: empty leaves the location as it is (a file cannot clear it).
+			let bin: ResolvedBin | null = null;
+			const binText = present("location") ? (rec.values.location ?? "").trim() : "";
+			if (binText !== "") {
+				const r = resolveBinIn(units, binText);
+				if (r.ok) bin = r.bin;
+				else lineIssues.push({ line: rec.line, column: "location", key: r.error });
+			}
 			const firstLine = seen.get(ref);
 			if (firstLine !== undefined) {
 				lineIssues.push({ line: rec.line, column: "ref", key: "duplicate_in_file", vars: { line: firstLine } });
@@ -156,7 +190,12 @@ export const partsImporter: Importer = {
 			}
 
 			const data = v.data;
-			const changes = current ? diffPart(flatten(current, offer), flattenInput(data, offer), supplierName) : [];
+			const partChanges = current ? diffPart(flatten(current, offer), flattenInput(data, offer), supplierName) : [];
+			const existing = current ? locationByPart.get(current.id) : undefined;
+			const fromBin = existing ? storedBin(existing, unitById) : "";
+			const toBin = bin ? binCode(bin.unit.code, bin.level, bin.level === null ? null : bin.position) : fromBin;
+			const moved = bin !== null && toBin !== fromBin;
+			const changes = moved && current ? [...partChanges, `location: ${fromBin || "∅"} → ${toBin}`] : partChanges;
 			rows.push({
 				line: rec.line,
 				action: current ? (changes.length ? "update" : "unchanged") : "create",
@@ -166,33 +205,56 @@ export const partsImporter: Importer = {
 					data.kind,
 					data.supplier_id ? (supplierName.get(data.supplier_id) ?? "") : "",
 					data.cost === null ? "" : formatCentsInput(data.cost),
+					...(present("location") ? [toBin] : []),
 				],
 				changes,
 			});
-			if (!current || changes.length) ops.push({ data, previous: current ? { part: current, offer } : undefined });
+			if (!current || changes.length)
+				ops.push({
+					data,
+					previous: current ? { part: current, offer } : undefined,
+					part: !current || partChanges.length > 0,
+					location: moved && bin ? { bin, existing } : undefined,
+				});
 		}
 
 		return {
 			type: "parts",
-			previewColumns: ["ref", "name", "kind", "supplier", "cost"],
+			previewColumns: ["ref", "name", "kind", "supplier", "cost", ...(present("location") ? ["location"] : [])],
 			rows,
 			errors: issues,
 			warnings,
-			statements: (user, now) => ops.flatMap((op) => savePartStatements(db, op.data, op.previous, "import", user, now)),
+			statements: (user, now) =>
+				ops.flatMap((op) => [
+					...(op.part ? savePartStatements(db, op.data, op.previous, "import", user, now) : []),
+					...(op.location
+						? locationStatements(
+								db,
+								op.previous ? { partId: op.previous.part.id } : { partRef: op.data.ref },
+								op.location.existing,
+								op.location.bin,
+								op.location.existing?.note ?? "",
+								user,
+								now,
+							)
+						: []),
+				]),
 		};
 	},
 
 	async exportRows({ db, locale }) {
-		const [rows, offers] = await Promise.all([
+		const [rows, offers, locations] = await Promise.all([
 			db
 				.select({ part: parts, supplierName: suppliers.name })
 				.from(parts)
 				.leftJoin(suppliers, eq(parts.supplierId, suppliers.id))
 				.orderBy(asc(parts.ref)),
 			preferredTerms(db),
+			locationsOf(db),
 		]);
 		return rows.map(({ part: p, supplierName }) => {
 			const o = offers.get(p.id) ?? NO_TERMS;
+			const location = locations.get(p.id);
 			return [
 				p.ref,
 				p.name,
@@ -208,10 +270,18 @@ export const partsImporter: Importer = {
 				p.minStockMilli === null ? "" : formatQtyInput(p.minStockMilli, locale),
 				p.trackSerial ? "yes" : "no",
 				p.notes,
+				// The bin itself, as on its label: it imports again (the path through other units follows from the plan).
+				location ? locationCode(location) : "",
 			];
 		});
 	},
 };
+
+/** A stored location as its bin code ("A-2-3"), or empty when its unit is gone. */
+function storedBin(l: PartLocation, units: Map<number, StorageUnit>): string {
+	const unit = units.get(l.unitId);
+	return unit ? binCode(unit.code, l.level, l.position) : "";
+}
 
 /** A part and its preferred offer as comparable values, keyed by CSV column. */
 type Flat = Record<Exclude<CsvColumn, "ref">, string | number | boolean | null>;

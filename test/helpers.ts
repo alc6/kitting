@@ -8,12 +8,14 @@ import demoPartOptions from "../examples/full/part_options.csv?raw";
 import demoOffers from "../examples/full/part_suppliers.csv?raw";
 import demoParts from "../examples/full/parts.csv?raw";
 import demoStock from "../examples/full/stock.csv?raw";
+import demoStorageUnits from "../examples/full/storage_units.csv?raw";
 import demoSuppliers from "../examples/full/suppliers.csv?raw";
 import type { Role } from "../src/db/schema";
 import * as schema from "../src/db/schema";
 import { runChangeSet } from "../src/domain/history";
 import { type ImportType, planImport } from "../src/domain/import";
 import app from "../src/index";
+import { parseCsv, toCsv } from "../src/lib/csv";
 import type { Db } from "../src/types";
 
 export const ORIGIN = "https://kitting.example.com";
@@ -219,6 +221,7 @@ export async function insertMove(partId: number, qtyMilli: number, reason = "adj
 
 export const DEMO = {
 	suppliers: demoSuppliers,
+	storage_units: demoStorageUnits,
 	parts: demoParts,
 	part_options: demoPartOptions,
 	part_suppliers: demoOffers,
@@ -250,16 +253,27 @@ export async function importCsv(type: ImportType, csv: string): Promise<void> {
 	);
 }
 
-/** Loads the fictional demo dataset. Pass `stock: false` to skip initial stock. */
-export async function loadDemo(opts: { stock?: boolean } = {}): Promise<void> {
+/**
+ * Loads the fictional demo dataset. Pass `stock: false` to skip initial stock, `plan: false` to leave out the workshop
+ * plan and the parts' locations (for tests that draw their own).
+ */
+export async function loadDemo(opts: { stock?: boolean; plan?: boolean } = {}): Promise<void> {
 	await importCsv("suppliers", DEMO.suppliers);
-	await importCsv("parts", DEMO.parts);
+	if (opts.plan !== false) await importCsv("storage_units", DEMO.storage_units);
+	await importCsv("parts", opts.plan === false ? withoutColumn(DEMO.parts, "location") : DEMO.parts);
 	await importCsv("part_options", DEMO.part_options);
 	await importCsv("part_suppliers", DEMO.part_suppliers);
 	await importCsv("machine_types", DEMO.machine_types);
 	await importCsv("machines", DEMO.machines);
 	await importCsv("assemblies", DEMO.assemblies);
 	if (opts.stock !== false) await importCsv("stock", DEMO.stock);
+}
+
+/** A CSV text without one of its columns. */
+export function withoutColumn(csv: string, column: string): string {
+	const table = parseCsv(csv);
+	const header = table.header.filter((h) => h !== column);
+	return toCsv([header, ...table.records.map((r) => header.map((h) => r.values[h] ?? ""))]);
 }
 
 export async function partId(ref: string): Promise<number> {

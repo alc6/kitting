@@ -10,6 +10,7 @@ import demoPartOptions from "../examples/full/part_options.csv?raw";
 import demoOffers from "../examples/full/part_suppliers.csv?raw";
 import demoParts from "../examples/full/parts.csv?raw";
 import demoStock from "../examples/full/stock.csv?raw";
+import demoStorageUnits from "../examples/full/storage_units.csv?raw";
 import demoSuppliers from "../examples/full/suppliers.csv?raw";
 import {
 	assemblyId,
@@ -98,7 +99,7 @@ describe("parts import", () => {
 		]);
 		const csv = await (await request("/import/parts/export.csv")).text();
 		expect(csv).toContain(",min_stock,");
-		expect(csv).toMatch(/^A,Alpha,buy,pcs,.*,25,no,$/m);
+		expect(csv).toMatch(/^A,Alpha,buy,pcs,.*,25,no,,$/m);
 		expect(await (await preview("parts", csv)).text()).toContain("0 to create, 0 to update, 3 unchanged.");
 		// The diff shows the change; a file without the column keeps the value; an empty cell removes it.
 		const diff = await (await preview("parts", "ref,min_stock\nA,30\nB,\n")).text();
@@ -193,6 +194,7 @@ describe("parts import", () => {
 
 	it("round-trips through export", async () => {
 		await importOk("suppliers", demoSuppliers);
+		await importOk("storage_units", demoStorageUnits);
 		await importOk("parts", demoParts);
 		const res = await request("/import/parts/export.csv");
 		const bytes = new Uint8Array(await res.clone().arrayBuffer());
@@ -285,6 +287,7 @@ describe("small demo dataset", () => {
 describe("full dataset", () => {
 	it("imports cleanly in order", async () => {
 		await importOk("suppliers", demoSuppliers);
+		await importOk("storage_units", demoStorageUnits);
 		await importOk("parts", demoParts);
 		await importOk("part_options", demoPartOptions);
 		await importOk("part_suppliers", demoOffers);
@@ -294,6 +297,10 @@ describe("full dataset", () => {
 		await importOk("stock", demoStock);
 		expect(await one("SELECT count(*) AS n FROM suppliers")).toEqual({ n: 7 });
 		expect(await one("SELECT count(*) AS n FROM parts")).toEqual({ n: 30 });
+		// The workshop plan: two rooms, a door, racks A, B and D, drawer cabinets C and S1 (in A-3-3), a floor area; every
+		// stocked part but one has a location.
+		expect(await one("SELECT count(*) AS n FROM storage_units")).toEqual({ n: 9 });
+		expect(await one("SELECT count(*) AS n FROM part_locations")).toEqual({ n: 25 });
 		// 19 preferred offers from parts.csv plus 4 alternatives from part_suppliers.csv.
 		expect(await one("SELECT count(*) AS n FROM part_suppliers")).toEqual({ n: 23 });
 		// The printed cable clip: 24 per plate, 190 minutes on an FDM printer (3 h 10).

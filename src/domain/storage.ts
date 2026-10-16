@@ -8,6 +8,7 @@ import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import {
 	type PartKind,
+	type PartLocation,
 	partLocations,
 	parts,
 	STORAGE_FRONTS,
@@ -105,17 +106,33 @@ function madeUpCode(d: StorageUnitInput, taken: Set<string>): string {
 	return `${base.slice(0, 2)}${Date.now() % 10000}`;
 }
 
+export type CheckedUnit = { ok: true; values: UnitValues } | { ok: false; errors: FieldErrors };
+/** The bins of a unit that hold parts (level and position as in `part_locations`). */
+export type UsedBin = { level: number | null; position: number | null };
+
 /**
  * Rules a form or an import must pass beyond field formats: sizes, the plan, the code, the bin a unit stands in, bins
  * still in use. Returns the values to write, or the field errors.
  */
-export async function checkUnit(
-	db: Db,
-	d: StorageUnitInput,
-	id?: number,
-): Promise<{ ok: true; values: UnitValues } | { ok: false; errors: FieldErrors }> {
+export async function checkUnit(db: Db, d: StorageUnitInput, id?: number): Promise<CheckedUnit> {
+	const [all, used] = await Promise.all([
+		db.select().from(storageUnits),
+		id
+			? db
+					.select({ level: partLocations.level, position: partLocations.position })
+					.from(partLocations)
+					.where(eq(partLocations.unitId, id))
+			: Promise.resolve([]),
+	]);
+	return checkUnitIn(all, used, d, id);
+}
+
+/**
+ * `checkUnit` against a plan in memory: `all` the units as they stand (an import passes the plan as the rows before
+ * this one leave it), `used` the bins of unit `id` that hold parts.
+ */
+export function checkUnitIn(all: StorageUnit[], used: UsedBin[], d: StorageUnitInput, id?: number): CheckedUnit {
 	const errors: FieldErrors = {};
-	const all = await db.select().from(storageUnits);
 	const others = all.filter((u) => u.id !== id);
 	const bins = hasBins(d.kind);
 	let { levels, positions } = d;
@@ -167,10 +184,6 @@ export async function checkUnit(
 	}
 
 	if (id) {
-		const used = await db
-			.select({ level: partLocations.level, position: partLocations.position })
-			.from(partLocations)
-			.where(eq(partLocations.unitId, id));
 		const children = others
 			.filter((u) => u.parentUnitId === id)
 			.map((u) => ({ level: u.parentLevel, position: u.parentPosition }));
@@ -498,16 +511,21 @@ export type LocationInput = z.output<typeof locationInput>;
 
 export type ResolvedBin = { unit: StorageUnit; level: number | null; position: number | null };
 
+export type BinCheck = { ok: true; bin: ResolvedBin | null } | { ok: false; error: string };
+
 /** A typed bin checked against the plan, or the error key that says why not (empty = no location). */
-export async function resolveBin(
-	db: Db,
-	text: string,
-): Promise<{ ok: true; bin: ResolvedBin | null } | { ok: false; error: string }> {
+export async function resolveBin(db: Db, text: string): Promise<BinCheck> {
+	const code = parseBin(text)?.code;
+	const units = code ? await db.select().from(storageUnits).where(eq(storageUnits.code, code)).limit(1) : [];
+	return resolveBinIn(units, text);
+}
+
+/** `resolveBin` against units already loaded (an import checks every row against one read of the plan). */
+export function resolveBinIn(units: readonly StorageUnit[], text: string): BinCheck {
 	if (text.trim() === "") return { ok: true, bin: null };
 	const b = parseBin(text);
 	if (!b) return { ok: false, error: "storage_bad_bin" };
-	const rows = await db.select().from(storageUnits).where(eq(storageUnits.code, b.code)).limit(1);
-	const unit = rows[0];
+	const unit = units.find((u) => u.code === b.code);
 	if (!unit) return { ok: false, error: "storage_unknown_unit" };
 	if (!holdsParts(unit.kind)) return { ok: false, error: "storage_landmark" };
 	if (b.level !== null && !hasBins(unit.kind)) return { ok: false, error: "storage_no_bins" };
@@ -527,14 +545,33 @@ export async function setLocationStatements(
 	now: string,
 ): Promise<Statement[]> {
 	const existing = (await db.select().from(partLocations).where(eq(partLocations.partId, partId)).limit(1))[0];
+	return locationStatements(db, { partId }, existing, bin, note, user, now);
+}
+
+/**
+ * `setLocationStatements` with the part's current location already read: a part created in the same batch is
+ * targeted by its reference (an import), as its offers are.
+ */
+export function locationStatements(
+	db: Db,
+	target: { partId: number } | { partRef: string },
+	existing: Pick<PartLocation, "id"> | undefined,
+	bin: ResolvedBin | null,
+	note: string,
+	user: string,
+	now: string,
+): Statement[] {
 	if (!bin) return existing ? [db.delete(partLocations).where(eq(partLocations.id, existing.id))] : [];
 	const values = { unitId: bin.unit.id, level: bin.level, position: bin.level === null ? null : bin.position, note };
-	if (!existing)
+	if (!existing) {
+		const partId =
+			"partId" in target ? target.partId : sql<number>`(SELECT id FROM parts WHERE ref = ${target.partRef})`;
 		return [
 			db
 				.insert(partLocations)
 				.values({ partId, ...values, createdAt: now, updatedAt: now, createdBy: user, updatedBy: user }),
 		];
+	}
 	return [
 		db
 			.update(partLocations)

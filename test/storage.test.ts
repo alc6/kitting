@@ -141,7 +141,7 @@ describe("drawing the plan", () => {
 
 describe("where parts are kept", () => {
 	it("sets, moves and clears a part's location, with readable history and undo", async () => {
-		await loadDemo();
+		await loadDemo({ plan: false });
 		await drawUnit();
 		await drawUnit({ code: "P", kind: "floor", col: "15", row: "5" });
 		const led = await partId("LED-5W-CW");
@@ -198,7 +198,7 @@ describe("where parts are kept", () => {
 	});
 
 	it("assigns a part from a unit's page, and keeps units consistent with what they hold", async () => {
-		await loadDemo();
+		await loadDemo({ plan: false });
 		const a = await drawUnit();
 		const res = await postForm(`/locations/${a}/assign`, { part: "drv-12v", bin: "A-4-5", note: "" });
 		expect(res.headers.get("Location")).toBe(`/locations/${a}?bin=A-4-5&ok=saved`);
@@ -219,7 +219,7 @@ describe("where parts are kept", () => {
 	});
 
 	it("lets operators put parts away but not draw the plan", async () => {
-		await loadDemo();
+		await loadDemo({ plan: false });
 		const a = await drawUnit();
 		await setRole("operator");
 		const id = await partId("DRV-12V");
@@ -233,7 +233,7 @@ describe("where parts are kept", () => {
 
 describe("where the location shows up", () => {
 	async function plan() {
-		await loadDemo();
+		await loadDemo({ plan: false });
 		await drawUnit();
 		await drawUnit({ code: "B", col: "13" });
 		await drawUnit({
@@ -336,7 +336,7 @@ describe("rooms, doors and units inside units", () => {
 		expect(await overlap.text()).toContain("Overlaps another room.");
 		// A rack needs a code; inside the room it takes the room's name in its locations.
 		expect(await (await postForm("/locations", unitForm({ code: "" }))).text()).toContain("Required.");
-		await loadDemo();
+		await loadDemo({ plan: false });
 		await drawUnit();
 		await locate("DRV-12V", "A-2-1");
 		const part = await (await request(`/parts/${await partId("DRV-12V")}`)).text();
@@ -344,7 +344,7 @@ describe("rooms, doors and units inside units", () => {
 	});
 
 	it("puts a drawer cabinet in a bin of a rack, and reads its locations through it", async () => {
-		await loadDemo();
+		await loadDemo({ plan: false });
 		const a = await drawUnit();
 		const s1 = await drawUnit({
 			code: "S1",
@@ -449,7 +449,7 @@ describe("rooms, doors and units inside units", () => {
 
 describe("rooms as pages", () => {
 	it("shows what a room holds, counts it, and sends doors and landmarks to their editor", async () => {
-		await loadDemo();
+		await loadDemo({ plan: false });
 		const room = await drawUnit({
 			kind: "room",
 			code: "",
@@ -489,7 +489,7 @@ describe("rooms as pages", () => {
 
 describe("the part's Location tab", () => {
 	it("appears once a plan is drawn, with the plan, the unit's front and the change form", async () => {
-		await loadDemo();
+		await loadDemo({ plan: false });
 		const id = await partId("DRV-12V");
 		const tabs = (html: string) =>
 			[...html.matchAll(/data-slot="tabs-trigger"[^>]*>(?:<svg[\s\S]*?<\/svg>)?([^<]+)</g)].map((m) => m[1]);

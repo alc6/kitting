@@ -5,6 +5,7 @@ import type { Db } from "../../types";
 
 export const IMPORT_TYPES = [
 	"suppliers",
+	"storage_units",
 	"parts",
 	"part_options",
 	"part_suppliers",

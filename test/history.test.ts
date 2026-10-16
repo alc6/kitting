@@ -384,6 +384,7 @@ describe("change capture", () => {
 		// An import of stock.csv writes count moves: not revertible either; parts.csv is.
 		expect(await rows("SELECT summary, revertible FROM change_sets WHERE source = 'import' ORDER BY id")).toEqual([
 			{ summary: "Import suppliers.csv", revertible: 1 },
+			{ summary: "Import storage_units.csv", revertible: 1 },
 			{ summary: "Import parts.csv", revertible: 1 },
 			{ summary: "Import part_options.csv", revertible: 1 },
 			{ summary: "Import part_suppliers.csv", revertible: 1 },

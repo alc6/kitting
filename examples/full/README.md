@@ -6,7 +6,8 @@ company, supplier or price. For a first look, the small demo in [`examples/demo/
 | File | What it shows |
 | --- | --- |
 | `suppliers.csv` | Six suppliers (`.example` addresses), one of them a fast but pricier distributor. |
-| `parts.csv` | `make` product and sub-assemblies, `kit` phantoms (one nested inside the others), serial-tracked `buy` parts, a part sold by the metre, a part with no known cost, an eco-fee (`fee`), a 3D-printed cable clip with its filament bought by the kg, and a mini lamp in two colours. The lamp sells at 89.00 (excl. VAT). |
+| `storage_units.csv` | The workshop plan: a stockroom and an assembly room with a door between them, racks `A`, `B` and `D`, a drawer cabinet `C`, a pallet area `P`, and a cabinet of screw drawers `S1` standing on shelf `A-3-3`. |
+| `parts.csv` | `make` product and sub-assemblies, `kit` phantoms (one nested inside the others), serial-tracked `buy` parts, a part sold by the metre, a part with no known cost, an eco-fee (`fee`), a 3D-printed cable clip with its filament bought by the kg, and a mini lamp in two colours. The lamp sells at 89.00 (excl. VAT). The `location` column puts every stocked part but the inline switch on the plan: screws in `S1` (so `A-3-3 › S1-1-1`), boxes on the pallet area, filament anywhere on the top level of rack `A` (`A-4`), sub-assemblies and lamps on rack `D` in the assembly room. |
 | `part_options.csv` | The mini lamp's Colour option, white (the default) or black, on the lamp, its head and its front cover. |
 | `part_suppliers.csv` | Supplier offers: prices from the preferred suppliers, and a second supplier (Quickparts Express: small quantities, short lead times, higher prices) for a few parts. |
 | `assemblies.csv` | Two active variants of the lamp (`std` and `warm`), an archived revision, nested sub-assemblies and a kit inside a kit. The `warm` variant sells at 94.00, overriding the lamp's price. The cable clip is printed 24 per plate (`batch_qty`), 260 g of filament and 3 h 10 on an FDM printer per plate. |
@@ -14,8 +15,8 @@ company, supplier or price. For a first look, the small demo in [`examples/demo/
 | `machines.csv` | Three printers of that type, one of them under maintenance. |
 | `stock.csv` | Initial counts, with one row per serial for serial-tracked parts, and per colour for the mini lamp's front covers and heads. |
 
-Load it in this order from **Import / Export**: `suppliers.csv`, `parts.csv`, `part_options.csv`, `part_suppliers.csv`,
-`machine_types.csv`, `machines.csv`, `assemblies.csv`, `stock.csv`.
+Load it in this order from **Import / Export**: `suppliers.csv`, `storage_units.csv`, `parts.csv`, `part_options.csv`,
+`part_suppliers.csv`, `machine_types.csv`, `machines.csv`, `assemblies.csv`, `stock.csv`.
 Each import shows a preview first; confirm to write.
 
 The lamp in numbers: one lamp needs 1 base sub-assembly, 2 arm sub-assemblies and 1 head kit.

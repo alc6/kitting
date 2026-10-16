@@ -1498,3 +1498,33 @@ workshop. D201–D205 put the charges on the PO and, by default, into the receip
   part and values once, priced at the supplier's offer, else the standard cost, unless a price is given. Refusing
   archived parts is new on the page and in `update_draft_po` too: the page's part list already left them out, and
   ordering a part that is being retired is a mistake to stop, not a choice to offer.
+
+## Storage locations in CSV files and over MCP (M19, finished)
+
+The plan and the locations could only be drawn and set on the pages: a workshop moving from a spreadsheet had to type
+every location again, and an assistant could not say where a part is. D207 puts them in the CSV files, D208 over MCP.
+
+- **D207. The plan in `storage_units.csv`, locations in a `location` column of `parts.csv`.**
+  - `storage_units.csv` (`code,name,kind,col,row,width,depth,front,levels,positions,parent_bin,notes`) is upserted by
+    code and imported right before `parts.csv` (its locations need the units). Columns left out keep their values, as
+    in the other files; nothing is deleted by an import.
+  - *Checked in file order.* Each row passes the editor's rules (`checkUnitIn`, the pure core of `checkUnit`) against
+    the plan as the rows before it leave it, so a unit can stand in a bin of a unit created earlier in the file; the
+    insert finds that parent by its code in the same batch. A parent further down is refused (unknown unit) rather
+    than sorted: the export lists each unit before the units standing in it (`unitTree`), so exported files import
+    again, and a hand-written file reads top-down like the plan's tree.
+  - *A code on every row, rooms and doors included.* The editor makes one up when left empty (`STOC`, `DOOR2`), but a
+    file row without a code could only create, adding the same door at every import. The export writes the codes
+    made up, so round-trips need nothing more.
+  - `parts.csv` gains a last `location` column (the template and exports keep the earlier columns where they were):
+    the bin code (`A-2-3`, `A-2`, `P`), checked as on the page (`resolveBinIn`, one read of the plan per import).
+    *Empty leaves the location as it is*, so files written before the column, or with blanks, never undo what
+    operators put away on the pages; clearing stays on the part's page. The file has no note column: a part moved by
+    a file keeps its note. The export writes the bin's own code (`S1-1-1`), as on its label, not the path
+    (`A-3-3 › S1-1-1`), which follows from the plan. Locations are written in the parts import's change set, so its
+    undo restores them.
+  - Locations are not refused for kits and fees in files, as on the page; the example puts none on them.
+  - `examples/full` gains a plan (a stockroom and an assembly room with a door, racks A, B, D, a drawer cabinet C, a
+    pallet area P, a cabinet of screw drawers S1 on shelf A-3-3) and a location for every stocked part but one, so
+    the Locations page, pick lists and counts show them in a first look and in tests. Tests that draw their own plan
+    load the demo with `loadDemo({ plan: false })` (no units, no location column).

@@ -54,8 +54,8 @@ Then open http://localhost:8787. Locally you are signed in as the email in `.dev
 
 To get some data, open **Import / Export** and import the files in [`examples/demo/`](examples/demo/) in this
 order: suppliers, parts, assemblies, stock. The demo is a fictional desk lamp: a base sub-assembly plus two
-parts. [`examples/full/`](examples/full/) has a larger version with variants, kits, serial numbers and a 3D-printed
-part.
+parts. [`examples/full/`](examples/full/) has a larger version with variants, kits, serial numbers, a 3D-printed
+part and a workshop plan.
 
 ## Deploy
 
