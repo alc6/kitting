@@ -194,7 +194,7 @@ was built with; `npx skills update` refreshes it.
 - Optional (D115–D131): `src/mcp/` holds the OAuth provider setup (`oauth.ts`), the stateless MCP endpoint
   (`server.ts`, with the server instructions), the wire format (`wire.ts`), the tools (`kit.ts`: tool shape, inputs,
   lookups, `saveChange()`; `read-tools.ts`, `history-tools.ts`, `catalog-tools.ts`, `price-tools.ts`,
-  `stock-tools.ts`, `build-tools.ts`, `purchasing-tools.ts`; `tools.ts` lists them all); `src/domain/mcp-scopes.ts`
+  `stock-tools.ts`, `build-tools.ts`, `purchasing-tools.ts`, `location-tools.ts`; `tools.ts` lists them all); `src/domain/mcp-scopes.ts`
   maps scopes to permission actions; `src/routes/connect.tsx` is the consent page and the connected apps page.
   Everything is off (404) without the `OAUTH_KV` binding. Only `/mcp`, `/token`, `/register` and
   `/.well-known/oauth-*` skip Access (`isOAuthPath`, exact paths): never widen it. Only listed users (Users page or

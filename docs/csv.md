@@ -8,8 +8,8 @@ Files from French or English versions of Excel work as they are: the separator c
 tab, decimals can use a point or a comma, and the encoding can be UTF-8 or Windows-1252. Header names are not
 case-sensitive.
 
-Import the files in this order: suppliers, parts, part options, supplier offers, past prices, machine types, machines,
-assemblies, stock.
+Import the files in this order: suppliers, storage units, parts, part options, supplier offers, past prices, machine
+types, machines, assemblies, stock.
 
 ## suppliers.csv
 
@@ -17,9 +17,29 @@ assemblies, stock.
 
 Suppliers are matched by name: an existing supplier is updated, a new one is created.
 
+## storage_units.csv
+
+`code,name,kind,col,row,width,depth,front,levels,positions,parent_bin,notes`
+
+The workshop plan (the Locations page): rooms, doors, landmarks and the units that hold parts. Units are matched by
+`code`, required on every row, rooms and doors included (the form makes up a code when left empty, a file would add the
+same door again on every import). Columns you leave out keep their current values.
+
+- `kind` is `rack`, `cabinet` (a drawer cabinet), `floor` (a floor area, one place), `room`, `door` or `landmark`.
+- `col`, `row`, `width` and `depth` place the unit on the plan, in half-metre squares from the top left. Units that
+  hold parts may not overlap, nor may rooms; a unit belongs to the room around its centre.
+- `front` is the side people pick from: `south`, `north`, `west` or `east`.
+- `levels` and `positions` give the bins of racks and cabinets: `A-2-3` is level 2 from the floor, position 3 from the
+  left when facing the front. Other kinds have one place.
+- `parent_bin` puts a rack or a cabinet in a bin of another unit (`A-3-3`, `A-3` or `A`) instead of on the plan; its
+  `col` to `depth` are then ignored. That unit must exist or come earlier in the file: the export lists each unit
+  before the units standing in it.
+- A unit that holds parts cannot lose the bins they are in or become a room, door or landmark. Units are never deleted
+  by an import.
+
 ## parts.csv
 
-`ref,name,kind,unit,cost,sale_price,supplier,supplier_ref,moq,pack_size,lead_days,min_stock,track_serial,notes`
+`ref,name,kind,unit,cost,sale_price,supplier,supplier_ref,moq,pack_size,lead_days,min_stock,track_serial,notes,location`
 
 Parts are matched by `ref`, the only required column. Columns you leave out keep their current values, so a file
 with just `ref,cost` updates standard costs and nothing else.
@@ -30,6 +50,9 @@ with just `ref,cost` updates standard costs and nothing else.
   Use `part_suppliers.csv` for more than one supplier per part.
 - `min_stock` is the part's minimum stock, in its unit (buy and make parts only). The dashboard and the stock page
   flag the part when its on-hand quantity falls below it; empty means no alert.
+- `location` is the bin where the part is kept: `A-2-3`, `A-2` (anywhere on level 2) or `A` (anywhere in the unit),
+  from `storage_units.csv`. Empty leaves the location as it is (clear it on the part's page), and the location's
+  note is kept. The export gives the bin's own code, as on its label, also for a bin of a unit standing in another.
 
 ## part_options.csv
 

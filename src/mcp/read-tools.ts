@@ -28,6 +28,7 @@ import { loadOptions, optionsOf } from "../domain/options";
 import { listParts, onHandOf } from "../domain/parts";
 import { computeShortages, getPoLines, getPoShipments, listPos } from "../domain/purchasing";
 import { belowMinimum, isStocked, listMoves, onHandByKey, stockByKey } from "../domain/stock";
+import { locationOf } from "../domain/storage";
 import { lineCostCents, MILLI, machineMillicents, roundDiv } from "../lib/units";
 import {
 	assemblySelector,
@@ -46,6 +47,7 @@ import {
 	type ToolSpec,
 	tool,
 } from "./kit";
+import { locationView } from "./location-tools";
 import { choicesView, optionsInput, optionsView, rulesView, stockByOptionsView, valueIdsOf } from "./options";
 
 // ---------------------------------------------------------------------------
@@ -119,12 +121,12 @@ const getPartTool = tool({
 	name: "get_part",
 	title: "Part details",
 	description:
-		"One part: details, standard cost and selling price, supplier offers (preferred first), on-hand quantity, its assemblies with their unit cost, where it is used (directly or through sub-assemblies), and its own files (drawings, datasheets…; a revision's files are in get_assembly). A part with options lists them (values in order, default) and its stock per values (stockByOptions).",
+		"One part: details, standard cost and selling price, supplier offers (preferred first), on-hand quantity, where it is kept (location: bin, path, room; null when not put away), its assemblies with their unit cost, where it is used (directly or through sub-assemblies), and its own files (drawings, datasheets…; a revision's files are in get_assembly). A part with options lists them (values in order, default) and its stock per values (stockByOptions).",
 	rule: { scope: "catalog:read" },
 	input: z.object({ ref: partRef }),
 	run: async (a, { db, origin }) => {
 		const part = await partByRef(db, a.ref);
-		const [onHand, summary, used, offers, files, defs, stockRows] = await Promise.all([
+		const [onHand, summary, used, offers, files, defs, stockRows, location] = await Promise.all([
 			onHandOf(db, part.id),
 			partAssemblySummary(db, part.id),
 			whereUsed(db, part.id),
@@ -132,6 +134,7 @@ const getPartTool = tool({
 			partFiles(db, part.id),
 			optionsOf(db, part.id),
 			stockByKey(db, null, part.id),
+			locationOf(db, part.id),
 		]);
 		const ref = (id: number) => summary.refs.get(id) ?? String(id);
 		return {
@@ -150,6 +153,8 @@ const getPartTool = tool({
 					? defs.map((o) => ({ name: o.name, values: o.values.map((v) => v.name), default: defaultValue(o)?.name }))
 					: undefined,
 				stockByOptions: defs.length ? stockByOptionsView(defs, stockRows) : undefined,
+				// Where it is kept (D195, D208).
+				location: locationView(location),
 				standardCostCents: part.costCents,
 				salePriceCents: part.salePriceCents,
 			},

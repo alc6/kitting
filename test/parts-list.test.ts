@@ -65,7 +65,7 @@ describe("parts list: standard cost column (D176)", () => {
 		await setRole("planner");
 		const csv = await (await request("/import/parts/export.csv")).text();
 		expect(csv.split("\r\n")[0]).toBe(
-			"ref,name,kind,unit,cost,sale_price,supplier,supplier_ref,moq,pack_size,lead_days,min_stock,track_serial,notes",
+			"ref,name,kind,unit,cost,sale_price,supplier,supplier_ref,moq,pack_size,lead_days,min_stock,track_serial,notes,location",
 		);
 		// The export holds stored values only: no roll-up in the cost column.
 		expect(csv).toMatch(/^LAMP-DESK,Modular desk lamp,make,pcs,,89\.00,/m);

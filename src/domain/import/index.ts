@@ -6,6 +6,7 @@ import { partOptionsImporter } from "./part-options";
 import { partsImporter } from "./parts";
 import { priceHistoryImporter } from "./price-history";
 import { stockImporter } from "./stock";
+import { storageUnitsImporter } from "./storage-units";
 import { suppliersImporter } from "./suppliers";
 import type { ImportContext, Importer, ImportPlan, ImportType } from "./types";
 
@@ -14,6 +15,7 @@ export * from "./types";
 /** Importers in the order data should be loaded. */
 export const IMPORTERS: Importer[] = [
 	suppliersImporter,
+	storageUnitsImporter,
 	partsImporter,
 	partOptionsImporter,
 	offersImporter,

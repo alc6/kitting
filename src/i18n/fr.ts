@@ -894,7 +894,7 @@ export const fr: Dict = {
 		intro:
 			"Envoyez un fichier CSV (séparateur virgule ou point-virgule, UTF-8). Un aperçu s’affiche toujours d’abord ; rien n’est écrit avant votre confirmation.",
 		order:
-			"Importez dans cet ordre : fournisseurs, articles, options des articles, offres fournisseurs, anciens prix, types de machines, machines, assemblages, stock.",
+			"Importez dans cet ordre : fournisseurs, unités de stockage, articles, options des articles, offres fournisseurs, anciens prix, types de machines, machines, assemblages, stock.",
 		file: "Fichier CSV",
 		orPaste: "…ou collez le texte CSV",
 		preview: "Aperçu",
@@ -915,6 +915,7 @@ export const fr: Dict = {
 		done: "Import terminé : {create} créé(s), {update} modifié(s).",
 		types: {
 			suppliers: "Fournisseurs",
+			storage_units: "Unités de stockage",
 			parts: "Articles",
 			part_options: "Options des articles",
 			part_suppliers: "Offres fournisseurs",
@@ -926,8 +927,10 @@ export const fr: Dict = {
 		},
 		help: {
 			suppliers: "Mise à jour ou création par nom.",
+			storage_units:
+				"Le plan de l’atelier, mis à jour ou créé par code (obligatoire sur chaque ligne, pièces et portes comprises). kind vaut rack, cabinet, floor, room, door ou landmark ; col, row, width et depth le placent sur le plan en carreaux d’un demi-mètre ; front vaut south, north, west ou east ; levels et positions donnent les cases des rayonnages et des armoires. parent_bin (A-3-3) pose un rayonnage ou une armoire dans une case d’une autre unité au lieu du plan : placez cette unité plus haut dans le fichier. Les colonnes absentes du fichier gardent leur valeur actuelle.",
 			parts:
-				"Mise à jour ou création par ref. Les colonnes absentes du fichier gardent leur valeur actuelle. Les fournisseurs sont reconnus par leur nom.",
+				"Mise à jour ou création par ref. Les colonnes absentes du fichier gardent leur valeur actuelle. Les fournisseurs sont reconnus par leur nom. location est la case où l’article est rangé (A-2-3, A-2 ou P, parmi les unités de stockage) ; vide, elle reste telle quelle, et sa note est conservée.",
 			part_options:
 				"Une ligne par valeur d’une option, dans l’ordre : ref, option, value, et default = oui sur la valeur par défaut. Pour chaque article du fichier, le fichier remplace ses options : celles qui manquent sont retirées (refusé tant que du stock, des commandes ou des fabrications les utilisent), les autres gardent leurs enregistrements et prennent l’ordre du fichier. Ajouter une option à un article qui a du stock fait passer ce stock sur sa valeur par défaut, sans annulation possible.",
 			part_suppliers:
@@ -945,7 +948,8 @@ export const fr: Dict = {
 		},
 		summaries: {
 			suppliers: "Noms et coordonnées.",
-			parts: "Le catalogue : références, types, unités, coûts.",
+			storage_units: "Le plan de l’atelier : pièces, rayonnages, armoires à tiroirs et leurs cases.",
+			parts: "Le catalogue : références, types, unités, coûts, emplacements.",
 			part_suppliers: "Ce que propose chaque fournisseur : référence, prix, conditions.",
 			part_options: "Options des articles et leurs valeurs, comme des couleurs.",
 			price_history: "Prix d’avant Kitting.",

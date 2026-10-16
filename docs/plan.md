@@ -233,10 +233,10 @@ catalogue and in recipes (D183–D193).
 - [x] CSV: `part_options.csv` and `options` columns; MCP tools take and return `options` (D192, D193)
 - [x] A mini lamp in two colours in `examples/full`
 
-## M19: Storage locations (proposal)
+## M19: Storage locations ✅
 
 Where each part is kept, drawn on a plan of the workshop, shown wherever someone is about to walk to a shelf
-(D194–D200). Built on `feat/storage-locations` to look at; not merged.
+(D194–D200), in the CSV files and over MCP (D207, D208).
 
 - [x] Storage units on a grid plan, with bins from levels × positions; rooms with walls, doors, landmarks
       (migration 0012: `storage_units`, `part_locations`, tracked) (D194, D195)
@@ -244,9 +244,10 @@ Where each part is kept, drawn on a plan of the workshop, shown wherever someone
 - [x] Permissions: operators set locations, planners draw, administrators delete (D196)
 - [x] Locations in the sidebar, unit and room pages, plan editor with dragging and a bins preview (D197, D198, D200)
 - [x] The location on the part page, pick list, receipt, inventory count and global search (D197)
-- [ ] CSV: a `location` column in `parts.csv` and a `storage_units.csv` importer; the plan in `examples/full`
-- [ ] MCP: `location` in `get_part`, `search_parts`, `stock_on_hand` and `get_build`, set by `update_part`
-- [ ] README and the Kitting skill
+- [x] CSV: a `location` column in `parts.csv` and a `storage_units.csv` importer; the plan in `examples/full` (D207)
+- [x] MCP, kept small: `get_location` (a part's bin and path, what a bin, unit or room holds, the plan), `location` in
+      `get_part`, set by `update_part`; no location on other tools, no tool to draw the plan (D208)
+- [x] README and the Kitting skill ("Where is it?", "Put it away", two eval cases)
 
 ## M20: PO charges and landed cost ✅
 

@@ -1,6 +1,6 @@
 ---
 name: kitting
-description: Work with a Kitting mini-MRP through its MCP tools - parts and references, assemblies (bills of materials, BoMs, nomenclatures, kits, variants, revisions), part options (colour, size: couleur, taille), stock and inventory counts, builds (production, fabrication, serial numbers and traceability), shortages (manquants) and what to order, purchase orders (commandes fournisseur), supplier offers, costs, prices and margins. Use whenever the user talks about making, buying or counting parts, planning or completing a build, changing an assembly, a BoM or a nomenclature, receiving a delivery, or tracing a serial, in English or French (fabrication, stock, achats, commande, prix de revient, marge).
+description: Work with a Kitting mini-MRP through its MCP tools - parts and references, assemblies (bills of materials, BoMs, nomenclatures, kits, variants, revisions), part options (colour, size: couleur, taille), stock, inventory counts and where parts are kept (locations, bins, emplacements), builds (production, fabrication, serial numbers and traceability), shortages (manquants) and what to order, purchase orders (commandes fournisseur), supplier offers, costs, prices and margins. Use whenever the user talks about making, buying or counting parts, planning or completing a build, changing an assembly, a BoM or a nomenclature, receiving a delivery, finding or putting away a part, or tracing a serial, in English or French (fabrication, stock, achats, commande, prix de revient, marge).
 ---
 
 # Kitting
@@ -46,6 +46,11 @@ worked conversations in [references/examples.md](references/examples.md).
 - **Stock** is a ledger: on hand is the sum of signed moves (receipts, build consumption and output,
   adjustments, counts). Nothing edits a move; mistakes are corrected with new moves. Stock can go negative; that
   is a signal (`stock_on_hand` with `below_zero`).
+- **Locations**: the workshop plan (drawn in the app) has rooms and storage units: racks and drawer cabinets with
+  bins, floor areas. Each stocked part has at most one home location, a **bin code**: `A-2-3` is unit A, level 2 from
+  the floor, position 3 from the left facing it; `A-2` anywhere on that level, `A` or `P` anywhere in the unit. A
+  cabinet can stand on a shelf: its drawers keep their own code (`S1-1-1`, the label) and `path` gives the way there
+  (`A-3-3 › S1-1-1`). Stock is not counted per bin: the location says where to look and where to put away.
 - **Builds** consume components and add the product. Number `B-0001`. Statuses: planned, in progress, done,
   cancelled. A done build keeps an **as-built record** with the serial and frozen unit cost of every component.
 - **Serials**: parts with `track_serial` carry one serial per unit, from the receipt (or adjustment) through the
@@ -164,6 +169,25 @@ with the serials.
 revision being built, then the part's own; otherwise `get_assembly` (the active revision, or `revision`) or `get_part`.
 Name the file, its kind and when it was uploaded, and give its `download_url`. A new revision starts with the files of
 the one it came from, so an older revision may still hold an older file: say which revision a file belongs to.
+
+### Where is it?
+"Where are the M3 screws?", "What is on shelf A-2?", "What is in the stockroom?"
+1. A part: `search_parts` when the user gives a name, then `get_location` with its `ref`. Say the `path` (the way from
+   the plan, `A-3-3 › S1-1-1`), in words when it helps (rack A, level 3, position 3, then drawer S1-1-1), the `room`,
+   the `note`, and `on_hand` (zero: say so before someone walks there). No location: say so and offer the next workflow.
+2. A bin, a unit or a room: `get_location` with its code (`A-2`, `S1`, `STOC`, or the room's name) lists the parts
+   with their bins and on hand, and the units standing in it; `part_count` says how many when `limit` cut the list.
+3. The whole plan, or "what has no place yet?": `get_location` without `ref` (`without_location`).
+
+### Put it away
+"Put the inline switches in B-1-2", or a delivery with parts that have no location yet.
+1. `get_location` with the part's `ref`: where it is now (if anywhere). `get_location` with the bin (`B-1-2`) shows
+   what is already there; with no `ref` it gives the plan's units and their levels and positions, so you only offer
+   bins that exist. Never invent a code.
+2. Confirm: the part, the bin, the note if any, and where it was before. Then `update_part` with
+   `location: {"bin": "B-1-2", "note": "..."}` (the note left out is kept; `"bin": ""` clears the location). It needs
+   the `catalog:write` scope and a planner; operators set locations in the app.
+3. Report the new `path` and the undo link. Drawing or changing the plan (units, rooms, bins) is done in the app.
 
 ### Inventory count
 1. `stock_on_hand` (filter or `query`) for the parts to count; the user gives the counted quantities.

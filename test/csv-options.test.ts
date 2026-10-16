@@ -7,6 +7,7 @@ import demoPartOptions from "../examples/full/part_options.csv?raw";
 import demoOffers from "../examples/full/part_suppliers.csv?raw";
 import demoParts from "../examples/full/parts.csv?raw";
 import demoStock from "../examples/full/stock.csv?raw";
+import demoStorageUnits from "../examples/full/storage_units.csv?raw";
 import demoSuppliers from "../examples/full/suppliers.csv?raw";
 import { type ImportPlan, importerFor, planImport } from "../src/domain/import";
 import { toCsv } from "../src/lib/csv";
@@ -391,6 +392,7 @@ describe("assemblies.csv options column", () => {
 describe("the full example dataset", () => {
 	it("exports what it imported, as unchanged rows, for every file with options", async () => {
 		await importCsv("suppliers", demoSuppliers);
+		await importCsv("storage_units", demoStorageUnits);
 		await importCsv("parts", demoParts);
 		await importCsv("part_options", demoPartOptions);
 		await importCsv("part_suppliers", demoOffers);

@@ -31,7 +31,7 @@ const CATALOG_TOOLS = [
 	"list_recent_changes",
 	"search_parts",
 ];
-const STOCK_TOOLS = ["list_moves", "stock_on_hand"];
+const STOCK_TOOLS = ["get_location", "list_moves", "stock_on_hand"];
 
 beforeEach(async () => {
 	await resetKv();

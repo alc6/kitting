@@ -1,6 +1,6 @@
 # Evaluations (not run in CI)
 
-Six prompts that check the skill leads Claude to the right tool sequence on the fictional demo dataset
+Eight prompts that check the skill leads Claude to the right tool sequence on the fictional demo dataset
 (`examples/full/`). The case files use the layout of [`claude plugin eval`](https://code.claude.com/docs/en/plugin-evals) (one
 directory per case with a `prompt.md` and `graders/`), but nobody runs them in CI: they need a Kitting deployment
 loaded with the demo data and every scope (a throwaway one, the cases write), reached through OAuth.
@@ -34,6 +34,8 @@ build with a serial first when a case needs history (case 2 assumes `B-0007` mad
 | `record-print-run` | We printed 2 plates of cable clips: record it, with the printer time and filament | `search_parts` (find `LAMP-CLIP`) → `get_assembly` (batch 24, machine time) → `record_build` (`batches` 2) | `plan_build` + `complete_build` instead of one step, an undo link (ledger write) |
 | `order-spare-felt-pads` | Order 1000 felt pads from Bolt & Nut Depot as spares, with 6.50 of shipping (go-ahead given for the draft) | `search_parts` (find `PAD-FELT`) → `get_part` (the offer: MOQ and pack 500) → `create_po` (`PAD-FELT` 1000, `shipping` 6.50) | `create_draft_pos` (nothing is short), `mark_po_sent` |
 | `plan-black-mini-lamps` | Plan 12 black mini lamps and tell me what to order (go-ahead given for the build and drafts) | `search_parts` or `get_part` (the `Colour` option) → `explode_assembly` (qty 12, `options` black, `use_stock`) → `plan_build` (`options` black) → `get_shortages` → `create_draft_pos` | `mark_po_sent`, planning without `options`, counting the white stock for black lamps |
+| `find-m3-screws` | Where are the M3 screws kept? | `search_parts` (optional, to find `SCREW-M3X8`) → `get_location` (`ref` `SCREW-M3X8`): drawer `S1-1-1`, path `A-3-3 › S1-1-1`, stockroom, on hand | any write; a bin the tools did not return |
+| `put-away-switches` | Put the inline switches in B-1-2, in bags of 20 (go-ahead given) | `get_location` (`SWITCH-INL`: no location; optionally `B-1-2`: what is there) → `update_part` (`location` `{"bin": "B-1-2", "note": ...}` only) | `adjust_stock` or `count_stock` (a location is not stock), other fields of the part |
 
 In a real conversation each write is confirmed first; the cases give the go-ahead in the prompt so one turn can
 reach the writes. A second run without that sentence should stop before the first write and ask.

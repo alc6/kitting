@@ -26,7 +26,7 @@ import {
 
 /** Demo data plus a draft PO, a sent PO and a planned build, as an admin would set them up. */
 async function seed() {
-	await loadDemo();
+	await loadDemo({ plan: false });
 	const part = await partId("BOX-LAMP");
 	const supplier = (await one<{ id: number }>("SELECT supplier_id AS id FROM parts WHERE id = ?", part)).id;
 	const po = async () => {

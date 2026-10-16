@@ -80,8 +80,8 @@ npm run deploy
 This builds the stylesheet, applies any pending migrations and deploys the Worker on your hostname. Run the
 same command for every update.
 
-Then open your hostname, sign in, and load your data from **Import / Export** in this order: suppliers, parts,
-supplier offers, past prices (optional), assemblies, stock. The [CSV formats](csv.md) page lists the columns. To try the app first,
+Then open your hostname, sign in, and load your data from **Import / Export** in this order: suppliers, storage units
+(optional), parts, supplier offers, past prices (optional), assemblies, stock. The [CSV formats](csv.md) page lists the columns. To try the app first,
 import the demo files in [`examples/demo/`](../examples/demo/).
 
 ## Deploying from GitHub Actions

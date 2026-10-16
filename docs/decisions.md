@@ -1367,7 +1367,7 @@ in values that are counted apart in stock, while it stays one part in the catalo
   `below_zero` also catches a part below zero in one value. Defining options over MCP is left for later
   (docs/plan.md).
 
-## Storage locations (M19, proposal)
+## Storage locations (M19)
 
 - **D194. A drawn plan of rooms and storage units; bins follow from their size.** The workshop is a grid of half-metre
   squares. A storage unit (`storage_units`, tracked) is a rectangle on it with a short upper-case code, a kind and a
@@ -1498,3 +1498,55 @@ workshop. D201–D205 put the charges on the PO and, by default, into the receip
   part and values once, priced at the supplier's offer, else the standard cost, unless a price is given. Refusing
   archived parts is new on the page and in `update_draft_po` too: the page's part list already left them out, and
   ordering a part that is being retired is a mistake to stop, not a choice to offer.
+
+## Storage locations in CSV files and over MCP (M19, finished)
+
+The plan and the locations could only be drawn and set on the pages: a workshop moving from a spreadsheet had to type
+every location again, and an assistant could not say where a part is. D207 puts them in the CSV files, D208 over MCP.
+
+- **D207. The plan in `storage_units.csv`, locations in a `location` column of `parts.csv`.**
+  - `storage_units.csv` (`code,name,kind,col,row,width,depth,front,levels,positions,parent_bin,notes`) is upserted by
+    code and imported right before `parts.csv` (its locations need the units). Columns left out keep their values, as
+    in the other files; nothing is deleted by an import.
+  - *Checked in file order.* Each row passes the editor's rules (`checkUnitIn`, the pure core of `checkUnit`) against
+    the plan as the rows before it leave it, so a unit can stand in a bin of a unit created earlier in the file; the
+    insert finds that parent by its code in the same batch. A parent further down is refused (unknown unit) rather
+    than sorted: the export lists each unit before the units standing in it (`unitTree`), so exported files import
+    again, and a hand-written file reads top-down like the plan's tree.
+  - *A code on every row, rooms and doors included.* The editor makes one up when left empty (`STOC`, `DOOR2`), but a
+    file row without a code could only create, adding the same door at every import. The export writes the codes
+    made up, so round-trips need nothing more.
+  - `parts.csv` gains a last `location` column (the template and exports keep the earlier columns where they were):
+    the bin code (`A-2-3`, `A-2`, `P`), checked as on the page (`resolveBinIn`, one read of the plan per import).
+    *Empty leaves the location as it is*, so files written before the column, or with blanks, never undo what
+    operators put away on the pages; clearing stays on the part's page. The file has no note column: a part moved by
+    a file keeps its note. The export writes the bin's own code (`S1-1-1`), as on its label, not the path
+    (`A-3-3 › S1-1-1`), which follows from the plan. Locations are written in the parts import's change set, so its
+    undo restores them.
+  - Locations are not refused for kits and fees in files, as on the page; the example puts none on them.
+  - `examples/full` gains a plan (a stockroom and an assembly room with a door, racks A, B, D, a drawer cabinet C, a
+    pallet area P, a cabinet of screw drawers S1 on shelf A-3-3) and a location for every stocked part but one, so
+    the Locations page, pick lists and counts show them in a first look and in tests. Tests that draw their own plan
+    load the demo with `loadDemo({ plan: false })` (no units, no location column).
+- **D208. Over MCP: one read tool, `get_location`, and the location through `update_part`.** The server had 42
+  tools and the user wanted the surface to grow as little as possible, so locations add one tool (43) and two fields,
+  not a location on every read tool nor a tool per action.
+  - `get_location` (`stock:read`, read-only) answers both questions with one `ref`: a part reference (tried first, as
+    the plan's search box does) gives its location; a bin, unit or room code (or a room's name) gives what it holds;
+    nothing gives the plan (rooms, the units that hold parts as a tree with the units in their bins and part counts)
+    and the stocked parts without a location. A location reads `bin` (the label's code, `S1-2-1`), `path` (the way
+    from the plan, `A-3-3 › S1-2-1`), `room`, `storage_unit` and `note`; parts come with `on_hand`, so "where is it"
+    also says whether there is any. A bin lists the parts in exactly that bin, as the plan's search does (a part kept
+    "anywhere on level 2" shows under `A-2`, not under `A-2-3`); a room lists every part in its units, in walking
+    order. Doors and landmarks hold nothing and answer an error saying so.
+  - `get_part` returns `location` (or null). `search_parts`, `stock_on_hand` and `get_build` do not, for now: an
+    assistant asks `get_location` when it needs a place, and pick lists already carry the location in the app.
+  - `update_part` takes `location: { bin, note }`, checked as on the part's Location page (`resolveBin`); `""` clears
+    it, a note left out is kept, the same bin and note again record nothing. Only a location given: the part's row
+    is not rewritten and the change is named after the location (`partLocationSet`, `partLocationClear`); with other
+    fields, one "Edit part" change set holds both. It keeps its rule (`catalog:write`, `parts.edit`), so over MCP
+    only planners set locations, where the app lets operators (`storage.assign`, D196): a separate write tool for
+    operators would be one more tool, and putting away is done on the tablet anyway. Revisit if operators ask.
+  - No tool draws or edits the plan: units and rooms are geometry, edited with the plan in view. `storage.delete`
+    joins `NEVER_OVER_MCP`; `storage.plan` is not offered either, for now.
+  - The skill has two workflows ("Where is it?", "Put it away"), two examples and two eval cases.

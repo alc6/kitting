@@ -117,6 +117,12 @@ const RESULT_FIELDS = [
 	"lines_total",
 	"landed_unit_cost",
 	"charges_in_stock",
+	// Storage locations (D208).
+	"storage_unit",
+	"part_count",
+	"in_bin",
+	"without_location",
+	"without_location_count",
 ];
 
 function inputFields(): Set<string> {
@@ -268,6 +274,8 @@ describe("names used by the skill and its references", () => {
 			"list_builds",
 			"upsert_supplier_offer",
 			"archive_part",
+			"get_location",
+			"update_part",
 		])
 			expect(skill, name).toContain(name);
 	});

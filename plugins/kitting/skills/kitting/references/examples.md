@@ -149,3 +149,31 @@ reconnecting the app with the scope ticked if the role allows it.
 2. After a yes: `create_po({ "supplier": "Bolt & Nut Depot", "shipping": "6.50", "lines": [{ "ref": "PAD-FELT", "qty": "1000" }] })`
    returns the new draft's `number`, its lines with their `landed_unit_cost`, and the undo link. Claude says nothing
    was sent and offers `mark_po_sent` once the user has sent the order.
+
+## 9. Where is it?
+
+**User:** Where are the M3 screws?
+
+1. `search_parts({ "query": "M3" })` finds `SCREW-M3X8` and `WASHER-M3`; the user means the screws.
+2. `get_location({ "ref": "SCREW-M3X8" })`: `location` with `bin` `S1-1-1`, `path` `A-3-3 › S1-1-1`, `room`
+   Stockroom, `storage_unit` S1 (Screw drawers, a cabinet); `part.on_hand` 350.
+
+   > **Claude:** In the stockroom: rack A, level 3, position 3, in the screw drawers S1, drawer S1-1-1 (350 in stock).
+   > The M3 washers are in the next drawer, S1-1-3.
+
+   (The washers' bin comes from `get_location({ "ref": "S1" })`, which lists everything in the drawers.)
+
+## 10. Put it away
+
+**User:** The inline switches have no place yet. Put them in B-1-2, in their bags of 20.
+
+1. `get_location({ "ref": "SWITCH-INL" })`: `location` null. `get_location({ "ref": "B-1-2" })`: an empty bin of
+   rack B in the stockroom (`parts` is empty; `PSU-EU-12V` is next door in B-1-1).
+
+   > **Claude:** I would set the location of SWITCH-INL to B-1-2 (rack B, level 1, position 2, stockroom), with the
+   > note "Bags of 20". Shall I?
+
+2. After a yes: `update_part({ "ref": "SWITCH-INL", "location": { "bin": "B-1-2", "note": "Bags of 20" } })`. The
+   result has `part.location` (`path` B-1-2) and the undo link; the change is named "Set the location of SWITCH-INL
+   to B-1-2". Without the `catalog:write` scope or as an operator, the tool is not offered: the user sets it on the
+   part's Location tab in the app.
