@@ -1528,8 +1528,8 @@ every location again, and an assistant could not say where a part is. D207 puts 
     pallet area P, a cabinet of screw drawers S1 on shelf A-3-3) and a location for every stocked part but one, so
     the Locations page, pick lists and counts show them in a first look and in tests. Tests that draw their own plan
     load the demo with `loadDemo({ plan: false })` (no units, no location column).
-- **D208. Over MCP: one read tool, `get_location`, and the location through `update_part`.** The server had 41
-  tools and the user wanted the surface to grow as little as possible, so locations add one tool (42) and two fields,
+- **D208. Over MCP: one read tool, `get_location`, and the location through `update_part`.** The server had 42
+  tools and the user wanted the surface to grow as little as possible, so locations add one tool (43) and two fields,
   not a location on every read tool nor a tool per action.
   - `get_location` (`stock:read`, read-only) answers both questions with one `ref`: a part reference (tried first, as
     the plan's search box does) gives its location; a bin, unit or room code (or a room's name) gives what it holds;
