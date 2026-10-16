@@ -244,6 +244,7 @@ const CASES: WriteCase[] = [
 		args: (s) => ({
 			number: s.draftPo,
 			expected_at: "2026-12-01",
+			shipping: "2.50",
 			lines: [
 				{ ref: "BOX-LAMP", qty: "15" },
 				{ ref: "PAD-FELT", qty: "500" },
@@ -1128,6 +1129,53 @@ describe("purchasing tools", () => {
 		expect(date.data.purchase_order).toMatchObject({ status: "sent", expected_at: "2026-12-24" });
 	});
 
+	it("sets the charges of open POs, returns each line's landed cost and receives at it", async () => {
+		const s = await seed();
+		const token = await connect(["purchasing:read", "purchasing:write"]);
+		// The sent PO (10 BOX-LAMP at 1.00): the freight is known after sending.
+		const set = await write(token, "update_draft_po", { number: s.sentPo, shipping: "5", discount: "1" });
+		expect(set.data).toMatchObject({
+			lines_total: "10.00",
+			shipping: "5.00",
+			duties: "0.00",
+			discount: "1.00",
+			charges_spread: "value",
+			total: "14.00",
+		});
+		expect(set.data.lines).toEqual([
+			expect.objectContaining({ ref: "BOX-LAMP", unit_price: "1.00", landed_unit_cost: "1.40" }),
+		]);
+		expect(await one<{ summary: string }>("SELECT summary FROM change_sets ORDER BY id DESC LIMIT 1")).toEqual({
+			summary: `Edit PO ${s.sentPo}`,
+		});
+		const got = await write(token, "receive_po", { number: s.sentPo, lines: [{ ref: "BOX-LAMP", qty: "4" }] });
+		expect(got.data.received).toEqual([{ ref: "BOX-LAMP", qty: "4", unit_cost: "1.40" }]);
+		expect(got.data.charges_in_stock).toBe("1.60");
+		expect(
+			await one("SELECT unit_cost_cents FROM stock_moves WHERE reason = 'receipt' ORDER BY id DESC LIMIT 1"),
+		).toEqual({ unit_cost_cents: 140 });
+		// No longer spread: the rest comes in at the line price; what was received keeps its cost.
+		const none = await write(token, "update_draft_po", { number: s.sentPo, charges_spread: "none" });
+		expect(none.data.lines).toEqual([expect.not.objectContaining({ landed_unit_cost: expect.anything() })]);
+		const po = await callTool(token, "get_purchase_order", { number: s.sentPo });
+		expect(po.data).toMatchObject({ charges_spread: "none", total: "14.00", charges_in_stock: "1.60" });
+		expect(
+			(await write(token, "receive_po", { number: s.sentPo, lines: [{ ref: "BOX-LAMP", qty: "6" }] })).data.received,
+		).toEqual([{ ref: "BOX-LAMP", qty: "6", unit_cost: "1.00" }]);
+
+		const tooMuch = await callTool(token, "update_draft_po", { number: s.draftPo, shipping: "1", discount: "11.01" });
+		expect(tooMuch.text).toContain("discount: The discount is larger than the order.");
+		const negative = await callTool(token, "update_draft_po", { number: s.draftPo, shipping: "-1" });
+		expect(negative.text).toContain("shipping: Must be zero or more.");
+		const badSpread = await callTool(token, "update_draft_po", { number: s.draftPo, charges_spread: "weight" });
+		expect(badSpread.isError).toBe(true);
+		const closed = await callTool(token, "update_draft_po", { number: s.sentPo, shipping: "6" });
+		expect(closed.text).toContain("Charges can only change while the PO is open.");
+		expect(await one("SELECT shipping_cents FROM purchase_orders WHERE number = ?", s.draftPo)).toEqual({
+			shipping_cents: 0,
+		});
+	});
+
 	it("sends, receives, cancels and closes POs with the PO page's checks", async () => {
 		const s = await seed();
 		const token = await connect(["purchasing:write"]);
@@ -1732,7 +1780,9 @@ describe("tools with part options", () => {
 			number,
 			lines: [{ ref: "NL-COVER", options: { Colour: "white" }, qty: "4" }],
 		});
-		expect(received.data.received).toEqual([{ ref: "NL-COVER", options: { Colour: "white" }, qty: "4" }]);
+		expect(received.data.received).toEqual([
+			{ ref: "NL-COVER", options: { Colour: "white" }, qty: "4", unit_cost: "1.55" },
+		]);
 		expect(received.data.lines).toContainEqual(
 			expect.objectContaining({ options: { Colour: "white" }, received: "4", remaining: "3" }),
 		);
@@ -1743,7 +1793,9 @@ describe("tools with part options", () => {
 			number: otherPo.purchase_order.number,
 			lines: [{ ref: "NL-COVER", qty: "3" }],
 		});
-		expect(black.data.received).toEqual([{ ref: "NL-COVER", options: { Colour: "black" }, qty: "3" }]);
+		expect(black.data.received).toEqual([
+			expect.objectContaining({ ref: "NL-COVER", options: { Colour: "black" }, qty: "3" }),
+		]);
 		expect(await stockIn("NL-COVER", "black")).toBe(3000);
 	});
 

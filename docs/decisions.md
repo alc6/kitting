@@ -1428,7 +1428,7 @@ in values that are counted apart in stock, while it stays one part in the catalo
 
 An order of sheet-metal chassis and doors cost nearly as much to ship as the parts themselves, less a coupon. POs only
 held lines, so the shipping went into the notes and the parts entered stock at about half what they cost to get to the
-workshop. D201–D204 put the charges on the PO and, by default, into the receipts.
+workshop. D201–D205 put the charges on the PO and, by default, into the receipts.
 
 - **D201. Charges are three amounts on the PO.** `purchase_orders` gains `shipping_cents`, `duties_cents` (customs and
   duties) and `discount_cents` (a coupon or discount, stored positive and subtracted), all `NOT NULL DEFAULT 0`, and
@@ -1480,3 +1480,11 @@ workshop. D201–D204 put the charges on the PO and, by default, into the receip
   price paid is the line price, comparable with the offers. Moves name their PO, not their line: `paidPrices()`
   takes the first line of the same part and option values. The price chart plots the landed cost, the cost that
   entered stock, beside the standard cost.
+- **D205. MCP: `update_draft_po` sets the charges, the PO tools return them.** No new tool: `update_draft_po`
+  already edits an open PO's header, and takes `shipping`, `duties`, `discount` (decimals, `"0"` clears) and
+  `charges_spread`, on open POs only (`po_charges_closed`), with the page's validation and the PO's "Edit PO" change
+  set. `get_purchase_order` and every PO write result return `lines_total`, `shipping`, `duties`, `discount`,
+  `charges_spread`, `total` (lines and charges), `charges_in_stock` once something was received, and each line's
+  `landed_unit_cost` when charges are spread; `receive_po` returns each receipt's `unit_cost`. All amounts are
+  redacted for users who may not see costs. The PO CSV stays the supplier's order sheet (lines at their price), and
+  backups carry the new columns as any other.

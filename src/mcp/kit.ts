@@ -5,19 +5,20 @@
 import type { ToolAnnotations } from "@modelcontextprotocol/server";
 import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
-import { assemblies, builds, type PoShipment, purchaseOrders } from "../db/schema";
+import { assemblies, builds, type PoShipment, type PurchaseOrder, purchaseOrders } from "../db/schema";
 import { getAssembly } from "../domain/assemblies";
 import { AssemblyCycleError, type AssemblyGraph, defaultAssembly } from "../domain/assembly-graph";
 import { getBuild } from "../domain/builds";
 import { runChangeSet } from "../domain/history";
+import { netChargesCents, spreadsCharges } from "../domain/landed-cost";
 import type { ToolRule } from "../domain/mcp-scopes";
 import { findRefClash, getPart } from "../domain/parts";
 import type { Access } from "../domain/permissions";
-import { getPo } from "../domain/purchasing";
+import { chargesInStockCents, getPo, type getPoLines, poLanded } from "../domain/purchasing";
 import { getChangeSet } from "../domain/revert";
 import { type Dict, dict, errorText } from "../i18n";
 import type { Statement } from "../lib/db";
-import { parseMilli } from "../lib/units";
+import { lineCostCents, parseMilli } from "../lib/units";
 import type { FieldErrors } from "../lib/validation";
 import type { Db } from "../types";
 
@@ -198,6 +199,28 @@ export async function poByNumber(db: Db, number: string) {
 	const found = hit[0] ? await getPo(db, hit[0].id) : undefined;
 	if (!found) throw new ToolError(`No purchase order numbered "${number}". Use list_purchase_orders to find it.`);
 	return found;
+}
+
+/**
+ * A PO's amounts as the tools return them (D201–D205): the lines' total, each charge and how it is spread, the grand
+ * total and, once something was received, the part of the charges in stock value; with each line's landed unit cost
+ * when the PO spreads charges (`landed`, by line id).
+ */
+export async function poAmounts(db: Db, po: PurchaseOrder, lines: Awaited<ReturnType<typeof getPoLines>>) {
+	const linesTotalCents = lines.reduce((s, l) => s + lineCostCents(l.line.qtyMilli, l.line.unitPriceCents), 0);
+	const received = lines.some((l) => l.line.receivedQtyMilli > 0);
+	return {
+		landed: spreadsCharges(po) ? poLanded(po, lines) : undefined,
+		totals: {
+			linesTotalCents,
+			shippingCents: po.shippingCents,
+			dutiesCents: po.dutiesCents,
+			discountCents: po.discountCents,
+			chargesSpread: po.chargesSpread,
+			totalCents: linesTotalCents + netChargesCents(po),
+			chargesInStockCents: received ? await chargesInStockCents(db, po.id, lines) : undefined,
+		},
+	};
 }
 
 /** A PO's shipments as the tools return them (D168). */

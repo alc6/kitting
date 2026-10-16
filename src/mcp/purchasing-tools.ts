@@ -2,13 +2,18 @@
 // shipments (D168), with the purchasing pages' checks and statement builders. Receiving writes the stock ledger: it
 // cannot be undone.
 import { z } from "zod";
+import { CHARGE_SPREADS } from "../db/schema";
 import { getOffer, poUnitPrice } from "../domain/offers";
 import { type OptionDef, type OptionKey, stockKey } from "../domain/option-keys";
 import { optionsOf } from "../domain/options";
 import {
 	addPoLineStatement,
 	addShipmentStatement,
+	CHARGES_PO_STATUSES,
 	cancelPoStatement,
+	chargeFormValues,
+	chargeRuleErrors,
+	chargeValues,
 	closePoStatement,
 	computeShortages,
 	deletePoLineStatement,
@@ -18,6 +23,7 @@ import {
 	nextPoNumbers,
 	planDraftOrders,
 	planReceipts,
+	poChargesInput,
 	RECEIVABLE_PO_STATUSES,
 	receiptStatements,
 	receiveQtyField,
@@ -28,6 +34,7 @@ import {
 	shipmentInput,
 	shipmentRuleErrors,
 	shipmentValues,
+	updatePoChargesStatement,
 	updatePoLineStatement,
 	updatePoStatement,
 	updateShipmentStatement,
@@ -47,6 +54,7 @@ import {
 	findPart,
 	formValue,
 	NOTHING_CHANGED,
+	poAmounts,
 	poByNumber,
 	refuse,
 	saveChange,
@@ -62,10 +70,11 @@ const now = () => new Date().toISOString();
 
 const poNumberInput = z.string().trim().min(1).max(32).describe('The PO number, e.g. "PO-0001".');
 
-/** A purchase order with its lines, as the write tools return it. */
+/** A purchase order with its lines, charges and totals, as the write tools return it. */
 async function poView(db: Db, number: string) {
 	const { po, supplier } = await poByNumber(db, number);
 	const [lines, shipments] = await Promise.all([getPoLines(db, po.id), getPoShipments(db, po.id)]);
+	const amounts = await poAmounts(db, po, lines);
 	return {
 		purchaseOrder: {
 			number: po.number,
@@ -83,8 +92,9 @@ async function poView(db: Db, number: string) {
 			receivedMilli: l.line.receivedQtyMilli,
 			remainingMilli: Math.max(0, l.line.qtyMilli - l.line.receivedQtyMilli),
 			unitPriceCents: l.line.unitPriceCents,
+			landedUnitCostCents: amounts.landed?.get(l.line.id)?.landedUnitCents,
 		})),
-		totalCents: lines.reduce((s, l) => s + lineCostCents(l.line.qtyMilli, l.line.unitPriceCents), 0),
+		...amounts.totals,
 		shipments: shipmentViews(shipments),
 	};
 }
@@ -181,13 +191,24 @@ const updateDraftPo = tool({
 	name: "update_draft_po",
 	title: "Edit a draft PO",
 	description:
-		"Edits a purchase order: its expected date and notes (any open PO, as on its page), and the lines of a draft. Each line sets the quantity of a part on the PO: an existing line is changed (its price too when given), a new part is added (priced at this supplier's offer, else the standard cost, unless a price is given), and qty \"0\" removes the part's line. A part with options is on one line per values: options says which line (a value of every option is needed to add one). Lines of a sent PO cannot change.",
+		"Edits a purchase order: its expected date and notes (any open PO, as on its page), its charges (shipping, customs and duties, a discount, and how they are spread over the lines: any open PO, since the freight is often known after sending), and the lines of a draft. Each line sets the quantity of a part on the PO: an existing line is changed (its price too when given), a new part is added (priced at this supplier's offer, else the standard cost, unless a price is given), and qty \"0\" removes the part's line. A part with options is on one line per values: options says which line (a value of every option is needed to add one). Lines of a sent PO cannot change. Charges spread over the lines make the landed unit cost receipts enter stock at; a change applies to the quantities received afterwards, never to past receipts.",
 	rule: { scope: "purchasing:write", action: "purchasing.order" },
 	annotations: writes({ destructive: true, idempotent: true }),
 	input: z.object({
 		number: poNumberInput,
 		expected_at: date.nullable().optional().describe("Expected delivery date, YYYY-MM-DD (null clears it)."),
 		notes: z.string().max(2000).optional(),
+		shipping: decimal('Shipping charged on the whole order, e.g. "86.50"; "0" clears it.').optional(),
+		duties: decimal('Customs and duties on the order, e.g. "120.00"; "0" clears it.').optional(),
+		discount: decimal(
+			'A coupon or discount on the whole order, as a positive amount subtracted from the total, e.g. "5.00"; "0" clears it.',
+		).optional(),
+		charges_spread: z
+			.enum(CHARGE_SPREADS)
+			.optional()
+			.describe(
+				"How receipts take the charges: value (the default) spreads them over the lines in proportion to their ordered value, qty in proportion to their ordered quantity, none leaves receipts at the line price (the charges are only recorded on the PO).",
+			),
 		lines: z
 			.array(
 				z.object({
@@ -205,6 +226,24 @@ const updateDraftPo = tool({
 		if (a.lines.length && po.status !== "draft") refuse({ lines: "po_not_draft" });
 		const stamp = now();
 		const stmts: Statement[] = [];
+		const charges = [a.shipping, a.duties, a.discount, a.charges_spread].some((v) => v !== undefined);
+		if (charges) {
+			if (!CHARGES_PO_STATUSES.includes(po.status)) refuse({ _: "po_charges_closed" });
+			// The charges form as its page would post it: the current charges, with the ones given.
+			const form = chargeFormValues(po);
+			for (const key of ["shipping", "duties", "discount", "charges_spread"] as const)
+				if (a[key] !== undefined) form[key] = formValue(a[key]);
+			const v = validate(poChargesInput, form);
+			if (!v.ok) refuse(v.errors);
+			const values = chargeValues(v.data);
+			const partsCents = (await getPoLines(ctx.db, po.id)).reduce(
+				(s, l) => s + lineCostCents(l.line.qtyMilli, l.line.unitPriceCents),
+				0,
+			);
+			const errors = chargeRuleErrors(values, partsCents);
+			if (Object.keys(errors).length) refuse(errors);
+			stmts.push(updatePoChargesStatement(ctx.db, po.id, values, ctx.user, stamp));
+		}
 		if (a.expected_at !== undefined || a.notes !== undefined) {
 			const v = validate(z.object({ expected_at: field.date(), notes: field.text() }), {
 				expected_at: a.expected_at === undefined ? (po.expectedAt ?? "") : (a.expected_at ?? ""),
@@ -322,7 +361,7 @@ const receivePo = tool({
 	name: "receive_po",
 	title: "Receive goods on a PO",
 	description:
-		"Records goods received on a purchase order, as its receive form does: per line (a part, and its options when it is ordered in several values), the quantity received now (more deliveries can follow), and optionally one serial per unit. Stock goes up at the PO's price; the PO becomes partly received or received. This writes the stock ledger: it cannot be undone, only corrected with an adjustment.",
+		"Records goods received on a purchase order, as its receive form does: per line (a part, and its options when it is ordered in several values), the quantity received now (more deliveries can follow), and optionally one serial per unit. Stock goes up at the line's landed unit cost: its price plus its share of the PO's charges when they are spread (else the line price), as the charges are now; set the shipping and other charges with update_draft_po before receiving. The PO becomes partly received or received. This writes the stock ledger: it cannot be undone, only corrected with an adjustment.",
 	rule: { scope: "purchasing:write", action: "purchasing.receive" },
 	annotations: writes({ destructive: true, idempotent: false }),
 	input: z.object({
@@ -384,6 +423,7 @@ const receivePo = tool({
 					ref: line?.ref,
 					options: optionsView(line?.options ?? [], r.optionValues),
 					qtyMilli: r.qtyMilli,
+					unitCostCents: r.unitCostCents,
 					serials: r.serials.length ? r.serials : undefined,
 				};
 			}),

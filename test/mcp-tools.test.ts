@@ -47,9 +47,22 @@ const COST = 123456; // standard cost of BOX-LAMP
 const OFFER = 111111; // its offer price
 const SALE = 999999; // selling price of LAMP-DESK
 const RATE = 66666; // hourly rate of the FDM printer type
-const AMOUNTS = ["1234.56", "1111.11", "9999.99", "987.65", "9876.50", "666.66"];
+const SHIPPING = 55555; // shipping and duties on the PO (D201), spread over its line: 1087.65 a unit landed
+const DUTIES = 44444;
+const AMOUNTS = [
+	"1234.56",
+	"1111.11",
+	"9999.99",
+	"987.65",
+	"9876.50",
+	"666.66",
+	"555.55",
+	"444.44",
+	"1087.65",
+	"10876.49",
+];
 /** The same amounts in cents, as a raw snapshot would hold them. */
-const CENTS = ["123456", "111111", "999999", "98765", "987650", "66666"];
+const CENTS = ["123456", "111111", "999999", "98765", "987650", "66666", "55555", "44444", "108765", "1087649"];
 
 /**
  * Demo data, the amounts above, a lamp built with serial components, a WIDGET (one BOX-LAMP each) with an open
@@ -85,6 +98,12 @@ async function seed() {
 	const po = await postForm("/purchasing/po", { supplier_id: String(supplier), expected_at: "", notes: "" });
 	const poId = Number(/\/po\/(\d+)/.exec(po.headers.get("Location") ?? "")?.[1]);
 	await postForm(`/purchasing/po/${poId}/lines`, { part: "BOX-LAMP", qty: "10", price: "987.65" });
+	await postForm(`/purchasing/po/${poId}/charges`, {
+		shipping: String(SHIPPING / 100),
+		duties: String(DUTIES / 100),
+		discount: "",
+		charges_spread: "value",
+	});
 	await postForm(`/purchasing/po/${poId}/send`, {});
 	const line = (await one<{ id: number }>("SELECT id FROM po_lines WHERE po_id = ?", poId)).id;
 	await postForm(`/purchasing/po/${poId}/receive`, { [`recv_${line}`]: "4" });
@@ -152,7 +171,7 @@ describe("cost redaction over MCP", () => {
 					expect(r.text, `${role} ${name} leaks ${amount}`).not.toContain(amount);
 				// No amount field (as a key: list_recent_changes names a changed price, hidden, as a value).
 				expect(r.text, `${role} ${name}`).not.toMatch(
-					/"(standard_cost|sale_price|unit_cost|unit_price|price|total|total_cost|extended_cost|line_total)":/,
+					/"(standard_cost|sale_price|unit_cost|unit_price|price|total|total_cost|extended_cost|line_total|lines_total|shipping|duties|discount|landed_unit_cost|charges_in_stock)":/,
 				);
 			}
 		}
@@ -176,7 +195,9 @@ describe("cost redaction over MCP", () => {
 				fields: [{ field: "cost", before: "1.20", after: "1234.56" }],
 			},
 		]);
-		expect(po.text).toContain('"total":"9876.50"');
+		expect(po.text).toContain('"lines_total":"9876.50"');
+		expect(po.text).toContain('"total":"10876.49"');
+		expect(po.text).toContain('"landed_unit_cost":"1087.65"');
 
 		await letLowerRolesSeeCosts();
 		await setRole("viewer");

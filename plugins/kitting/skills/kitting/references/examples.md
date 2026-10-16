@@ -118,3 +118,19 @@ reconnecting the app with the scope ticked if the role allows it.
 5. After a yes: `create_draft_pos({})`; the line of the PO shows `options` `{"Colour": "black"}`. When the covers
    arrive, `receive_po({ "number": "PO-0003", "lines": [{ "ref": "MINI-COVER", "options": { "Colour": "black" }, "qty": "20" }] })`
    puts them in the black stock only.
+
+## 7. Shipping and a coupon on an order (landed cost)
+
+**User:** PO-0004 from Ironleaf Metalworks came to 86.50 of shipping, and we had a 5.00 coupon. Put it on the order.
+
+1. `get_purchase_order({ "number": "PO-0004" })`: sent, 10 `BASE-PLATE` at 55.00 and 20 `ARM-TUBE-300` at 6.20
+   (`lines_total` 674.00), nothing received, `charges_spread` `value`.
+
+   > **Claude:** I would set shipping 86.50 and a discount of 5.00 on PO-0004 (total 755.50). Spread over the lines
+   > by value, the base plates would enter stock at 61.65 each and the tubes at 6.95. Shall I?
+
+2. After a yes: `update_draft_po({ "number": "PO-0004", "shipping": "86.50", "discount": "5.00" })`. The result has
+   each line's `landed_unit_cost` and the undo link.
+3. The goods arrive: `receive_po` as usual; each `received` line gives the `unit_cost` it entered stock at. Charges
+   entered after a delivery only reach what is received afterwards (`charges_in_stock` shows how much went in), so
+   record the freight before receiving when it is known.
