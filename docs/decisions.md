@@ -1366,3 +1366,60 @@ in values that are counted apart in stock, while it stays one part in the catalo
   as `assemblies.csv` does without its `options` column; `"fixed": {}, "choose": []` resets them. `stock_on_hand`'s
   `below_zero` also catches a part below zero in one value. Defining options over MCP is left for later
   (docs/plan.md).
+
+## Storage locations (M19, proposal)
+
+- **D194. A drawn plan of rooms and storage units; bins follow from their size.** The workshop is a grid of half-metre
+  squares. A storage unit (`storage_units`, tracked) is a rectangle on it with a short upper-case code, a kind and a
+  front, the side people pick from. Racks and drawer cabinets have bins, levels × positions, which are not rows: `A-2-3`
+  is unit A, level 2 counted from the floor, position 3 counted from the left when facing the front. A floor area is one
+  place (`P`). Rooms, doors and landmarks are drawn for orientation and hold no parts; their code is made up from their
+  name or kind when left empty (`STOC`, `DOOR2`), so nobody names a door. A room is walls around a rectangle: the units
+  whose centre is inside belong to it (by geometry, no link, so moving a rack moves it between rooms) and their
+  locations start with its name. Rooms may touch but not overlap; a door is a rectangle across a wall, drawn as an
+  opening with its swing towards its front; once a room exists the plan's outline is no longer drawn as a wall.
+  Storage units may not overlap each other; rooms, doors and landmarks may contain them. The plan is sized by what is
+  drawn (at least 24 × 14 squares). Considered and left for later: an uploaded picture of the floor plan with pins (no
+  levels or positions, goes stale when a rack moves); it can come back as a background under the grid.
+- **D195. A home location per part, not stock per bin.** `part_locations` (tracked, one row per part) holds the unit,
+  an optional level and position (`A-2` = any position on level 2, `A` = anywhere in the unit) and a note. Stock is
+  still one figure per part and key: receipts, builds, counts and moves are unchanged. Counting stock per bin would put
+  a bin on every move, form, import and MCP write, next to option values, and move Kitting toward a warehouse system
+  (the README rules out multiple warehouses and scanning); the same units and bins can carry it later. A unit that
+  holds parts or units cannot shrink under a used bin, lose its bins, become a room, door or landmark, or be deleted.
+- **D196. Operators put parts away; planners draw the plan.** `storage.assign` (operator) sets a part's location,
+  separate from `parts.edit`, which is why the location is its own table with its own undo action rather than columns
+  on `parts`. `storage.plan` (planner) adds and edits units, rooms and doors; `storage.delete` (admin) removes an
+  empty one.
+- **D197. Where the location shows.** As a shelf label (a `--location` yellow token with dark text in both themes),
+  the bin's own code, with "in A-3-3" when it stands in another unit: the part header, a Location figure card on the
+  overview (the bin and where it is in words) that opens a Location tab of the part (the plan with the bin marked, the
+  unit's front view, the change form; offered once a plan is drawn); a Locations page in the sidebar under Purchasing, at `/locations` (the plan, its search for a part or
+  a bin, the units as a tree, the stocked parts without a location; first a Stock tab, moved out at the user's request);
+  a unit page with its front view and an "Assign a part" form; a room page with its part of the plan, the units in it
+  and every part kept there in walking order, with "Count this room" (the count's filter takes a room); doors and
+  landmarks hold nothing and have no page (they open their editor for planners); the build pick list (a
+  Location column, rows grouped by the unit drawn on the plan, room first, in code order; reference order one link
+  away); the receipt form (a Put away column, lines in put-away order, Set for a part without one); the inventory count
+  (a column and a filter by unit that includes the units standing in it, rows in bin order); global search (the bin of
+  each part, and bins by code). The plan marks the bin on the plan that holds a location, labelled with the whole way
+  (`A-3-3 › S1-2-1`); words read from the room inwards. Pages without any location drawn look as before. Units should
+  be coded in walking order: the code order is the pick order.
+- **D198. The plan editor is a form; dragging is an enhancement.** Column, row, width, depth and front are form fields
+  and the source of truth. `app.js` draws the unit being edited from them and lets a mouse or a finger move it or
+  resize it by its corner in whole squares, filling the fields. Without JavaScript the fields alone place it; the SVG
+  is server-rendered with classes only (strict CSP).
+- **D199. Units inside units.** A rack or a drawer cabinet can stand in a bin of another one instead of on the plan
+  (`parent_unit_id`, `parent_level`, `parent_position` on `storage_units`): a drawer cabinet of screws on shelf A-3-3.
+  It keeps its own code, the one on its label, so bin codes, `parseBin` and `part_locations` are unchanged; a location
+  is read through the chain of bins that holds it (all units are loaded once and the chain resolved in memory, at most
+  4 deep, never through itself). The chain gives the walking order (the cabinet's bins sort inside A-3-3), the bin to
+  mark on the plan, the parent's front view (the bin shows the cabinet and opens it) and "Add a unit here" on a
+  selected bin. A bin may hold parts and units together.
+- **D200. The editor looks like the other forms.** One card titled with the unit, sections for the unit (its type as
+  choice cards with a line of help), its placement (on the plan or in a bin, as a segmented control; the plan with the
+  four numbers in one row under it; the front as a segmented control) and its bins (levels, positions and a live preview
+  of the bins with the first and last codes); the unit being edited in the primary colour; other units link to their
+  own editor. `SegmentedField` (shadcn ToggleGroup, as on the build page) and `ChoiceCards` (shadcn RadioGroup choice
+  card) are in `ui.tsx`. Fields that do not apply to the type or the placement are hidden by `app.js`
+  (`data-show-if="kind:rack,cabinet|placement:plan"`); without JavaScript they stay visible and the server ignores them.

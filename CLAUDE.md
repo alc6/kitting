@@ -61,13 +61,14 @@ was built with; `npx skills update` refreshes it.
   `permissions.ts` (what each role may do: the permission table, `can()`, cost redaction),
   `history.ts` (`runChangeSet()`, history queries, field diffs, row names), `revert.ts` (undo, conflicts,
   `TABLE_ACTIONS`), `mcp-scopes.ts` (MCP scopes and their permission actions), `machines.ts` (machine types and their
-  rate history, machines, dated rates).
+  rate history, machines, dated rates), `storage.ts` (the workshop plan: storage units, rooms and doors, bins, units
+  standing in other units' bins, part locations read through that chain, D194–D200).
   `src/db/history-sql.ts` generates the history triggers (`scripts/history-triggers.mjs` prints them).
   `src/domain/import/`: one importer per CSV type, all implementing `Importer`.
 - `src/routes/*.tsx`: one Hono router per area, with its page components.
 - `src/views/`: layout (sidebar, header), shadcn-style components (`ui.tsx`), icons (`icons.tsx`),
-  assembly diagram (`assembly-diagram.tsx`), time charts (`chart.tsx`), machine time tables (`machines.tsx`), the Files cards (`files.tsx`), render
-  helpers, view context (`useApp()`: locale, theme, sidebar…).
+  assembly diagram (`assembly-diagram.tsx`), time charts (`chart.tsx`), machine time tables (`machines.tsx`), the Files cards (`files.tsx`), the
+  workshop plan, front views and shelf labels (`storage.tsx`), render helpers, view context (`useApp()`: locale, theme, sidebar…).
 - Part picker (D138): `PartPicker`/`PartPickerDialog` in `src/views/part-picker.tsx` (dialog after the form, scoped by
   `kinds`/`exclude` to what the form accepts), results from `GET /parts/pick` (`src/routes/part-picker.tsx`, `src/domain/part-picker.ts`).
 - `src/styles/app.css`: Tailwind source: shadcn tokens (light/dark), base layer, legacy classes.
@@ -82,7 +83,7 @@ was built with; `npx skills update` refreshes it.
   `infra/terraform/`: the Terraform module for the Cloudflare resources (provider pinned `~> 5.27.0`) and
   `examples/basic` (a consumer, with the CI job for a private repository).
 - `public/static/`: built CSS, `app.js` (confirm, theme/sidebar toggles, search shortcut, diagram zoom,
-  photo shrinking before upload),
+  photo shrinking before upload, plan editor dragging and bins preview, `data-show-if` fields),
   vendored `htmx.min.js` (`npm run vendor:htmx` to update).
 
 ## Data rules
