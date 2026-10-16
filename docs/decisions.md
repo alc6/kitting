@@ -1423,3 +1423,78 @@ in values that are counted apart in stock, while it stays one part in the catalo
   own editor. `SegmentedField` (shadcn ToggleGroup, as on the build page) and `ChoiceCards` (shadcn RadioGroup choice
   card) are in `ui.tsx`. Fields that do not apply to the type or the placement are hidden by `app.js`
   (`data-show-if="kind:rack,cabinet|placement:plan"`); without JavaScript they stay visible and the server ignores them.
+
+## Purchase order charges and landed cost
+
+An order of sheet-metal chassis and doors cost nearly as much to ship as the parts themselves, less a coupon. POs only
+held lines, so the shipping went into the notes and the parts entered stock at about half what they cost to get to the
+workshop. D201–D205 put the charges on the PO and, by default, into the receipts; D206 lets an assistant create a PO.
+
+- **D201. Charges are three amounts on the PO.** `purchase_orders` gains `shipping_cents`, `duties_cents` (customs and
+  duties) and `discount_cents` (a coupon or discount, stored positive and subtracted), all `NOT NULL DEFAULT 0`, and
+  `charges_spread` (D202), migration 0013: plain `ADD COLUMN`s, no CHECK (adding one would rebuild the table under
+  its lines and shipments); the form and `update_draft_po` validate (`poChargesInput`, amounts ≥ 0, and
+  `chargeRuleErrors`: a discount cannot exceed lines + shipping + duties).
+  - *Three fixed amounts, not a table of charges.* What the workshop meets is freight, customs and a coupon; a table
+    of labelled charges (insurance, handling, bank fees...) would mean rows to add and remove on every PO for what
+    is, in practice, one or two figures. Handling or insurance on an invoice goes into shipping.
+  - *When.* Charges change while the PO is open (draft, sent, partly received: `CHARGES_PO_STATUSES`): the real
+    freight is often known after sending, and customs after the first delivery. Received and cancelled POs keep
+    theirs read-only, as their lines.
+  - *Where.* A folded "Shipping and charges" card on the PO page (planners, `purchasing.order`, who always see
+    costs), saved in its own change set ("Edit the charges of PO PO-0003", undoable). The lines' footer lists parts,
+    each charge and the total; the Total figure, the PO list and `list_purchase_orders` total lines and charges.
+    Charges are amounts: hidden with the other costs (`Money`, `_cents` in the history, `toWire()`).
+- **D202. Spread by line value by default; receipts enter stock at the landed unit cost.** `charges_spread` is
+  `value` (default), `qty` or `none`. The net charges (shipping + duties − discount) are split over the lines in
+  proportion to their ordered value (quantity × price), or to their ordered quantity with `qty`, in whole cents that
+  add up exactly to the charges (largest remainder, ties to the earlier line: `apportion()`, BigInt, in
+  `src/domain/landed-cost.ts`). A line's landed unit cost is its price plus its share per ordered unit, rounded to
+  the cent and never below zero (a discount larger than a line's value). `planReceipts()` values each receipt at it,
+  so the move's `unit_cost_cents` carries it into the weighted average, valuation and actual margins with no change
+  to `costing.ts`. With `none`, receipts stay at the line price and the charges are only recorded.
+  - *Value by default*, because a PO with no charges then behaves exactly as before (existing POs migrate to `value`
+    with zero charges), and the motivating order wants the landed cost without an extra choice. By quantity is offered
+    for lines of similar parts; it means little across units (pieces and metres), which the hint does not hide.
+    Weight would suit freight best, but parts have no weight.
+  - *If every line is worth 0*, by value falls back to by quantity rather than leaving the charges out.
+  - *Per-unit rounding.* Shares add up to the cent per line, but a unit cost is a whole number of cents: 1.00 over 7
+    units posts 0.14 each, 0.98 in all. That is the precision of PO prices already; splitting a receipt into two moves
+    at adjacent costs would make the sum exact at the price of a confusing ledger.
+  - The PO page shows a Landed unit cost column when charges are spread, and the receive form says stock enters at
+    the landed cost (no amount: operators who receive may not see costs).
+- **D203. A receipt takes the charges as they are when it is posted; past receipts never change.** Stock moves are
+  append-only, so:
+  - *A partial receipt* takes its line's share per ordered unit × the quantity received: the share of what is still
+    to come waits for it.
+  - *Charges changed after a receipt* (customs invoiced after the first delivery, a corrected freight) reach only the
+    quantities received afterwards, at the new landed cost; earlier receipts keep their cost. A cost correction move
+    (value without quantity) does not exist in the ledger, and a pair of moves out and in would be valued at the
+    average, not at the correction.
+  - *A PO closed short* leaves the share of what never came out of stock value.
+  - So that the gap is visible, the lines' footer adds "Charges in stock value" once something was received: what
+    the receipt moves added above the line prices, read from the ledger (`chargesInStockCents`), so it is what
+    valuation uses, rounding included. Changing the spread to `none` after a receipt works the same way.
+- **D204. Prices paid keep the supplier's price.** A receipt move records the landed cost; the part's "Prices paid"
+  list shows the PO line's price next to it (a Landed cost column once they differ), and the offers card's last
+  price paid is the line price, comparable with the offers. Moves name their PO, not their line: `paidPrices()`
+  takes the first line of the same part and option values. The price chart plots the landed cost, the cost that
+  entered stock, beside the standard cost.
+- **D205. MCP: `update_draft_po` sets the charges, the PO tools return them.** No new tool: `update_draft_po`
+  already edits an open PO's header, and takes `shipping`, `duties`, `discount` (decimals, `"0"` clears) and
+  `charges_spread`, on open POs only (`po_charges_closed`), with the page's validation and the PO's "Edit PO" change
+  set. `get_purchase_order` and every PO write result return `lines_total`, `shipping`, `duties`, `discount`,
+  `charges_spread`, `total` (lines and charges), `charges_in_stock` once something was received, and each line's
+  `landed_unit_cost` when charges are spread; `receive_po` returns each receipt's `unit_cost`. All amounts are
+  redacted for users who may not see costs. The PO CSV stays the supplier's order sheet (lines at their price), and
+  backups carry the new columns as any other.
+- **D206. `create_po`: a draft PO for any parts over MCP.** An assistant could draft only from the shortages
+  (`create_draft_pos`) and edit existing drafts, so it could not order spares or parts the open builds do not need yet.
+  `create_po` (`purchasing:write`, `purchasing.order` as the New PO page; not destructive, not idempotent) creates a
+  draft for a supplier named as in the app, with optional lines, expected date, notes and charges (D201), in one change
+  set ("Create PO PO-0007"): `newPoStatements` inserts the header and its lines, which find it by its number, and the
+  number is retried once on a clash, as `create_draft_pos` does. A line is checked as the PO page checks a new line, now
+  in `src/domain` (`poLinePartIssue`): a known, stocked (buy or make), not archived part, a value of every option, each
+  part and values once, priced at the supplier's offer, else the standard cost, unless a price is given. Refusing
+  archived parts is new on the page and in `update_draft_po` too: the page's part list already left them out, and
+  ordering a part that is being retired is a mistake to stop, not a choice to offer.

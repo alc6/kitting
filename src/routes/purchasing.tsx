@@ -1,7 +1,8 @@
 import { and, asc, eq, inArray } from "drizzle-orm";
 import type { Context } from "hono";
 import { Hono } from "hono";
-import { PO_STATUSES, type PoShipment, type PoStatus, parts, poLines, suppliers } from "../db/schema";
+import { CHARGE_SPREADS, PO_STATUSES, type PoShipment, type PoStatus, parts, poLines, suppliers } from "../db/schema";
+import { netChargesCents, spreadsCharges } from "../domain/landed-cost";
 import { getOffer, poUnitPrice } from "../domain/offers";
 import { keyLabel, keyText, type OptionDef } from "../domain/option-keys";
 import { keyFromForm, optionsOf } from "../domain/options";
@@ -9,7 +10,12 @@ import { can } from "../domain/permissions";
 import {
 	addPoLineStatement,
 	addShipmentStatement,
+	CHARGES_PO_STATUSES,
 	cancelPoStatement,
+	chargeFormValues,
+	chargeRuleErrors,
+	chargesInStockCents,
+	chargeValues,
 	closePoStatement,
 	computeShortages,
 	createPoStatement,
@@ -26,9 +32,12 @@ import {
 	OPEN_PO_STATUSES,
 	planDraftOrders,
 	planReceipts,
+	poChargesInput,
 	poEditInput,
 	poInput,
+	poLanded,
 	poLineInput,
+	poLinePartIssue,
 	RECEIVABLE_PO_STATUSES,
 	receiptStatements,
 	receiveQtyField,
@@ -43,6 +52,7 @@ import {
 	shipmentInput,
 	shipmentRuleErrors,
 	shipmentValues,
+	updatePoChargesStatement,
 	updatePoLineStatement,
 	updatePoStatement,
 	updateShipmentStatement,
@@ -85,6 +95,7 @@ import {
 	CollapsibleCard,
 	EmptyState,
 	ErrorBanner,
+	FieldDescription,
 	FieldGroup,
 	Flash,
 	type FormErrors,
@@ -696,10 +707,15 @@ async function loadPo(c: Context<AppEnv>) {
 const linesTotal = (lines: PoLineRow[]) =>
 	lines.reduce((s, l) => s + lineCostCents(l.line.qtyMilli, l.line.unitPriceCents), 0);
 
-/** Key figures of a PO: line count, total, expected date and how much has arrived. */
+/** Whether a PO carries any charge (D201), even ones that cancel out. */
+const hasCharges = (po: PoData["po"]) => po.shippingCents !== 0 || po.dutiesCents !== 0 || po.discountCents !== 0;
+
+/** Key figures of a PO: line count, total (lines and charges), expected date and how much has arrived. */
 function PoStats(props: { po: PoData["po"]; lines: PoLineRow[]; today: string }) {
-	const { t, seeCosts } = useApp();
+	const { t, seeCosts, locale, currency } = useApp();
 	const { po, lines } = props;
+	const parts = linesTotal(lines);
+	const charges = netChargesCents(po);
 	const ordered = lines.reduce((s, l) => s + l.line.qtyMilli, 0);
 	const received = lines.reduce((s, l) => s + Math.min(l.line.receivedQtyMilli, l.line.qtyMilli), 0);
 	// Integer floor division, so a nearly complete PO never reads 100 %.
@@ -710,7 +726,19 @@ function PoStats(props: { po: PoData["po"]; lines: PoLineRow[]; today: string })
 		<div class={cn("grid gap-4 sm:grid-cols-2", seeCosts ? "xl:grid-cols-4" : "xl:grid-cols-3")}>
 			<StatCard label={t.purchasing.lines} value={lines.length} icon={icons.list} />
 			{seeCosts ? (
-				<StatCard label={t.purchasing.total} value={<Money cents={linesTotal(lines)} />} icon={icons.coins} />
+				<StatCard
+					label={t.purchasing.total}
+					value={<Money cents={parts + charges} />}
+					icon={icons.coins}
+					hint={
+						hasCharges(po)
+							? fmt(t.purchasing.charges.totalHint, {
+									parts: formatMoney(parts, locale, currency),
+									charges: formatMoney(charges, locale, currency),
+								})
+							: undefined
+					}
+				/>
 			) : null}
 			<StatCard
 				label={t.purchasing.expectedAt}
@@ -727,6 +755,49 @@ function PoStats(props: { po: PoData["po"]; lines: PoLineRow[]; today: string })
 				hint={fmt(t.purchasing.linesComplete, { done: complete, n: lines.length })}
 			/>
 		</div>
+	);
+}
+
+/** The landed unit cost of each line when the PO spreads charges (D202), else undefined: no column. */
+function landedOf(po: PoData["po"], lines: PoLineRow[]) {
+	return spreadsCharges(po) ? poLanded(po, lines) : undefined;
+}
+
+/**
+ * Footer rows of a PO's lines (D201): the parts, each charge and the total, then what of the charges went into stock
+ * value once something was received (`inStockCents`, D203); the total alone for a PO without charges. `span` columns
+ * hold the label, `after` empty ones follow the amount.
+ */
+function TotalRows(props: {
+	po: PoData["po"];
+	lines: PoLineRow[];
+	span: number;
+	after: number;
+	inStockCents?: number | undefined;
+}) {
+	const { t } = useApp();
+	const { po } = props;
+	const parts = linesTotal(props.lines);
+	const row = (label: string, cents: number, total = false) => (
+		<TableRow class={cn(!total && "font-normal text-muted-foreground")}>
+			<TableCell colspan={props.span}>{label}</TableCell>
+			<TableCell class="text-right">
+				<Money cents={cents} />
+			</TableCell>
+			{props.after ? <TableCell colspan={props.after} /> : null}
+		</TableRow>
+	);
+	if (!hasCharges(po) && props.inStockCents === undefined) return row(t.purchasing.total, parts, true);
+	const c = t.purchasing.charges;
+	return (
+		<>
+			{row(c.parts, parts)}
+			{po.shippingCents ? row(c.shipping, po.shippingCents) : null}
+			{po.dutiesCents ? row(c.duties, po.dutiesCents) : null}
+			{po.discountCents ? row(c.discount, -po.discountCents) : null}
+			{row(t.purchasing.total, parts + netChargesCents(po), true)}
+			{props.inStockCents !== undefined ? row(c.inStock, props.inStockCents) : null}
+		</>
 	);
 }
 
@@ -747,6 +818,7 @@ function DraftLines(props: {
 	const { t, locale } = useApp();
 	const { po } = props;
 	const hx = { "hx-target": "#po-lines", "hx-select": "#po-lines", "hx-swap": "outerHTML" };
+	const landed = landedOf(po, props.lines);
 	return (
 		<div id="po-lines" class="flex flex-col gap-4">
 			<PoStats po={po} lines={props.lines} today={props.today} />
@@ -773,6 +845,7 @@ function DraftLines(props: {
 											<span class="w-(--control-h-sm)" />
 										</div>
 									</TableHead>
+									{landed ? <TableHead class="text-right">{t.purchasing.charges.landedUnitCost}</TableHead> : null}
 									<TableHead class="text-right">{t.purchasing.lineTotal}</TableHead>
 									<TableHead class="w-px">
 										<span class="sr-only">{t.common.actions}</span>
@@ -849,6 +922,11 @@ function DraftLines(props: {
 												) : null}
 											</form>
 										</TableCell>
+										{landed ? (
+											<TableCell class="text-right">
+												<Money cents={landed.get(l.line.id)?.landedUnitCents} />
+											</TableCell>
+										) : null}
 										<TableCell class="text-right">
 											<Money cents={lineCostCents(l.line.qtyMilli, l.line.unitPriceCents)} />
 										</TableCell>
@@ -873,13 +951,7 @@ function DraftLines(props: {
 								))}
 							</TableBody>
 							<TableFooter>
-								<TableRow>
-									<TableCell colspan={2}>{t.purchasing.total}</TableCell>
-									<TableCell class="text-right">
-										<Money cents={linesTotal(props.lines)} />
-									</TableCell>
-									<TableCell />
-								</TableRow>
+								<TotalRows po={po} lines={props.lines} span={landed ? 3 : 2} after={1} />
 							</TableFooter>
 						</Table>
 					)}
@@ -947,6 +1019,8 @@ function ReceiveForm(props: {
 }) {
 	const { t, locale } = useApp();
 	const { po, locations } = props;
+	// Says that stock enters at the landed cost, without an amount: operators who receive may not see costs.
+	const landed = spreadsCharges(po);
 	const hasErrors = Object.keys(props.errors).length > 0;
 	const located = props.lines.some((l) => locations.has(l.line.partId));
 	const lines = located
@@ -967,6 +1041,7 @@ function ReceiveForm(props: {
 					</CardTitle>
 					<CardDescription>
 						{t.purchasing.receiveIntro}
+						{landed ? ` ${t.purchasing.charges.receiveLanded}` : ""}
 						{located ? ` ${t.locations.putAwayHint}` : ""}
 					</CardDescription>
 				</CardHeader>
@@ -1073,8 +1148,9 @@ function ReceiveForm(props: {
 	);
 }
 
-function ReadOnlyLines(props: { lines: PoLineRow[] }) {
+function ReadOnlyLines(props: { po: PoData["po"]; lines: PoLineRow[]; inStockCents?: number | undefined }) {
 	const { t, seeCosts } = useApp();
+	const landed = landedOf(props.po, props.lines);
 	return (
 		<Card class="gap-4">
 			<CardHeader>
@@ -1091,6 +1167,7 @@ function ReadOnlyLines(props: { lines: PoLineRow[] }) {
 							{seeCosts ? (
 								<>
 									<TableHead class="text-right">{t.purchasing.price}</TableHead>
+									{landed ? <TableHead class="text-right">{t.purchasing.charges.landedUnitCost}</TableHead> : null}
 									<TableHead class="text-right">{t.purchasing.lineTotal}</TableHead>
 								</>
 							) : null}
@@ -1113,6 +1190,11 @@ function ReadOnlyLines(props: { lines: PoLineRow[] }) {
 										<TableCell class="text-right">
 											<Money cents={l.line.unitPriceCents} />
 										</TableCell>
+										{landed ? (
+											<TableCell class="text-right">
+												<Money cents={landed.get(l.line.id)?.landedUnitCents} />
+											</TableCell>
+										) : null}
 										<TableCell class="text-right">
 											<Money cents={lineCostCents(l.line.qtyMilli, l.line.unitPriceCents)} />
 										</TableCell>
@@ -1123,17 +1205,52 @@ function ReadOnlyLines(props: { lines: PoLineRow[] }) {
 					</TableBody>
 					{seeCosts ? (
 						<TableFooter>
-							<TableRow>
-								<TableCell colspan={4}>{t.purchasing.total}</TableCell>
-								<TableCell class="text-right">
-									<Money cents={linesTotal(props.lines)} />
-								</TableCell>
-							</TableRow>
+							<TotalRows
+								po={props.po}
+								lines={props.lines}
+								span={landed ? 5 : 4}
+								after={0}
+								inStockCents={props.inStockCents}
+							/>
 						</TableFooter>
 					) : null}
 				</Table>
 			</CardContent>
 		</Card>
+	);
+}
+
+/** Shipping, duties, discount and how they are spread (D201, D202), folded away until needed. */
+function ChargesCard(props: { po: PoData["po"]; values: FormValues; errors: FormErrors }) {
+	const { t } = useApp();
+	const c = t.purchasing.charges;
+	const hasErrors = Object.keys(props.errors).length > 0;
+	const money = { inputmode: "decimal" as const, values: props.values, errors: props.errors };
+	return (
+		<CollapsibleCard id="charges" title={c.title} icon={icons.receipt} open={hasErrors}>
+			<form method="post" action={`/purchasing/po/${props.po.id}/charges`} class="flex flex-col gap-6">
+				<ErrorBanner show={hasErrors} />
+				<FieldGroup>
+					<FieldDescription>{c.intro}</FieldDescription>
+					<div class="grid gap-4 md:grid-cols-3">
+						<TextField name="shipping" label={c.shipping} {...money} />
+						<TextField name="duties" label={c.duties} {...money} />
+						<TextField name="discount" label={c.discount} hint={c.discountHint} {...money} />
+					</div>
+					<SelectField
+						name="charges_spread"
+						label={c.spread}
+						hint={c.spreadHint}
+						options={CHARGE_SPREADS.map((s) => ({ value: s, label: c.spreads[s] }))}
+						values={props.values}
+						errors={props.errors}
+					/>
+				</FieldGroup>
+				<div class="flex flex-wrap items-center gap-2">
+					<Button icon={icons.save}>{t.common.save}</Button>
+				</div>
+			</form>
+		</CollapsibleCard>
 	);
 }
 
@@ -1349,6 +1466,9 @@ async function renderPo(
 		shipmentValues?: FormValues;
 		shipmentErrors?: FieldErrors;
 		shipmentId?: number;
+		/** The charges form as posted, with its errors. */
+		chargesValues?: FormValues;
+		chargesErrors?: FieldErrors;
 	} = {},
 	status: 200 | 422 = 200,
 ) {
@@ -1390,6 +1510,12 @@ async function renderPo(
 	const canReceive = can(c.var, "purchasing.receive") && RECEIVABLE_PO_STATUSES.includes(po.status) && lines.length > 0;
 	const anyReceived = lines.some((l) => l.line.receivedQtyMilli > 0);
 	const canShip = canEdit && SHIPPING_PO_STATUSES.includes(po.status);
+	const seeCosts = can(c.var, "costs.view");
+	const canCharge = canEdit && seeCosts && CHARGES_PO_STATUSES.includes(po.status);
+	// What of the charges went into stock value, once something was received (D203): shown while the PO has charges,
+	// or when its receipts took some that were cleared since.
+	const charged = seeCosts && anyReceived ? await chargesInStockCents(db, po.id, lines) : undefined;
+	const inStock = charged !== undefined && (hasCharges(po) || charged !== 0) ? charged : undefined;
 	const editingId = form.shipmentId ?? Number(c.req.query("shipment") ?? Number.NaN);
 	const editing = canShip ? shipments.find((s) => s.id === editingId) : undefined;
 	return page(
@@ -1491,9 +1617,16 @@ async function renderPo(
 				) : (
 					<>
 						<PoStats po={po} lines={lines} today={today} />
-						<ReadOnlyLines lines={lines} />
+						<ReadOnlyLines po={po} lines={lines} inStockCents={inStock} />
 					</>
 				)}
+				{canCharge ? (
+					<ChargesCard
+						po={po}
+						values={form.chargesValues ?? chargeFormValues(po)}
+						errors={translateErrors(c, form.chargesErrors ?? {})}
+					/>
+				) : null}
 				{canShip || shipments.length > 0 ? (
 					<ShipmentsCard
 						po={po}
@@ -1573,6 +1706,23 @@ purchasingRoutes.post("/po/:id", requirePermission("purchasing.order"), async (c
 		]);
 	}
 	return redirectOk(c, `/purchasing/po/${data.po.id}`);
+});
+
+purchasingRoutes.post("/po/:id/charges", requirePermission("purchasing.order"), async (c) => {
+	const data = await loadPo(c);
+	if (!data) return notFound(c);
+	if (!CHARGES_PO_STATUSES.includes(data.po.status))
+		return c.redirect(`/purchasing/po/${data.po.id}?err=po_charges_closed`, 303);
+	const body = await c.req.parseBody();
+	const v = validate(poChargesInput, body);
+	const values = v.ok ? chargeValues(v.data) : undefined;
+	const errors = values ? chargeRuleErrors(values, linesTotal(await getPoLines(c.var.db, data.po.id))) : {};
+	if (!v.ok || !values || Object.keys(errors).length)
+		return renderPo(c, data, { chargesValues: body as FormValues, chargesErrors: v.ok ? errors : v.errors }, 422);
+	await saveChanges(c, fmt(c.var.t.history.summaries.poCharges, { number: data.po.number }), [
+		updatePoChargesStatement(c.var.db, data.po.id, values, c.var.user, nowIso()),
+	]);
+	return c.redirect(`/purchasing/po/${data.po.id}?ok=saved#charges`, 303);
 });
 
 /** The shipment of the PO named by :shipmentId, with the PO and its other shipments. */
@@ -1655,12 +1805,10 @@ purchasingRoutes.post("/po/:id/lines", requirePermission("purchasing.order"), as
 	let part: typeof parts.$inferSelect | undefined;
 	if (v.ok) {
 		part = (await db.select().from(parts).where(eq(parts.ref, v.data.part)).limit(1))[0];
-		if (!part) {
-			errors.part = "unknown_part";
-			vars.ref = v.data.part;
-		} else if (part.kind !== "buy" && part.kind !== "make") {
-			errors.part = "not_stocked";
-			vars.kind = part.kind;
+		const issue = poLinePartIssue(part, v.data.part);
+		if (issue) {
+			errors.part = issue.key;
+			Object.assign(vars, issue.vars);
 		}
 	}
 	// A part with options is ordered in one value of each (D191).
@@ -1813,7 +1961,7 @@ purchasingRoutes.post("/po/:id/receive", requirePermission("purchasing.receive")
 	const body = await c.req.parseBody();
 	const values: FormValues = {};
 	for (const [k, v] of Object.entries(body)) if (typeof v === "string") values[k] = v;
-	const { receipts, errors } = planReceipts(await getPoLines(db, data.po.id), values);
+	const { receipts, errors } = planReceipts(data.po, await getPoLines(db, data.po.id), values);
 	if (Object.keys(errors).length > 0) {
 		return renderPo(c, data, { receiveValues: values, receiveErrors: errors }, 422);
 	}

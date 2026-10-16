@@ -113,6 +113,10 @@ const RESULT_FIELDS = [
 	"missing_values",
 	"missing_value",
 	"total_on_hand",
+	// PO charges and landed cost (D205).
+	"lines_total",
+	"landed_unit_cost",
+	"charges_in_stock",
 ];
 
 function inputFields(): Set<string> {

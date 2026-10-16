@@ -21,9 +21,12 @@ import {
 const COST = 123456; // standard cost of BOX-LAMP
 const OFFER = 111111; // its offer price
 const SALE = 999999; // selling price of LAMP-DESK
-const PAID = 98765; // PO unit price, also the cost of the receipt moves
+const PAID = 98765; // PO unit price
 const PAST = 77777; // a past standard cost entered as history (D142)
 const RATE = 66666; // hourly rate of the FDM printer type (D147)
+const SHIPPING = 55555; // shipping and duties on the PO (D201), spread over its line: receipts at 1,087.65 a unit
+const DUTIES = 44444;
+const LANDED = PAID + 10_000; // the receipts' unit cost: 999.99 of charges over 10 units, rounded to the cent
 // The history keeps rows as JSON with raw cents: those must not leak either.
 const AMOUNTS = [
 	"1,234.56",
@@ -41,6 +44,15 @@ const AMOUNTS = [
 	"77777",
 	"666.66",
 	"66666",
+	"555.55",
+	"55555",
+	"444.44",
+	"44444",
+	"1,087.65",
+	"1087.65",
+	"108765",
+	"10,876.49",
+	"10876.49",
 ];
 
 /**
@@ -73,6 +85,12 @@ async function seed() {
 	const po = await postForm("/purchasing/po", { supplier_id: String(supplier), expected_at: "", notes: "" });
 	const poId = Number(/\/po\/(\d+)/.exec(po.headers.get("Location") ?? "")?.[1]);
 	await postForm(`/purchasing/po/${poId}/lines`, { part: "BOX-LAMP", qty: "10", price: "987.65" });
+	await postForm(`/purchasing/po/${poId}/charges`, {
+		shipping: String(SHIPPING / 100),
+		duties: String(DUTIES / 100),
+		discount: "",
+		charges_spread: "value",
+	});
 	await postForm(`/purchasing/po/${poId}/send`, {});
 	const line = (await one<{ id: number }>("SELECT id FROM po_lines WHERE po_id = ?", poId)).id;
 	await postForm(`/purchasing/po/${poId}/receive`, { [`recv_${line}`]: "4" });
@@ -258,8 +276,10 @@ describe("cost visibility", () => {
 		expect(prices).toContain("1,111.11");
 		expect(prices).toContain("777.77");
 		expect(await (await request("/parts?q=WIDGET", {}, NOT_ADMIN)).text()).toContain("1,234.56");
-		expect(await (await request(`/purchasing/po/${s.poId}`, {}, NOT_ADMIN)).text()).toContain("987.65");
-		expect(await (await request("/stock/moves?format=csv", {}, NOT_ADMIN)).text()).toContain("987.65");
+		const po = await (await request(`/purchasing/po/${s.poId}`, {}, NOT_ADMIN)).text();
+		for (const amount of ["987.65", "555.55", "444.44", "1,087.65", "10,876.49"]) expect(po, amount).toContain(amount);
+		// Receipts at the landed unit cost (D202).
+		expect(await (await request("/stock/moves?format=csv", {}, NOT_ADMIN)).text()).toContain("1087.65");
 		expect(await (await request(`/history/${s.priced}`, {}, NOT_ADMIN)).text()).toContain("1,234.56");
 		expect(await (await request(`/purchasing/po/${s.poId}/history`, {}, NOT_ADMIN)).text()).toContain("987.65");
 		// The machine rate, where the sweep looks for it (so the sweep would catch a leak there).
@@ -286,10 +306,10 @@ describe("cost visibility", () => {
 		const res = await postForm(`/purchasing/po/${s.poId}/receive`, { [`recv_${line}`]: "6" }, NOT_ADMIN);
 		expect(res.status).toBe(303);
 		expect(await one("SELECT status FROM purchase_orders WHERE id = ?", s.poId)).toEqual({ status: "received" });
-		// The receipt is still valued at the PO price, which the operator never saw.
+		// The receipt is still valued at the PO's landed cost (price and charges), which the operator never saw.
 		expect(
 			await one("SELECT SUM(qty_milli) AS q, MAX(unit_cost_cents) AS c FROM stock_moves WHERE reason = 'receipt'"),
-		).toEqual({ q: 10_000, c: PAID });
+		).toEqual({ q: 10_000, c: LANDED });
 	});
 
 	it("hides the controls a role cannot use", async () => {

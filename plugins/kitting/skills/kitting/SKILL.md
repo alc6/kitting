@@ -57,7 +57,9 @@ worked conversations in [references/examples.md](references/examples.md).
   the app only.
 - **Purchase orders** `PO-0001`: draft, sent, partial, received, cancelled. Kitting does not email suppliers:
   "sent" means the user sent it. A sent PO lists its shipments (carrier, tracking number, tracking link) in
-  `get_purchase_order`, for the team to follow; Kitting never contacts the carrier.
+  `get_purchase_order`, for the team to follow; Kitting never contacts the carrier. A PO also carries charges
+  (`shipping`, `duties`, a `discount`): spread over its lines (by value unless `charges_spread` says otherwise), they
+  give each line a `landed_unit_cost`, the price plus its share, which its receipts enter stock at.
 - **Costs** (standard cost, roll-ups, prices, margins) may be hidden for the user's role: the result then says
   `costs_hidden: true` and has no amounts. Never estimate one.
 - **Roles and scopes.** Roles: viewer < operator < planner < admin. A tool exists for you only if the connection
@@ -106,8 +108,19 @@ worked conversations in [references/examples.md](references/examples.md).
    When the supplier gives tracking details (a shipping notice, an email the user shares): confirm, then
    `record_po_shipment` with the carrier, `tracking_number` and, only if the supplier gave one, `tracking_url`
    (one call per parcel; the same tracking number again updates it).
+   When the user knows the shipping, customs or a coupon (the cart, the freight or customs invoice): confirm the
+   amounts, then `update_draft_po` with `shipping`, `duties`, `discount` (it works on sent and partly received POs).
+   Do it before receiving: a receipt takes the charges as they are, and a later change reaches only later receipts.
 7. Goods arrive: ask what was received, for serial-tracked parts which serials, confirm, then `receive_po`
    (partial deliveries are fine; `close_po` if the rest will never come, `cancel_po` if nothing came).
+
+### Order parts that are not short
+Spares, a part to try, or stock for work the shortages do not see yet. `create_draft_pos` only drafts what open builds
+need, so use `create_po`.
+1. `search_parts` each part; `get_part` shows the suppliers' offers (price, MOQ, pack size, lead time).
+2. Confirm the supplier, the quantities (say when one is below the offer's MOQ or off its pack size), the prices and any
+   shipping, then `create_po`: one draft per supplier, `options` on parts that have some.
+3. Review with `get_purchase_order`, adjust with `update_draft_po`, and `mark_po_sent` once the user has sent it.
 
 ### Plan builds in a colour (parts with options)
 "Plan 12 black mini lamps" where the product or its components have options.

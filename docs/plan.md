@@ -248,6 +248,22 @@ Where each part is kept, drawn on a plan of the workshop, shown wherever someone
 - [ ] MCP: `location` in `get_part`, `search_parts`, `stock_on_hand` and `get_build`, set by `update_part`
 - [ ] README and the Kitting skill
 
+## M20: PO charges and landed cost ✅
+
+Shipping, customs and a discount on a purchase order, spread over its lines so receipts enter stock at what the
+parts cost to get to the workshop (D201–D205), and POs for any parts over MCP (D206).
+
+- [x] `shipping_cents`, `duties_cents`, `discount_cents` and `charges_spread` on `purchase_orders` (migration 0013),
+      editable while the PO is open; totals on the PO page, the PO list and the dashboard's open POs (D201)
+- [x] Spread by line value (default), by quantity, or not at all, in cents that add up exactly; receipts at the landed
+      unit cost, so the weighted average, valuation and margins include the charges (D202)
+- [x] Partial receipts take their share; charges changed later reach only later receipts; the PO shows the charges in
+      stock value (D203)
+- [x] Prices paid show the supplier's price and the landed cost (D204)
+- [x] `update_draft_po` sets the charges; `get_purchase_order` and the PO write tools return them; `receive_po` uses
+      the landed cost (D205)
+- [x] `create_po` drafts a PO for a supplier with any parts, lines and charges; new PO lines refuse archived parts (D206)
+
 ## After v1 (ideas, not planned)
 
 - Shipments, beyond M17: carriers with a tracking URL pattern entered by an administrator (a link from the number

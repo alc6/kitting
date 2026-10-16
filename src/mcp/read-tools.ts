@@ -37,6 +37,7 @@ import {
 	limit,
 	partByRef,
 	partRef,
+	poAmounts,
 	poByNumber,
 	quantity,
 	refsOf,
@@ -686,7 +687,8 @@ const PO_FILTERS = ["open", "all", ...PO_STATUSES] as const;
 const listPurchaseOrders = tool({
 	name: "list_purchase_orders",
 	title: "Purchase orders",
-	description: "Purchase orders, newest first. Status defaults to open (draft, sent and partly received).",
+	description:
+		"Purchase orders, newest first, with their total (lines and charges). Status defaults to open (draft, sent and partly received).",
 	rule: { scope: "purchasing:read" },
 	input: z.object({
 		query: z
@@ -722,12 +724,13 @@ const getPurchaseOrder = tool({
 	name: "get_purchase_order",
 	title: "Purchase order",
 	description:
-		"One purchase order by number (e.g. PO-0001): supplier, dates, lines with ordered, received and remaining quantities and prices, and the shipments the supplier sent (carrier, tracking number and link).",
+		"One purchase order by number (e.g. PO-0001): supplier, dates, lines with ordered, received and remaining quantities and prices, its charges (shipping, customs and duties, discount) and how they are spread over the lines (each line's landed unit cost, what its receipts enter stock at), the totals, and the shipments the supplier sent (carrier, tracking number and link).",
 	rule: { scope: "purchasing:read" },
 	input: z.object({ number: z.string().trim().min(1).max(32).describe('The PO number, e.g. "PO-0001".') }),
 	run: async (a, { db }) => {
 		const found = await poByNumber(db, a.number);
 		const [lines, shipments] = await Promise.all([getPoLines(db, found.po.id), getPoShipments(db, found.po.id)]);
+		const amounts = await poAmounts(db, found.po, lines);
 		return {
 			purchaseOrder: {
 				number: found.po.number,
@@ -749,9 +752,10 @@ const getPurchaseOrder = tool({
 				receivedMilli: l.line.receivedQtyMilli,
 				remainingMilli: Math.max(0, l.line.qtyMilli - l.line.receivedQtyMilli),
 				unitPriceCents: l.line.unitPriceCents,
+				landedUnitCostCents: amounts.landed?.get(l.line.id)?.landedUnitCents,
 				lineTotalCents: lineCostCents(l.line.qtyMilli, l.line.unitPriceCents),
 			})),
-			totalCents: lines.reduce((s, l) => s + lineCostCents(l.line.qtyMilli, l.line.unitPriceCents), 0),
+			...amounts.totals,
 			shipments: shipmentViews(shipments),
 		};
 	},

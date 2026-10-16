@@ -50,7 +50,7 @@ the corresponding page.
 | `builds:read` | `list_builds`, `get_build` |
 | `builds:write` | `plan_build`, `complete_build`, `record_build`, `cancel_build` |
 | `purchasing:read` | `get_shortages`, `list_purchase_orders`, `get_purchase_order` |
-| `purchasing:write` | `create_draft_pos`, `update_draft_po`, `mark_po_sent`, `receive_po`, `cancel_po`, `close_po`, `record_po_shipment` |
+| `purchasing:write` | `create_draft_pos`, `create_po`, `update_draft_po`, `mark_po_sent`, `receive_po`, `cancel_po`, `close_po`, `record_po_shipment` |
 
 Parts with options (a colour, a size) are handled by the same tools: they take and return `options` as option
 name → value, such as `{"Colour": "white"}`, for stock, builds, shortages and purchase orders (D193). Defining a part's

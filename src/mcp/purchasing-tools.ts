@@ -2,22 +2,34 @@
 // shipments (D168), with the purchasing pages' checks and statement builders. Receiving writes the stock ledger: it
 // cannot be undone.
 import { z } from "zod";
+import { CHARGE_SPREADS } from "../db/schema";
 import { getOffer, poUnitPrice } from "../domain/offers";
 import { type OptionDef, type OptionKey, stockKey } from "../domain/option-keys";
 import { optionsOf } from "../domain/options";
 import {
 	addPoLineStatement,
 	addShipmentStatement,
+	CHARGES_PO_STATUSES,
+	type ChargeValues,
 	cancelPoStatement,
+	chargeFormValues,
+	chargeRuleErrors,
+	chargeValues,
 	closePoStatement,
 	computeShortages,
 	deletePoLineStatement,
 	draftPoStatements,
 	getPoLines,
 	getPoShipments,
+	type NewPo,
+	NO_CHARGES,
+	newPoStatements,
 	nextPoNumbers,
 	planDraftOrders,
 	planReceipts,
+	poChargesInput,
+	poEditInput,
+	poLinePartIssue,
 	RECEIVABLE_PO_STATUSES,
 	receiptStatements,
 	receiveQtyField,
@@ -28,11 +40,11 @@ import {
 	shipmentInput,
 	shipmentRuleErrors,
 	shipmentValues,
+	updatePoChargesStatement,
 	updatePoLineStatement,
 	updatePoStatement,
 	updateShipmentStatement,
 } from "../domain/purchasing";
-import { isStocked } from "../domain/stock";
 import { fmt } from "../i18n";
 import type { Statement } from "../lib/db";
 import { isConstraintError } from "../lib/sql";
@@ -47,25 +59,28 @@ import {
 	findPart,
 	formValue,
 	NOTHING_CHANGED,
+	poAmounts,
 	poByNumber,
 	refuse,
 	saveChange,
 	shipmentViews,
+	type ToolContext,
 	ToolError,
 	type ToolSpec,
 	tool,
 	writes,
 } from "./kit";
-import { completeKey, optionsInput, optionsView, selectByOptions } from "./options";
+import { completeKey, optionsInput, optionsView, selectByOptions, valueIdsOf } from "./options";
 
 const now = () => new Date().toISOString();
 
 const poNumberInput = z.string().trim().min(1).max(32).describe('The PO number, e.g. "PO-0001".');
 
-/** A purchase order with its lines, as the write tools return it. */
+/** A purchase order with its lines, charges and totals, as the write tools return it. */
 async function poView(db: Db, number: string) {
 	const { po, supplier } = await poByNumber(db, number);
 	const [lines, shipments] = await Promise.all([getPoLines(db, po.id), getPoShipments(db, po.id)]);
+	const amounts = await poAmounts(db, po, lines);
 	return {
 		purchaseOrder: {
 			number: po.number,
@@ -83,8 +98,9 @@ async function poView(db: Db, number: string) {
 			receivedMilli: l.line.receivedQtyMilli,
 			remainingMilli: Math.max(0, l.line.qtyMilli - l.line.receivedQtyMilli),
 			unitPriceCents: l.line.unitPriceCents,
+			landedUnitCostCents: amounts.landed?.get(l.line.id)?.landedUnitCents,
 		})),
-		totalCents: lines.reduce((s, l) => s + lineCostCents(l.line.qtyMilli, l.line.unitPriceCents), 0),
+		...amounts.totals,
 		shipments: shipmentViews(shipments),
 	};
 }
@@ -106,6 +122,69 @@ function lineFor<T extends { ref: string; line: { optionValues: OptionKey }; opt
 	const options = defs ?? same[0]?.options ?? [];
 	const { item, ids } = selectByOptions(same, options, given, (l) => l.line.optionValues, `${ref} on ${number}`);
 	return { line: item, ids, defs: options };
+}
+
+/** The charge inputs of update_draft_po and create_po (D201, D205). */
+const chargeInputs = {
+	shipping: decimal('Shipping charged on the whole order, e.g. "86.50"; "0" clears it.').optional(),
+	duties: decimal('Customs and duties on the order, e.g. "120.00"; "0" clears it.').optional(),
+	discount: decimal(
+		'A coupon or discount on the whole order, as a positive amount subtracted from the total, e.g. "5.00"; "0" clears it.',
+	).optional(),
+	charges_spread: z
+		.enum(CHARGE_SPREADS)
+		.optional()
+		.describe(
+			"How receipts take the charges: value (the default) spreads them over the lines in proportion to their ordered value, qty in proportion to their ordered quantity, none leaves receipts at the line price (the charges are only recorded on the PO).",
+		),
+};
+const CHARGE_KEYS = ["shipping", "duties", "discount", "charges_spread"] as const;
+type ChargeArgs = { [K in (typeof CHARGE_KEYS)[number]]?: string | number | undefined };
+
+const givesCharges = (a: ChargeArgs) => CHARGE_KEYS.some((k) => a[k] !== undefined);
+
+/**
+ * The charges a call sets over `current`, through the charges form's validation and rules (D201): the form as its
+ * page would post it, with the fields given. Refused when invalid; `partsCents` is the lines' total.
+ */
+function chargesOf(a: ChargeArgs, current: ChargeValues, partsCents: number): ChargeValues {
+	const form = chargeFormValues(current);
+	for (const key of CHARGE_KEYS) if (a[key] !== undefined) form[key] = formValue(a[key]);
+	const v = validate(poChargesInput, form);
+	if (!v.ok) refuse(v.errors);
+	const values = chargeValues(v.data);
+	const errors = chargeRuleErrors(values, partsCents);
+	if (Object.keys(errors).length) refuse(errors);
+	return values;
+}
+
+/**
+ * A new PO line as update_draft_po and create_po add it, with the line form's checks (D206): a stocked part that is
+ * not archived, a value of every option (`ids` from the call's options), once per part and values (`added`), priced
+ * at the supplier's offer, else the standard cost, unless a price is given. A problem comes back as text.
+ */
+async function newLine(
+	ctx: ToolContext,
+	at: string,
+	part: NonNullable<Awaited<ReturnType<typeof findPart>>>,
+	opts: { defs: OptionDef[]; ids: number[]; qty: number; price: number | null; supplierId: number; added: Set<string> },
+): Promise<{ line: NewPo["lines"][number] } | { problem: string }> {
+	const issue = poLinePartIssue(part, part.ref);
+	if (issue) return { problem: `${at}: ${errorMessage(issue.key, issue.vars)}` };
+	let optionValues: OptionKey;
+	try {
+		// A new line of a part with options needs a value of each (D191).
+		optionValues = completeKey(opts.defs, opts.ids, `${at} options`);
+	} catch (err) {
+		if (!(err instanceof ToolError)) throw err;
+		return { problem: err.message };
+	}
+	const key = stockKey(part.id, optionValues);
+	if (opts.added.has(key)) return { problem: `${at}: listed twice.` };
+	opts.added.add(key);
+	const unitPriceCents =
+		opts.price ?? poUnitPrice((await getOffer(ctx.db, part.id, opts.supplierId))?.priceCents, part.costCents);
+	return { line: { partId: part.id, qtyMilli: opts.qty, unitPriceCents, optionValues } };
 }
 
 const createDraftPos = tool({
@@ -181,13 +260,14 @@ const updateDraftPo = tool({
 	name: "update_draft_po",
 	title: "Edit a draft PO",
 	description:
-		"Edits a purchase order: its expected date and notes (any open PO, as on its page), and the lines of a draft. Each line sets the quantity of a part on the PO: an existing line is changed (its price too when given), a new part is added (priced at this supplier's offer, else the standard cost, unless a price is given), and qty \"0\" removes the part's line. A part with options is on one line per values: options says which line (a value of every option is needed to add one). Lines of a sent PO cannot change.",
+		"Edits a purchase order: its expected date and notes (any open PO, as on its page), its charges (shipping, customs and duties, a discount, and how they are spread over the lines: any open PO, since the freight is often known after sending), and the lines of a draft. Each line sets the quantity of a part on the PO: an existing line is changed (its price too when given), a new part is added (priced at this supplier's offer, else the standard cost, unless a price is given), and qty \"0\" removes the part's line. A part with options is on one line per values: options says which line (a value of every option is needed to add one). Lines of a sent PO cannot change. Charges spread over the lines make the landed unit cost receipts enter stock at; a change applies to the quantities received afterwards, never to past receipts.",
 	rule: { scope: "purchasing:write", action: "purchasing.order" },
 	annotations: writes({ destructive: true, idempotent: true }),
 	input: z.object({
 		number: poNumberInput,
 		expected_at: date.nullable().optional().describe("Expected delivery date, YYYY-MM-DD (null clears it)."),
 		notes: z.string().max(2000).optional(),
+		...chargeInputs,
 		lines: z
 			.array(
 				z.object({
@@ -205,6 +285,14 @@ const updateDraftPo = tool({
 		if (a.lines.length && po.status !== "draft") refuse({ lines: "po_not_draft" });
 		const stamp = now();
 		const stmts: Statement[] = [];
+		if (givesCharges(a)) {
+			if (!CHARGES_PO_STATUSES.includes(po.status)) refuse({ _: "po_charges_closed" });
+			const partsCents = (await getPoLines(ctx.db, po.id)).reduce(
+				(s, l) => s + lineCostCents(l.line.qtyMilli, l.line.unitPriceCents),
+				0,
+			);
+			stmts.push(updatePoChargesStatement(ctx.db, po.id, chargesOf(a, po, partsCents), ctx.user, stamp));
+		}
 		if (a.expected_at !== undefined || a.notes !== undefined) {
 			const v = validate(z.object({ expected_at: field.date(), notes: field.text() }), {
 				expected_at: a.expected_at === undefined ? (po.expectedAt ?? "") : (a.expected_at ?? ""),
@@ -263,38 +351,121 @@ const updateDraftPo = tool({
 						),
 					);
 			} else if (qty === 0) problems.push(`${at}: not on ${po.number}.`);
-			else if (!isStocked(part.kind)) problems.push(`${at}: ${errorMessage("not_stocked", { kind: part.kind })}`);
 			else {
-				// A new line of a part with options needs a value of each (D191).
-				let optionValues: OptionKey;
-				try {
-					optionValues = completeKey(found.defs, found.ids, `${at} options`);
-				} catch (err) {
-					if (!(err instanceof ToolError)) throw err;
-					problems.push(err.message);
-					continue;
-				}
-				if (added.has(stockKey(part.id, optionValues))) {
-					problems.push(`${at}: listed twice.`);
-					continue;
-				}
-				added.add(stockKey(part.id, optionValues));
-				const unitPriceCents =
-					price ?? poUnitPrice((await getOffer(ctx.db, part.id, po.supplierId))?.priceCents, part.costCents);
-				stmts.push(
-					addPoLineStatement(
-						ctx.db,
-						po.id,
-						{ partId: part.id, qtyMilli: qty, unitPriceCents, optionValues },
-						ctx.user,
-						stamp,
-					),
-				);
+				const r = await newLine(ctx, at, part, {
+					defs: found.defs,
+					ids: found.ids,
+					qty,
+					price,
+					supplierId: po.supplierId,
+					added,
+				});
+				if ("problem" in r) problems.push(r.problem);
+				else stmts.push(addPoLineStatement(ctx.db, po.id, r.line, ctx.user, stamp));
 			}
 		}
 		if (problems.length) throw new ToolError(`Refused, nothing was changed. ${problems.join(" ")}`);
 		const { change } = await saveChange(ctx, fmt(ctx.t.history.summaries.poEdit, { number: po.number }), stmts);
 		return { ...change, ...(await poView(ctx.db, po.number)) };
+	},
+});
+
+const createPo = tool({
+	name: "create_po",
+	title: "Create a PO",
+	description:
+		"Creates a draft purchase order for a supplier, as the New PO page does, to order parts whether or not they are short (create_draft_pos drafts only what the shortages need): optionally its lines (a part, its options when it has some, the quantity, and a unit price: else this supplier's offer, else the standard cost), its expected date and notes, and its charges (shipping, customs and duties, a discount, and how they are spread over the lines). Kits, fees and archived parts are refused. The draft is not sent: review it, adjust it with update_draft_po, and mark_po_sent once the user has sent it.",
+	rule: { scope: "purchasing:write", action: "purchasing.order" },
+	annotations: writes({ destructive: false, idempotent: false }),
+	input: z.object({
+		supplier: z.string().trim().min(1).max(200).describe("The supplier's name (case-insensitive)."),
+		expected_at: date.nullable().optional().describe("Expected delivery date, YYYY-MM-DD."),
+		notes: z.string().max(2000).optional(),
+		...chargeInputs,
+		lines: z
+			.array(
+				z.object({
+					ref: z.string().trim().min(1).max(64),
+					options: optionsInput("the line: a value of every option of the part"),
+					qty: decimal('Quantity to order in the part\'s unit, e.g. "200".'),
+					price: decimal('Unit price, e.g. "1.05"; left out: the offer price, else the standard cost.').optional(),
+				}),
+			)
+			.max(500)
+			.default([]),
+	}),
+	run: async (a, ctx) => {
+		const supplier = await supplierByName(ctx.db, a.supplier);
+		const header = validate(poEditInput, { expected_at: formValue(a.expected_at), notes: a.notes ?? "" });
+		if (!header.ok) refuse(header.errors);
+		const problems: string[] = [];
+		const lines: NewPo["lines"] = [];
+		const added = new Set<string>();
+		for (const [i, l] of a.lines.entries()) {
+			const at = `line ${i + 1} (${l.ref})`;
+			const v = validate(z.object({ qty: field.qty({ positive: true }), price: field.money() }), {
+				qty: formValue(l.qty),
+				price: formValue(l.price),
+			});
+			if (!v.ok) {
+				problems.push(...Object.entries(v.errors).map(([f, key]) => `${at} ${f}: ${errorMessage(key)}`));
+				continue;
+			}
+			const part = await findPart(ctx.db, l.ref);
+			if (!part) {
+				problems.push(`${at}: ${errorMessage("unknown_part", { ref: l.ref })}`);
+				continue;
+			}
+			const defs = await optionsOf(ctx.db, part.id);
+			let ids: number[];
+			try {
+				ids = valueIdsOf(defs, l.options, `${at} options`);
+			} catch (err) {
+				if (!(err instanceof ToolError)) throw err;
+				problems.push(err.message);
+				continue;
+			}
+			const r = await newLine(ctx, at, part, {
+				defs,
+				ids,
+				qty: v.data.qty,
+				price: v.data.price,
+				supplierId: supplier.id,
+				added,
+			});
+			if ("problem" in r) problems.push(r.problem);
+			else lines.push(r.line);
+		}
+		if (problems.length) throw new ToolError(`Refused, nothing was changed. ${problems.join(" ")}`);
+		const partsCents = lines.reduce((s, l) => s + lineCostCents(l.qtyMilli, l.unitPriceCents), 0);
+		const charges = givesCharges(a) ? chargesOf(a, NO_CHARGES, partsCents) : NO_CHARGES;
+		for (let attempt = 0; ; attempt++) {
+			const [number] = await nextPoNumbers(ctx.db, 1);
+			if (!number) throw new ToolError("No PO number available.");
+			try {
+				const { change } = await saveChange(
+					ctx,
+					fmt(ctx.t.history.summaries.poCreate, { number }),
+					newPoStatements(
+						ctx.db,
+						{
+							number,
+							supplierId: supplier.id,
+							expectedAt: header.data.expected_at,
+							notes: header.data.notes,
+							charges,
+							lines,
+						},
+						ctx.user,
+						now(),
+					),
+				);
+				return { ...change, ...(await poView(ctx.db, number)) };
+			} catch (err) {
+				// Another PO took the number meanwhile: once more with the next one.
+				if (attempt > 0 || !isConstraintError(err, "UNIQUE")) throw err;
+			}
+		}
 	},
 });
 
@@ -322,7 +493,7 @@ const receivePo = tool({
 	name: "receive_po",
 	title: "Receive goods on a PO",
 	description:
-		"Records goods received on a purchase order, as its receive form does: per line (a part, and its options when it is ordered in several values), the quantity received now (more deliveries can follow), and optionally one serial per unit. Stock goes up at the PO's price; the PO becomes partly received or received. This writes the stock ledger: it cannot be undone, only corrected with an adjustment.",
+		"Records goods received on a purchase order, as its receive form does: per line (a part, and its options when it is ordered in several values), the quantity received now (more deliveries can follow), and optionally one serial per unit. Stock goes up at the line's landed unit cost: its price plus its share of the PO's charges when they are spread (else the line price), as the charges are now; set the shipping and other charges with update_draft_po before receiving. The PO becomes partly received or received. This writes the stock ledger: it cannot be undone, only corrected with an adjustment.",
 	rule: { scope: "purchasing:write", action: "purchasing.receive" },
 	annotations: writes({ destructive: true, idempotent: false }),
 	input: z.object({
@@ -360,7 +531,7 @@ const receivePo = tool({
 			names[qtyField] = `${label} qty`;
 			names[serialsField] = `${label} serials`;
 		}
-		const { receipts, errors } = planReceipts(lines, values);
+		const { receipts, errors } = planReceipts(po, lines, values);
 		if (Object.keys(errors).length) {
 			const messages = Object.entries(errors).map(([f, key]) => {
 				// serial_count names the quantity received on that line.
@@ -384,6 +555,7 @@ const receivePo = tool({
 					ref: line?.ref,
 					options: optionsView(line?.options ?? [], r.optionValues),
 					qtyMilli: r.qtyMilli,
+					unitCostCents: r.unitCostCents,
 					serials: r.serials.length ? r.serials : undefined,
 				};
 			}),
@@ -495,6 +667,7 @@ const recordPoShipment = tool({
 
 export const PURCHASING_TOOLS: readonly ToolSpec[] = [
 	createDraftPos,
+	createPo,
 	updateDraftPo,
 	markPoSent,
 	receivePo,

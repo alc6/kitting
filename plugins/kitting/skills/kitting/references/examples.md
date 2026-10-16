@@ -118,3 +118,34 @@ reconnecting the app with the scope ticked if the role allows it.
 5. After a yes: `create_draft_pos({})`; the line of the PO shows `options` `{"Colour": "black"}`. When the covers
    arrive, `receive_po({ "number": "PO-0003", "lines": [{ "ref": "MINI-COVER", "options": { "Colour": "black" }, "qty": "20" }] })`
    puts them in the black stock only.
+
+## 7. Shipping and a coupon on an order (landed cost)
+
+**User:** PO-0004 from Ironleaf Metalworks came to 86.50 of shipping, and we had a 5.00 coupon. Put it on the order.
+
+1. `get_purchase_order({ "number": "PO-0004" })`: sent, 10 `BASE-PLATE` at 55.00 and 20 `ARM-TUBE-300` at 6.20
+   (`lines_total` 674.00), nothing received, `charges_spread` `value`.
+
+   > **Claude:** I would set shipping 86.50 and a discount of 5.00 on PO-0004 (total 755.50). Spread over the lines
+   > by value, the base plates would enter stock at 61.65 each and the tubes at 6.95. Shall I?
+
+2. After a yes: `update_draft_po({ "number": "PO-0004", "shipping": "86.50", "discount": "5.00" })`. The result has
+   each line's `landed_unit_cost` and the undo link.
+3. The goods arrive: `receive_po` as usual; each `received` line gives the `unit_cost` it entered stock at. Charges
+   entered after a delivery only reach what is received afterwards (`charges_in_stock` shows how much went in), so
+   record the freight before receiving when it is known.
+
+## 8. Order spares that are not short
+
+**User:** Order 1000 felt pads from Bolt & Nut Depot as spares, with 6.50 of shipping.
+
+1. `search_parts({ "query": "felt" })` finds `PAD-FELT`. `get_part({ "ref": "PAD-FELT" })`: offered by Bolt & Nut Depot
+   (their reference `FP20`, MOQ 500, pack of 500, 7 days), no offer price, standard cost 0.05. Nothing is short, so
+   `create_draft_pos` would not order it.
+
+   > **Claude:** I would create a draft PO to Bolt & Nut Depot for 1000 felt pads (`FP20`) at 0.05, 50.00, plus 6.50
+   > of shipping (56.50). Shall I?
+
+2. After a yes: `create_po({ "supplier": "Bolt & Nut Depot", "shipping": "6.50", "lines": [{ "ref": "PAD-FELT", "qty": "1000" }] })`
+   returns the new draft's `number`, its lines with their `landed_unit_cost`, and the undo link. Claude says nothing
+   was sent and offers `mark_po_sent` once the user has sent the order.

@@ -42,9 +42,13 @@ Use the user's words, and map them to Kitting's. The tools and their fields are 
 | supplier | fournisseur | `create_supplier`; offers via `upsert_supplier_offer` |
 | supplier offer | tarif fournisseur, offre | price, MOQ, pack size, lead time of one supplier for one part |
 | preferred supplier | fournisseur préféré | used by shortages and draft POs |
-| purchase order (PO) | commande fournisseur, bon de commande | `PO-0001`; draft, sent, partial, received, cancelled |
+| purchase order (PO) | commande fournisseur, bon de commande | `PO-0001`; draft, sent, partial, received, cancelled; `create_po` (any parts) or `create_draft_pos` (the shortages) |
 | mark as sent | marquer comme envoyée | `mark_po_sent` (the user sends it) |
 | close a PO | solder une commande | `close_po`: remaining quantities will not come |
+| shipping, freight | frais de port, transport | `shipping` on a PO (`update_draft_po`) |
+| customs and duties | douane, droits de douane | `duties` on a PO |
+| discount, coupon | remise, bon de réduction | `discount` on a PO, subtracted from its total |
+| landed cost | coût de revient rendu, frais d'approche inclus | `landed_unit_cost`: line price + its share of the PO's charges; receipts enter stock at it |
 | standard cost | coût standard, prix de revient standard | `set_standard_cost` |
 | cost roll-up | prix de revient, coût de revient | `get_assembly`, `get_part`; `cost_incomplete` when a cost is missing |
 | selling price | prix de vente | `set_sale_price` |

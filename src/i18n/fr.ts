@@ -193,6 +193,8 @@ export const fr: Dict = {
 		po_has_receipts: "Des marchandises ont déjà été reçues sur cette commande.",
 		po_not_receivable: "Cette commande ne peut pas être réceptionnée.",
 		po_no_shipments: "Les expéditions ne s’enregistrent que sur les commandes envoyées ou reçues.",
+		po_charges_closed: "Les frais ne sont modifiables que tant que la commande est ouverte.",
+		discount_too_large: "La remise dépasse le montant de la commande.",
 		duplicate_tracking: "Ce numéro de suivi est déjà sur cette commande.",
 		invalid_url: "Saisissez un lien commençant par https:// ou http://.",
 		nothing_received: "Saisissez une quantité pour au moins une ligne.",
@@ -532,6 +534,7 @@ export const fr: Dict = {
 		po: "Commande",
 		qty: "Qté",
 		unitPrice: "Prix unitaire",
+		landedCost: "Coût rendu",
 		priceKinds: { standard: "Coût standard", purchase: "Prix fournisseur", sale: "Prix de vente" },
 		priceSources: {
 			form: "Formulaire",
@@ -861,6 +864,29 @@ export const fr: Dict = {
 			tracking: "Suivi",
 			more: "+{n}",
 			openTracking: "Ouvrir la page de suivi du transporteur",
+		},
+		charges: {
+			title: "Port et frais",
+			intro:
+				"Frais de la commande en plus de ses lignes. Répartis sur les lignes, ils donnent le coût unitaire rendu auquel les réceptions entrent en stock.",
+			parts: "Articles",
+			shipping: "Frais de port",
+			duties: "Douane et droits",
+			discount: "Remise",
+			discountHint: "Bon de réduction ou remise sur toute la commande, déduit du total.",
+			spread: "Coût rendu",
+			spreads: {
+				value: "Répartis sur les lignes selon leur valeur",
+				qty: "Répartis sur les lignes selon leur quantité",
+				none: "Non répartis : réceptions au prix de la ligne",
+			},
+			spreadHint:
+				"Chaque ligne prend une part des frais en proportion de sa valeur ou de sa quantité commandée ; ses réceptions entrent en stock au prix unitaire plus cette part. Une modification s’applique aux quantités reçues ensuite.",
+			landedUnitCost: "Coût unitaire rendu",
+			inStock: "Frais dans la valeur du stock",
+			totalHint: "Articles {parts} + frais {charges}",
+			receiveLanded:
+				"Le stock entre au coût unitaire rendu : le prix de chaque ligne plus sa part des frais de port et autres frais.",
 		},
 	},
 	import: {
@@ -1528,6 +1554,10 @@ export const fr: Dict = {
 			parent_unit_id: "dans l’unité",
 			parent_level: "au niveau",
 			parent_position: "à la position",
+			shipping_cents: "frais de port",
+			duties_cents: "douane et droits",
+			discount_cents: "remise",
+			charges_spread: "coût rendu",
 		},
 		// Résumés enregistrés avec chaque modification, dans la langue de son auteur (D110). Jamais de montant.
 		summaries: {
@@ -1576,6 +1606,7 @@ export const fr: Dict = {
 			draftPos: "Création de {n} commande(s) brouillon depuis les manques",
 			poCreate: "Création de la commande {number}",
 			poEdit: "Modification de la commande {number}",
+			poCharges: "Modification des frais de la commande {number}",
 			poLineAdd: "Ajout de {ref} à la commande {number}",
 			poLineEdit: "Modification de {ref} sur la commande {number}",
 			poLineDelete: "Retrait de {ref} de la commande {number}",

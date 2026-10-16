@@ -35,6 +35,9 @@ export type MoveReason = (typeof MOVE_REASONS)[number];
 
 export const PO_STATUSES = ["draft", "sent", "partial", "received", "cancelled"] as const;
 export type PoStatus = (typeof PO_STATUSES)[number];
+/** How a PO's charges are spread over its lines (D202): by line value, by quantity, or not at all. */
+export const CHARGE_SPREADS = ["value", "qty", "none"] as const;
+export type ChargeSpread = (typeof CHARGE_SPREADS)[number];
 
 export const BUILD_STATUSES = ["planned", "in_progress", "done", "cancelled"] as const;
 export type BuildStatus = (typeof BUILD_STATUSES)[number];
@@ -332,6 +335,13 @@ export const purchaseOrders = sqliteTable(
 		sentAt: text("sent_at"),
 		notes: text("notes").notNull().default(""),
 		...audit(),
+		// Charges beyond the lines (D201), in cents: shipping, customs and duties, and a discount or coupon (stored
+		// positive, subtracted). No CHECK: adding one would rebuild the table under its children; forms validate.
+		shippingCents: integer("shipping_cents").notNull().default(0),
+		dutiesCents: integer("duties_cents").notNull().default(0),
+		discountCents: integer("discount_cents").notNull().default(0),
+		// Whether receipts take a share of the charges (landed cost, D202), and in proportion to what.
+		chargesSpread: text("charges_spread", { enum: CHARGE_SPREADS }).notNull().default("value"),
 	},
 	(t) => [
 		uniqueIndex("purchase_orders_number_unique").on(t.number),

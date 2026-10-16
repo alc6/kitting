@@ -192,6 +192,8 @@ export const en = {
 		po_has_receipts: "Goods were already received on this PO.",
 		po_not_receivable: "This PO cannot receive goods.",
 		po_no_shipments: "Shipments are recorded on sent and received POs only.",
+		po_charges_closed: "Charges can only change while the PO is open.",
+		discount_too_large: "The discount is larger than the order.",
 		duplicate_tracking: "This tracking number is already on this PO.",
 		invalid_url: "Use a link starting with https:// or http://.",
 		nothing_received: "Enter a quantity for at least one line.",
@@ -523,6 +525,7 @@ export const en = {
 		po: "PO",
 		qty: "Qty",
 		unitPrice: "Unit price",
+		landedCost: "Landed cost",
 		priceKinds: { standard: "Standard cost", purchase: "Supplier price", sale: "Selling price" },
 		priceSources: { form: "Form", import: "Import", po: "Purchase order", migration: "Migration", revert: "Undo" },
 		addPastPrice: "Add a past price",
@@ -844,6 +847,29 @@ export const en = {
 			tracking: "Tracking",
 			more: "+{n}",
 			openTracking: "Open the carrier's tracking page",
+		},
+		charges: {
+			title: "Shipping and charges",
+			intro:
+				"Charges on the order beyond its lines. Spread over the lines, they give the landed unit cost that receipts enter stock at.",
+			parts: "Parts",
+			shipping: "Shipping",
+			duties: "Customs and duties",
+			discount: "Discount",
+			discountHint: "Coupon or discount on the whole order, subtracted from the total.",
+			spread: "Landed cost",
+			spreads: {
+				value: "Spread over the lines by value",
+				qty: "Spread over the lines by quantity",
+				none: "Not spread: receipts at the line price",
+			},
+			spreadHint:
+				"Each line takes a share of the charges in proportion to its ordered value or quantity; its receipts enter stock at the unit price plus that share. A change applies to the quantities received afterwards.",
+			landedUnitCost: "Landed unit cost",
+			inStock: "Charges in stock value",
+			totalHint: "Parts {parts} + charges {charges}",
+			receiveLanded:
+				"Stock enters at the landed unit cost: each line's price plus its share of the shipping and charges.",
 		},
 	},
 	import: {
@@ -1491,6 +1517,10 @@ export const en = {
 			parent_unit_id: "in unit",
 			parent_level: "in level",
 			parent_position: "in position",
+			shipping_cents: "shipping",
+			duties_cents: "customs and duties",
+			discount_cents: "discount",
+			charges_spread: "landed cost",
 		},
 		// Summaries stored with each change set, in the author's language (D110). Never put an amount here.
 		summaries: {
@@ -1538,6 +1568,7 @@ export const en = {
 			draftPos: "Create {n} draft PO(s) from shortages",
 			poCreate: "Create PO {number}",
 			poEdit: "Edit PO {number}",
+			poCharges: "Edit the charges of PO {number}",
 			poLineAdd: "Add {ref} to PO {number}",
 			poLineEdit: "Edit {ref} on PO {number}",
 			poLineDelete: "Remove {ref} from PO {number}",
