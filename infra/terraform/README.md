@@ -8,7 +8,7 @@ Creates the Cloudflare resources a Kitting installation needs and outputs the se
 
 ```hcl
 module "kitting" {
-  source = "github.com/alc6/kitting//infra/terraform?ref=v0.4.0"
+  source = "github.com/alc6/kitting//infra/terraform?ref=v0.5.0"
 
   account_id            = var.account_id
   hostname              = "kitting.yourco.example"
