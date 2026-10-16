@@ -3,6 +3,7 @@ import { computeShortages } from "../src/domain/purchasing";
 import { revertChangeSet } from "../src/domain/revert";
 import {
 	assemblyId,
+	changeSql,
 	insertPart,
 	insertSupplier,
 	loadDemo,
@@ -13,6 +14,7 @@ import {
 	request,
 	rows,
 	setRole,
+	stmt,
 	TESTER,
 	testDb,
 } from "./helpers";
@@ -163,6 +165,21 @@ describe("purchase orders", () => {
 		const csv = await (await request(`/purchasing/po/${id}/export.csv`)).text();
 		expect(csv).toContain("supplier_ref,ref,name,qty,unit,unit_price,line_total");
 		expect(csv).toContain("DF60-OP,DIFF-OPAL,Opal diffuser 60mm,100,pcs,0.80,80.00");
+	});
+
+	it("refuses archived, kit and unknown parts on a draft's lines", async () => {
+		const id = await draftPo([]);
+		await changeSql("Archive DIFF-OPAL", stmt("UPDATE parts SET archived = 1 WHERE ref = 'DIFF-OPAL'"));
+		for (const [part, message] of [
+			["DIFF-OPAL", "This part is archived."],
+			["HEAD-KIT-CW", "kit parts are never stocked."],
+			["NOPE-1", "Unknown part reference"],
+		] as const) {
+			const res = await postForm(`/purchasing/po/${id}/lines`, { part, qty: "1", price: "" });
+			expect(res.status, part).toBe(422);
+			expect(await res.text(), part).toContain(message);
+		}
+		expect(await rows("SELECT id FROM po_lines WHERE po_id = ?", id)).toEqual([]);
 	});
 
 	it("receives partially, then fully, posting receipt moves at the PO price", async () => {

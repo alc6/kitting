@@ -114,6 +114,14 @@ worked conversations in [references/examples.md](references/examples.md).
 7. Goods arrive: ask what was received, for serial-tracked parts which serials, confirm, then `receive_po`
    (partial deliveries are fine; `close_po` if the rest will never come, `cancel_po` if nothing came).
 
+### Order parts that are not short
+Spares, a part to try, or stock for work the shortages do not see yet. `create_draft_pos` only drafts what open builds
+need, so use `create_po`.
+1. `search_parts` each part; `get_part` shows the suppliers' offers (price, MOQ, pack size, lead time).
+2. Confirm the supplier, the quantities (say when one is below the offer's MOQ or off its pack size), the prices and any
+   shipping, then `create_po`: one draft per supplier, `options` on parts that have some.
+3. Review with `get_purchase_order`, adjust with `update_draft_po`, and `mark_po_sent` once the user has sent it.
+
 ### Plan builds in a colour (parts with options)
 "Plan 12 black mini lamps" where the product or its components have options.
 1. `get_part` on the product shows its `options` (values and `default`) and `stock_by_options`; `get_assembly` shows,

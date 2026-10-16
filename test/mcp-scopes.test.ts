@@ -50,6 +50,7 @@ const TOOLS_BY_SCOPE: Record<string, string[]> = {
 		"cancel_po",
 		"close_po",
 		"create_draft_pos",
+		"create_po",
 		"mark_po_sent",
 		"receive_po",
 		"record_po_shipment",

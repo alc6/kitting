@@ -1428,7 +1428,7 @@ in values that are counted apart in stock, while it stays one part in the catalo
 
 An order of sheet-metal chassis and doors cost nearly as much to ship as the parts themselves, less a coupon. POs only
 held lines, so the shipping went into the notes and the parts entered stock at about half what they cost to get to the
-workshop. D201–D205 put the charges on the PO and, by default, into the receipts.
+workshop. D201–D205 put the charges on the PO and, by default, into the receipts; D206 lets an assistant create a PO.
 
 - **D201. Charges are three amounts on the PO.** `purchase_orders` gains `shipping_cents`, `duties_cents` (customs and
   duties) and `discount_cents` (a coupon or discount, stored positive and subtracted), all `NOT NULL DEFAULT 0`, and
@@ -1488,3 +1488,13 @@ workshop. D201–D205 put the charges on the PO and, by default, into the receip
   `landed_unit_cost` when charges are spread; `receive_po` returns each receipt's `unit_cost`. All amounts are
   redacted for users who may not see costs. The PO CSV stays the supplier's order sheet (lines at their price), and
   backups carry the new columns as any other.
+- **D206. `create_po`: a draft PO for any parts over MCP.** An assistant could draft only from the shortages
+  (`create_draft_pos`) and edit existing drafts, so it could not order spares or parts the open builds do not need yet.
+  `create_po` (`purchasing:write`, `purchasing.order` as the New PO page; not destructive, not idempotent) creates a
+  draft for a supplier named as in the app, with optional lines, expected date, notes and charges (D201), in one change
+  set ("Create PO PO-0007"): `newPoStatements` inserts the header and its lines, which find it by its number, and the
+  number is retried once on a clash, as `create_draft_pos` does. A line is checked as the PO page checks a new line, now
+  in `src/domain` (`poLinePartIssue`): a known, stocked (buy or make), not archived part, a value of every option, each
+  part and values once, priced at the supplier's offer, else the standard cost, unless a price is given. Refusing
+  archived parts is new on the page and in `update_draft_po` too: the page's part list already left them out, and
+  ordering a part that is being retired is a mistake to stop, not a choice to offer.

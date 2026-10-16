@@ -5,6 +5,7 @@ import {
 	builds,
 	CHARGE_SPREADS,
 	machines,
+	type PartKind,
 	type PoShipment,
 	type PoStatus,
 	partSuppliers,
@@ -36,7 +37,7 @@ import { type PoCharges, spreadCharges } from "./landed-cost";
 import { NO_TERMS, type OfferTerms, offersByPart, poUnitPrice } from "./offers";
 import { idsOf, keyLabel, keyValues, type OptionKey, splitStockKey, stockKey } from "./option-keys";
 import { loadOptions } from "./options";
-import { moveValues, onHandByKey } from "./stock";
+import { isStocked, moveValues, onHandByKey } from "./stock";
 
 /** POs whose remaining quantities count as "on order". Drafts count too, so drafting twice never doubles. */
 export const OPEN_PO_STATUSES: PoStatus[] = ["draft", "sent", "partial"];
@@ -440,6 +441,9 @@ export const poChargesInput = z.object({
 
 export type ChargeValues = PoCharges;
 
+/** The charges of a new PO: none, spread by value once some are set (D202). */
+export const NO_CHARGES: ChargeValues = { shippingCents: 0, dutiesCents: 0, discountCents: 0, chargesSpread: "value" };
+
 export function chargeValues(d: z.output<typeof poChargesInput>): ChargeValues {
 	return {
 		shippingCents: d.shipping ?? 0,
@@ -463,6 +467,20 @@ export function chargeFormValues(c: ChargeValues): Record<string, string> {
 /** Rules shared by the charges form and update_draft_po (D201): a discount cannot exceed the rest of the order. */
 export function chargeRuleErrors(c: ChargeValues, partsCents: number): FieldErrors {
 	return c.discountCents > partsCents + c.shippingCents + c.dutiesCents ? { discount: "discount_too_large" } : {};
+}
+
+/**
+ * Why a part cannot go on a new PO line, shared by the line form, update_draft_po and create_po (D206): unknown, not
+ * stocked (kits and fees), or archived. Null when it can.
+ */
+export function poLinePartIssue(
+	part: { kind: PartKind; archived: boolean } | undefined,
+	ref: string,
+): { key: string; vars: Record<string, string> } | null {
+	if (!part) return { key: "unknown_part", vars: { ref } };
+	if (!isStocked(part.kind)) return { key: "not_stocked", vars: { kind: part.kind } };
+	if (part.archived) return { key: "archived_part", vars: {} };
+	return null;
 }
 
 export const poLineInput = z.object({
@@ -572,7 +590,7 @@ export function draftPoStatements(
 
 export function createPoStatement(
 	db: Db,
-	po: { number: string; supplierId: number; expectedAt: string | null; notes: string },
+	po: { number: string; supplierId: number; expectedAt: string | null; notes: string } & Partial<ChargeValues>,
 	user: string,
 	now: string,
 ) {
@@ -602,9 +620,28 @@ export function updatePoChargesStatement(db: Db, poId: number, c: ChargeValues, 
 		.where(and(eq(purchaseOrders.id, poId), inArray(purchaseOrders.status, CHARGES_PO_STATUSES)));
 }
 
+/** A draft PO with its charges and lines, as create_po builds it (D206). */
+export type NewPo = {
+	number: string;
+	supplierId: number;
+	expectedAt: string | null;
+	notes: string;
+	charges: ChargeValues;
+	lines: { partId: number; optionValues: OptionKey; qtyMilli: number; unitPriceCents: number }[];
+};
+
+/** Statements creating a draft PO and its lines in one batch (the lines find their PO by its number). */
+export function newPoStatements(db: Db, po: NewPo, user: string, now: string): Statement[] {
+	const { charges, lines, ...header } = po;
+	return [
+		createPoStatement(db, { ...header, ...charges }, user, now),
+		...lines.map((l) => addPoLineStatement(db, poIdByNumber(po.number), l, user, now)),
+	];
+}
+
 export function addPoLineStatement(
 	db: Db,
-	poId: number,
+	poId: number | SQL,
 	line: { partId: number; qtyMilli: number; unitPriceCents: number; optionValues?: OptionKey },
 	user: string,
 	now: string,

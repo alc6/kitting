@@ -9,6 +9,7 @@ import { revertChangeSet } from "../src/domain/revert";
 import { TOOL_BY_NAME, TOOLS } from "../src/mcp/tools";
 import {
 	assemblyId,
+	changeSql,
 	insertPart,
 	insertSupplier,
 	loadDemo,
@@ -250,6 +251,12 @@ const CASES: WriteCase[] = [
 				{ ref: "PAD-FELT", qty: "500" },
 			],
 		}),
+	},
+	{
+		tool: "create_po",
+		scope: "purchasing:write",
+		min: "planner",
+		args: () => ({ supplier: "Bolt & Nut Depot", shipping: "4.90", lines: [{ ref: "PAD-FELT", qty: "200" }] }),
 	},
 	{ tool: "mark_po_sent", scope: "purchasing:write", min: "planner", args: (s) => ({ number: s.draftPo }) },
 	{
@@ -1129,6 +1136,95 @@ describe("purchasing tools", () => {
 		expect(date.data.purchase_order).toMatchObject({ status: "sent", expected_at: "2026-12-24" });
 	});
 
+	it("creates a draft PO for a supplier with lines, date, notes and charges, as the New PO page", async () => {
+		const s = await seed();
+		const token = await connect(["purchasing:read", "purchasing:write"]);
+		const r = await write(token, "create_po", {
+			supplier: "bolt & nut depot",
+			expected_at: "2026-11-20",
+			notes: "Spare felt pads",
+			shipping: "4.90",
+			lines: [
+				// Offered by this supplier without a price: the standard cost.
+				{ ref: "pad-felt", qty: "200" },
+				// Not offered by it: priced as given.
+				{ ref: "BOX-LAMP", qty: "5", price: "1.30" },
+			],
+		});
+		expect(r.data.purchase_order).toMatchObject({
+			number: "PO-0003",
+			status: "draft",
+			supplier: "Bolt & Nut Depot",
+			expected_at: "2026-11-20",
+			notes: "Spare felt pads",
+		});
+		expect(r.data.lines).toEqual([
+			expect.objectContaining({ ref: "PAD-FELT", qty: "200", unit_price: "0.05", landed_unit_cost: "0.06" }),
+			expect.objectContaining({ ref: "BOX-LAMP", qty: "5", unit_price: "1.30", landed_unit_cost: "1.69" }),
+		]);
+		expect(r.data).toMatchObject({ lines_total: "16.50", shipping: "4.90", charges_spread: "value", total: "21.40" });
+		expect(await one<{ summary: string }>("SELECT summary FROM change_sets ORDER BY id DESC LIMIT 1")).toEqual({
+			summary: "Create PO PO-0003",
+		});
+		// The PO is on order, and a draft like the others: its lines can change, then it is sent.
+		const shortages = await callTool(token, "get_shortages", {});
+		expect(shortages.isError).toBe(false);
+		await write(token, "update_draft_po", { number: "PO-0003", lines: [{ ref: "PAD-FELT", qty: "500" }] });
+		expect((await write(token, "mark_po_sent", { number: "PO-0003" })).data.purchase_order).toMatchObject({
+			status: "sent",
+		});
+		// A header alone, as the page creates it.
+		const empty = await write(token, "create_po", { supplier: "Lumen Parts Co" });
+		expect(empty.data).toMatchObject({ lines: [], total: "0.00" });
+		expect(empty.data.purchase_order).toMatchObject({ number: "PO-0004", status: "draft", expected_at: null });
+		expect(s.draftPo).toBe("PO-0001");
+	});
+
+	it("refuses a PO for an unknown supplier and lines the PO page refuses, changing nothing", async () => {
+		const s = await seed();
+		const token = await connect(["purchasing:write"]);
+		await changeSql("Archive PAD-FELT", stmt("UPDATE parts SET archived = 1 WHERE ref = 'PAD-FELT'"));
+		const pos = async () => (await one<{ n: number }>("SELECT count(*) AS n FROM purchase_orders")).n;
+		const before = await pos();
+		const unknown = await callTool(token, "create_po", {
+			supplier: "Nobody Ltd",
+			lines: [{ ref: "BOX-LAMP", qty: "1" }],
+		});
+		expect(unknown.text).toContain('No supplier named "Nobody Ltd"');
+		const bad = await callTool(token, "create_po", {
+			supplier: "Bolt & Nut Depot",
+			lines: [
+				{ ref: "PAD-FELT", qty: "10" },
+				{ ref: "HEAD-KIT-CW", qty: "1" },
+				{ ref: "NOPE-1", qty: "1" },
+				{ ref: "BOX-LAMP", qty: "0" },
+				{ ref: "BOX-LAMP", qty: "1" },
+				{ ref: "box-lamp", qty: "2" },
+			],
+		});
+		expect(bad.text).toContain("Refused, nothing was changed.");
+		expect(bad.text).toContain("line 1 (PAD-FELT): This part is archived.");
+		expect(bad.text).toContain("line 2 (HEAD-KIT-CW): kit parts are never stocked.");
+		expect(bad.text).toContain("line 3 (NOPE-1): Unknown part reference");
+		expect(bad.text).toContain("line 4 (BOX-LAMP) qty: Must be more than zero.");
+		expect(bad.text).toContain("line 6 (box-lamp): listed twice.");
+		const tooMuch = await callTool(token, "create_po", {
+			supplier: "Bolt & Nut Depot",
+			discount: "1.21",
+			lines: [{ ref: "BOX-LAMP", qty: "1" }],
+		});
+		expect(tooMuch.text).toContain("discount: The discount is larger than the order.");
+		const badDate = await callTool(token, "create_po", { supplier: "Bolt & Nut Depot", expected_at: "2026-13-01" });
+		expect(badDate.isError).toBe(true);
+		expect(await pos()).toBe(before);
+		// The same checks on a draft's new lines.
+		const archived = await callTool(token, "update_draft_po", {
+			number: s.draftPo,
+			lines: [{ ref: "PAD-FELT", qty: "1" }],
+		});
+		expect(archived.text).toContain("line 1 (PAD-FELT): This part is archived.");
+	});
+
 	it("sets the charges of open POs, returns each line's landed cost and receives at it", async () => {
 		const s = await seed();
 		const token = await connect(["purchasing:read", "purchasing:write"]);
@@ -1407,6 +1503,35 @@ describe("tools with part options", () => {
 			),
 		);
 	}
+
+	it("creates a PO of parts in some values, refusing a line without a value of every option", async () => {
+		await nightLight();
+		const token = await connect(["purchasing:write"]);
+		const missing = await callTool(token, "create_po", {
+			supplier: "Cover Works",
+			lines: [{ ref: "NL-COVER", qty: "5" }],
+		});
+		expect(missing.text).toContain("line 1 (NL-COVER) options: Choose a value for Colour.");
+		const unknown = await callTool(token, "create_po", {
+			supplier: "Cover Works",
+			lines: [{ ref: "NL-COVER", options: { Colour: "red" }, qty: "5" }],
+		});
+		expect(unknown.text).toContain("line 1 (NL-COVER) options:");
+		expect(unknown.text).toContain("white, black");
+		expect(await one("SELECT count(*) AS n FROM purchase_orders")).toEqual({ n: 0 });
+		const r = await write(token, "create_po", {
+			supplier: "Cover Works",
+			lines: [
+				{ ref: "NL-COVER", options: { Colour: "black" }, qty: "5" },
+				{ ref: "NL-COVER", options: { colour: "White" }, qty: "10" },
+			],
+		});
+		expect(r.data.lines).toEqual([
+			expect.objectContaining({ ref: "NL-COVER", options: { Colour: "black" }, qty: "5", unit_price: "1.50" }),
+			expect.objectContaining({ ref: "NL-COVER", options: { Colour: "white" }, qty: "10", unit_price: "1.50" }),
+		]);
+		expect(await stockIn("NL-COVER")).toBe(0);
+	});
 
 	it("adjusts stock in a value, refusing a missing, unknown or misplaced option with the values that exist", async () => {
 		const n = await nightLight();

@@ -1,6 +1,6 @@
 # Evaluations (not run in CI)
 
-Five prompts that check the skill leads Claude to the right tool sequence on the fictional demo dataset
+Six prompts that check the skill leads Claude to the right tool sequence on the fictional demo dataset
 (`examples/full/`). The case files use the layout of [`claude plugin eval`](https://code.claude.com/docs/en/plugin-evals) (one
 directory per case with a `prompt.md` and `graders/`), but nobody runs them in CI: they need a Kitting deployment
 loaded with the demo data and every scope (a throwaway one, the cases write), reached through OAuth.
@@ -32,6 +32,7 @@ build with a serial first when a case needs history (case 2 assumes `B-0007` mad
 | `trace-faulty-led` | The LED in lamp L-0042 is faulty: which other lamps used the same batch? | `list_builds` (query `L-0042`) → `get_build` (as-built: LED serial) → `list_moves` (receipt of that serial, then the same part's receipts) → `list_builds` per neighbouring serial | any write (`adjust_stock`...); claiming a supplier lot Kitting does not record |
 | `add-felt-pads` | Add 2 felt pads to the base, safely (do not activate) | `search_parts` → `get_part` (where-used) → `get_assembly` → `set_assembly_lines` (complete list, `PAD-FELT` 6) → `get_assembly` with the new `revision` | `activate_assembly`, editing the active revision, sending only the changed line |
 | `record-print-run` | We printed 2 plates of cable clips: record it, with the printer time and filament | `search_parts` (find `LAMP-CLIP`) → `get_assembly` (batch 24, machine time) → `record_build` (`batches` 2) | `plan_build` + `complete_build` instead of one step, an undo link (ledger write) |
+| `order-spare-felt-pads` | Order 1000 felt pads from Bolt & Nut Depot as spares, with 6.50 of shipping (go-ahead given for the draft) | `search_parts` (find `PAD-FELT`) → `get_part` (the offer: MOQ and pack 500) → `create_po` (`PAD-FELT` 1000, `shipping` 6.50) | `create_draft_pos` (nothing is short), `mark_po_sent` |
 | `plan-black-mini-lamps` | Plan 12 black mini lamps and tell me what to order (go-ahead given for the build and drafts) | `search_parts` or `get_part` (the `Colour` option) → `explode_assembly` (qty 12, `options` black, `use_stock`) → `plan_build` (`options` black) → `get_shortages` → `create_draft_pos` | `mark_po_sent`, planning without `options`, counting the white stock for black lamps |
 
 In a real conversation each write is confirmed first; the cases give the go-ahead in the prompt so one turn can

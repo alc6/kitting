@@ -134,3 +134,18 @@ reconnecting the app with the scope ticked if the role allows it.
 3. The goods arrive: `receive_po` as usual; each `received` line gives the `unit_cost` it entered stock at. Charges
    entered after a delivery only reach what is received afterwards (`charges_in_stock` shows how much went in), so
    record the freight before receiving when it is known.
+
+## 8. Order spares that are not short
+
+**User:** Order 1000 felt pads from Bolt & Nut Depot as spares, with 6.50 of shipping.
+
+1. `search_parts({ "query": "felt" })` finds `PAD-FELT`. `get_part({ "ref": "PAD-FELT" })`: offered by Bolt & Nut Depot
+   (their reference `FP20`, MOQ 500, pack of 500, 7 days), no offer price, standard cost 0.05. Nothing is short, so
+   `create_draft_pos` would not order it.
+
+   > **Claude:** I would create a draft PO to Bolt & Nut Depot for 1000 felt pads (`FP20`) at 0.05, 50.00, plus 6.50
+   > of shipping (56.50). Shall I?
+
+2. After a yes: `create_po({ "supplier": "Bolt & Nut Depot", "shipping": "6.50", "lines": [{ "ref": "PAD-FELT", "qty": "1000" }] })`
+   returns the new draft's `number`, its lines with their `landed_unit_cost`, and the undo link. Claude says nothing
+   was sent and offers `mark_po_sent` once the user has sent the order.

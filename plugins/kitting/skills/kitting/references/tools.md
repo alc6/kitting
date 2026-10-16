@@ -313,6 +313,13 @@ Turns the current shortages into draft POs, one per supplier, each line rounded 
 - **Returns:** the write envelope and `purchase_orders[]` (each as `get_purchase_order` returns it: `lines`, with their `options`, the charges and `total`), or "Nothing to order."
 - **Example:** `create_draft_pos({ "suppliers": ["Bolt & Nut Depot"] })`
 
+### `create_po`
+Creates a draft PO for a supplier, as the New PO page does, to order parts whether or not they are short (`create_draft_pos` only drafts what the shortages need). Kits, fees and archived parts are refused. The draft is not sent: review it, adjust it with `update_draft_po`, and `mark_po_sent` once the user has sent it.
+- **Scope:** `purchasing:write` · **Permission:** `purchasing.order` (planner)
+- **Inputs:** `supplier` (its name, case-insensitive), `expected_at`, `notes`, `shipping`, `duties`, `discount`, `charges_spread` (as for `update_draft_po`), `lines[]` of `ref`, `options` (a value of every option of the part), `qty` (more than zero), `price` (left out: this supplier's offer price, else the standard cost). Each part and values once.
+- **Returns:** the write envelope, `purchase_order` (with its new `number`), `lines` (with their `options` and `landed_unit_cost`), `lines_total`, the charges, `charges_spread`, `total`, `shipments`.
+- **Example:** `create_po({ "supplier": "Bolt & Nut Depot", "shipping": "6.50", "lines": [{ "ref": "PAD-FELT", "qty": "1000" }] })`
+
 ### `update_draft_po`
 Edits a PO: expected date, notes and charges (any open PO: draft, sent or partly received) and the lines of a draft. A line sets the quantity of a part: existing is changed, a new part is added, `"0"` removes it. Lines of a sent PO cannot change. Charges spread over the lines give each line a landed unit cost (price + its share), which receipts enter stock at; a change reaches only what is received afterwards, so set them before `receive_po`.
 - **Scope:** `purchasing:write` · **Permission:** `purchasing.order` (planner)

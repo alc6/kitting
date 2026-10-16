@@ -37,6 +37,7 @@ import {
 	poInput,
 	poLanded,
 	poLineInput,
+	poLinePartIssue,
 	RECEIVABLE_PO_STATUSES,
 	receiptStatements,
 	receiveQtyField,
@@ -1804,12 +1805,10 @@ purchasingRoutes.post("/po/:id/lines", requirePermission("purchasing.order"), as
 	let part: typeof parts.$inferSelect | undefined;
 	if (v.ok) {
 		part = (await db.select().from(parts).where(eq(parts.ref, v.data.part)).limit(1))[0];
-		if (!part) {
-			errors.part = "unknown_part";
-			vars.ref = v.data.part;
-		} else if (part.kind !== "buy" && part.kind !== "make") {
-			errors.part = "not_stocked";
-			vars.kind = part.kind;
+		const issue = poLinePartIssue(part, v.data.part);
+		if (issue) {
+			errors.part = issue.key;
+			Object.assign(vars, issue.vars);
 		}
 	}
 	// A part with options is ordered in one value of each (D191).

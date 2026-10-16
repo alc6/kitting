@@ -42,7 +42,7 @@ Use the user's words, and map them to Kitting's. The tools and their fields are 
 | supplier | fournisseur | `create_supplier`; offers via `upsert_supplier_offer` |
 | supplier offer | tarif fournisseur, offre | price, MOQ, pack size, lead time of one supplier for one part |
 | preferred supplier | fournisseur préféré | used by shortages and draft POs |
-| purchase order (PO) | commande fournisseur, bon de commande | `PO-0001`; draft, sent, partial, received, cancelled |
+| purchase order (PO) | commande fournisseur, bon de commande | `PO-0001`; draft, sent, partial, received, cancelled; `create_po` (any parts) or `create_draft_pos` (the shortages) |
 | mark as sent | marquer comme envoyée | `mark_po_sent` (the user sends it) |
 | close a PO | solder une commande | `close_po`: remaining quantities will not come |
 | shipping, freight | frais de port, transport | `shipping` on a PO (`update_draft_po`) |
