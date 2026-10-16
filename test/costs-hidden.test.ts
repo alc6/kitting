@@ -221,6 +221,11 @@ function pages(s: Awaited<ReturnType<typeof seed>>): string[] {
 		`/margins/assemblies/${s.clipAssembly}`,
 		"/import/backup.json",
 		`/files/${s.file}/edit`,
+		// Storage locations (D197): quantities only, listed so a future amount is caught.
+		"/locations",
+		"/locations?q=BOX-LAMP",
+		`/locations/parts/${s.box}`,
+		"/stock/count?unit=none",
 	];
 }
 

@@ -87,6 +87,10 @@ function recordHref(table: string, rowId: number, row: Row): string | null {
 			return `/machines/types/${rowId}`;
 		case "machines":
 			return `/machines/${rowId}`;
+		case "storage_units":
+			return `/locations/${rowId}`;
+		case "part_locations":
+			return num(row.part_id) ? `/parts/${row.part_id}` : null;
 		case "files":
 			return num(row.part_id)
 				? `/parts/${row.part_id}#files`
@@ -121,6 +125,10 @@ function FieldValue(props: { table: string; column: string; value: unknown; labe
 		if (column === "size_bytes" && typeof value === "number")
 			return <span class="num">{formatBytes(value, view)}</span>;
 	}
+	if (table === "storage_units") {
+		if (column === "kind") return <span>{(t.locations.kinds as Record<string, string>)[text] ?? text}</span>;
+		if (column === "front") return <span>{(t.locations.fronts as Record<string, string>)[text] ?? text}</span>;
+	}
 	if (column === "kind") return <span>{(t.kinds as Record<string, string>)[text] ?? text}</span>;
 	if (column === "role") return <span>{(t.roles.names as Record<string, string>)[text] ?? text}</span>;
 	if (column === "status") {
@@ -136,7 +144,9 @@ function FieldValue(props: { table: string; column: string; value: unknown; labe
 	return <span class="break-words">{text}</span>;
 }
 
-function fieldLabel(view: Pick<AppView, "t">, column: string): string {
+function fieldLabel(view: Pick<AppView, "t">, table: string, column: string): string {
+	// A unit's code is its bin prefix, not an assembly variant.
+	if (table === "storage_units" && column === "code") return view.t.locations.code.toLowerCase();
 	return (view.t.history.fields as Record<string, string>)[column] ?? column;
 }
 
@@ -168,7 +178,7 @@ function EntryItem(props: { entry: EntryView; labels: Labels }) {
 				<ul class="m-0 flex list-none flex-col gap-0.5 p-0 text-sm">
 					{e.fields.map((f) => (
 						<li class="flex flex-wrap items-baseline gap-x-1.5">
-							<span class="text-muted-foreground">{fieldLabel(view, f.column)}:</span>
+							<span class="text-muted-foreground">{fieldLabel(view, e.table, f.column)}:</span>
 							{e.op === "update" ? (
 								<>
 									<FieldValue table={e.table} column={f.column} value={f.before} labels={props.labels} />

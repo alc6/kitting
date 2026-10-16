@@ -15,6 +15,7 @@ import { attachRoutes, fileRoutes } from "./routes/files";
 import { historyRoutes } from "./routes/history";
 import { imageRoutes } from "./routes/images";
 import { importRoutes } from "./routes/import";
+import { locationRoutes } from "./routes/locations";
 import { machineRoutes } from "./routes/machines";
 import { marginRoutes } from "./routes/margins";
 import { partOptionRoutes } from "./routes/part-options";
@@ -95,6 +96,7 @@ export function createApp() {
 	app.route("/assemblies", assemblyRoutes);
 	app.route("/stock", stockRoutes);
 	app.route("/purchasing", purchasingRoutes);
+	app.route("/locations", locationRoutes);
 	app.route("/import", importRoutes);
 	app.route("/margins", marginRoutes);
 	app.route("/search", searchRoutes);

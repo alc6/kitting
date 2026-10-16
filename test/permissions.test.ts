@@ -64,7 +64,29 @@ async function seed() {
 		),
 	);
 	const file = returnedId(attached);
-	return { part, supplier, draft, sent, line, lamp, assembly, build, planning, price, file };
+	// An empty storage unit (the delete is allowed) and another one to put a part in.
+	const [emptyUnit, rack] = await changeSql(
+		"Draw the plan",
+		stmt("INSERT INTO storage_units (code, created_by, updated_by) VALUES ('Z', 'u', 'u') RETURNING id"),
+		stmt(
+			"INSERT INTO storage_units (code, col, levels, positions, created_by, updated_by) VALUES ('A', 5, 2, 2, 'u', 'u') RETURNING id",
+		),
+	);
+	return {
+		part,
+		supplier,
+		draft,
+		sent,
+		line,
+		lamp,
+		assembly,
+		build,
+		planning,
+		price,
+		file,
+		emptyUnit: returnedId(emptyUnit),
+		rack: returnedId(rack),
+	};
 }
 
 type Ids = Awaited<ReturnType<typeof seed>>;
@@ -104,6 +126,24 @@ const CALLS: Record<Action, (ids: Ids) => Call> = {
 	"builds.complete": (i) => ({ path: `/builds/${i.build}/complete` }),
 	"stock.adjust": () => ({ path: "/stock/adjust", form: { part: "BOX-LAMP", qty: "1", serial: "", note: "found" } }),
 	"stock.count": () => ({ path: "/stock/count", form: { "count:BOX-LAMP": "20" } }),
+	"storage.assign": (i) => ({ path: `/locations/parts/${i.part}`, form: { bin: "A-1-2", note: "" } }),
+	"storage.plan": (i) => ({
+		path: `/locations/${i.rack}`,
+		form: {
+			code: "A",
+			name: "Electronics",
+			kind: "rack",
+			col: "5",
+			row: "0",
+			width: "4",
+			depth: "1",
+			front: "south",
+			levels: "3",
+			positions: "2",
+			notes: "",
+		},
+	}),
+	"storage.delete": (i) => ({ path: `/locations/${i.emptyUnit}/delete` }),
 	"purchasing.receive": (i) => ({ path: `/purchasing/po/${i.sent}/receive`, form: { [`recv_${i.line}`]: "1" } }),
 	"purchasing.order": (i) => ({ path: `/purchasing/po/${i.draft}/send` }),
 	"purchasing.delete": (i) => ({ path: `/purchasing/po/${i.draft}/delete` }),

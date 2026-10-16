@@ -46,6 +46,8 @@ export const TABLE_ACTIONS: Record<string, Action> = {
 	part_option_values: "parts.edit",
 	build_option_choices: "builds.plan",
 	files: "files.edit",
+	storage_units: "storage.plan",
+	part_locations: "storage.assign",
 };
 
 /** Price columns whose changes the append-only price history must follow (CLAUDE.md, "Data rules"). */

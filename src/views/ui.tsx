@@ -1087,6 +1087,70 @@ export function SelectField(props: FieldProps & { options: { value: string; labe
 	);
 }
 
+type Choice = { value: string; label: string; icon?: IconNode; description?: string };
+
+/** A few exclusive choices as a segmented control (shadcn ToggleGroup, outline): radios that work without JavaScript. */
+export function SegmentedField(props: FieldProps & { options: Choice[] }) {
+	const current = props.values[props.name] ?? props.options[0]?.value ?? "";
+	const error = props.errors[props.name];
+	return (
+		<div data-slot="field" data-invalid={error ? "true" : undefined} class="flex min-w-0 flex-col gap-2">
+			<span id={`l-${props.name}`} class="text-sm leading-snug font-medium">
+				{props.label}
+			</span>
+			<div
+				role="radiogroup"
+				aria-labelledby={`l-${props.name}`}
+				data-slot="toggle-group"
+				class="inline-flex w-fit max-w-full flex-wrap rounded-md border bg-background shadow-xs dark:border-input dark:bg-input/30"
+			>
+				{props.options.map((o) => (
+					<label
+						data-slot="toggle-group-item"
+						class="inline-flex min-h-(--control-h) cursor-pointer items-center justify-center gap-1.5 border-r px-3 py-1 text-sm font-medium whitespace-nowrap transition-colors select-none first:rounded-l-md last:rounded-r-md last:border-r-0 not-has-checked:hover:bg-muted has-checked:bg-primary has-checked:text-primary-foreground has-focus-visible:z-10 has-focus-visible:ring-[3px] has-focus-visible:ring-ring/50 dark:border-input [&_svg]:size-4"
+					>
+						<input type="radio" class="sr-only" name={props.name} value={o.value} checked={current === o.value} />
+						{o.icon ? <Icon icon={o.icon} /> : null}
+						<span>{o.label}</span>
+					</label>
+				))}
+			</div>
+			{props.hint ? <FieldDescription>{props.hint}</FieldDescription> : null}
+			<FieldError>{error}</FieldError>
+		</div>
+	);
+}
+
+/** Exclusive choices that need a word of explanation, as cards (shadcn RadioGroup "choice card"). */
+export function ChoiceCards(props: FieldProps & { options: Choice[]; class?: string }) {
+	const current = props.values[props.name] ?? props.options[0]?.value ?? "";
+	const error = props.errors[props.name];
+	return (
+		<div data-slot="field" data-invalid={error ? "true" : undefined} class="flex min-w-0 flex-col gap-2">
+			<span id={`l-${props.name}`} class="text-sm leading-snug font-medium">
+				{props.label}
+			</span>
+			<div
+				role="radiogroup"
+				aria-labelledby={`l-${props.name}`}
+				class={cn("grid gap-2 sm:grid-cols-2 lg:grid-cols-3", props.class)}
+			>
+				{props.options.map((o) => (
+					<label class="flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors hover:bg-muted/50 has-checked:border-primary has-checked:bg-primary/5 has-focus-visible:ring-[3px] has-focus-visible:ring-ring/50 dark:has-checked:bg-primary/10">
+						<input type="radio" class="sr-only" name={props.name} value={o.value} checked={current === o.value} />
+						{o.icon ? <Icon icon={o.icon} class="mt-0.5 size-4 shrink-0 text-muted-foreground" /> : null}
+						<span class="flex min-w-0 flex-col gap-0.5">
+							<span class="text-sm font-medium">{o.label}</span>
+							{o.description ? <span class="text-xs text-muted-foreground">{o.description}</span> : null}
+						</span>
+					</label>
+				))}
+			</div>
+			<FieldError>{error}</FieldError>
+		</div>
+	);
+}
+
 export function CheckboxField(props: FieldProps) {
 	const checked = ["on", "1", "true", "yes"].includes(props.values[props.name] ?? "");
 	const error = props.errors[props.name];

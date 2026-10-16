@@ -66,6 +66,17 @@ export type FileKind = (typeof FILE_KINDS)[number];
 export const FILE_FORMATS = ["step", "3mf", "stl", "pdf", "dxf", "jpeg", "png", "webp"] as const;
 export type FileFormat = (typeof FILE_FORMATS)[number];
 
+/**
+ * What a storage unit of the workshop plan is (D194). Racks and drawer cabinets have bins; a floor area is one place;
+ * rooms (walls), doors and landmarks (a bench, goods-in) are drawn for orientation and hold no parts.
+ */
+export const STORAGE_KINDS = ["rack", "cabinet", "floor", "room", "door", "landmark"] as const;
+export type StorageKind = (typeof STORAGE_KINDS)[number];
+
+/** The side of a storage unit people pick from, on the plan (north is the top of the plan). */
+export const STORAGE_FRONTS = ["south", "north", "west", "east"] as const;
+export type StorageFront = (typeof STORAGE_FRONTS)[number];
+
 /** What a signed-in user may do, from least to most. Each role can do everything the previous one can. */
 export const ROLES = ["viewer", "operator", "planner", "admin"] as const;
 export type Role = (typeof ROLES)[number];
@@ -560,6 +571,74 @@ export const priceHistory = sqliteTable(
 	],
 );
 
+// A storage unit of the workshop plan (D194): a rack, a drawer cabinet or a floor area that holds parts, or a room, a
+// door or a landmark drawn for orientation. On the plan it is a rectangle of the grid (half-metre squares, `col`/`row`
+// from the top left) with a front, the side people pick from. Its bins are its levels × positions: bin "A-2-3" is unit
+// A, level 2 counted from the floor, position 3 counted from the left when facing the front. Bins are not rows: they
+// follow from the unit's size. A unit can also stand in a bin of another one instead of on the plan (D199): a drawer
+// cabinet on shelf A-3-3 has `parent_unit_id` A, level 3, position 3, and its own bins.
+export const storageUnits = sqliteTable(
+	"storage_units",
+	{
+		id: integer("id").primaryKey({ autoIncrement: true }),
+		// Short and upper-case ("A", "B2"), unique: the first part of every bin code.
+		code: text("code").notNull(),
+		name: text("name").notNull().default(""),
+		kind: text("kind", { enum: STORAGE_KINDS }).notNull().default("rack"),
+		col: integer("col").notNull().default(0),
+		row: integer("row").notNull().default(0),
+		width: integer("width").notNull().default(2),
+		depth: integer("depth").notNull().default(1),
+		front: text("front", { enum: STORAGE_FRONTS }).notNull().default("south"),
+		levels: integer("levels").notNull().default(1),
+		positions: integer("positions").notNull().default(1),
+		notes: text("notes").notNull().default(""),
+		...audit(),
+		// The bin this unit stands in, when it is not on the plan (D199). NULL level and position: anywhere in the parent.
+		parentUnitId: integer("parent_unit_id").references((): AnySQLiteColumn => storageUnits.id),
+		parentLevel: integer("parent_level"),
+		parentPosition: integer("parent_position"),
+	},
+	(t) => [
+		uniqueIndex("storage_units_code_unique").on(t.code),
+		index("storage_units_parent_idx").on(t.parentUnitId),
+		check("storage_units_kind_check", inList("kind", STORAGE_KINDS)),
+		check("storage_units_front_check", inList("front", STORAGE_FRONTS)),
+		check(
+			"storage_units_size_check",
+			sql`${t.col} >= 0 AND ${t.row} >= 0 AND ${t.width} >= 1 AND ${t.depth} >= 1 AND ${t.levels} >= 1 AND ${t.positions} >= 1`,
+		),
+	],
+);
+
+// Where a part is kept (D195): its home location, one per part. Level and position are NULL when the part is anywhere in
+// the unit (always for a floor area). A hint for people, not a ledger: stock is still counted per part, not per bin.
+export const partLocations = sqliteTable(
+	"part_locations",
+	{
+		id: integer("id").primaryKey({ autoIncrement: true }),
+		partId: integer("part_id")
+			.notNull()
+			.references(() => parts.id, { onDelete: "cascade" }),
+		unitId: integer("unit_id")
+			.notNull()
+			.references(() => storageUnits.id),
+		level: integer("level"),
+		position: integer("position"),
+		// "Antistatic bags", "reserve carton on the right pallet".
+		note: text("note").notNull().default(""),
+		...audit(),
+	},
+	(t) => [
+		uniqueIndex("part_locations_part_unique").on(t.partId),
+		index("part_locations_unit_idx").on(t.unitId, t.level, t.position),
+		check(
+			"part_locations_bin_check",
+			sql`(${t.level} IS NULL AND ${t.position} IS NULL) OR (${t.level} >= 1 AND (${t.position} IS NULL OR ${t.position} >= 1))`,
+		),
+	],
+);
+
 // Roles given by admins. Cloudflare Access decides who can sign in; this table decides what they may do.
 // An email without a row is a viewer, and ADMIN_EMAILS are always admins whatever their row says.
 export const users = sqliteTable(
@@ -676,6 +755,8 @@ export const HISTORY_TABLES: SQLiteTable[] = [
 	partOptions,
 	partOptionValues,
 	buildOptionChoices,
+	storageUnits,
+	partLocations,
 ];
 
 /**
@@ -716,3 +797,5 @@ export type FileRow = typeof files.$inferSelect;
 export type PartOption = typeof partOptions.$inferSelect;
 export type PartOptionValue = typeof partOptionValues.$inferSelect;
 export type BuildOptionChoice = typeof buildOptionChoices.$inferSelect;
+export type StorageUnit = typeof storageUnits.$inferSelect;
+export type PartLocation = typeof partLocations.$inferSelect;

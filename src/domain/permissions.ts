@@ -35,6 +35,11 @@ export const PERMISSIONS = {
 	"stock.adjust": { min: "operator" },
 	"stock.count": { min: "operator" },
 	"purchasing.receive": { min: "operator" },
+	// Storage locations (D196): the shop floor puts parts away and moves them, so operators set a part's location;
+	// drawing the workshop plan is office work; removing a unit from the plan is a delete.
+	"storage.assign": { min: "operator" },
+	"storage.plan": { min: "planner" },
+	"storage.delete": { min: "admin" },
 	// Purchasing (office)
 	"purchasing.order": { min: "planner" },
 	"purchasing.delete": { min: "admin" },
@@ -72,6 +77,7 @@ export const PERMISSION_GROUPS = [
 	{ key: "costs", actions: ["costs.view", "prices.edit", "prices.delete"] },
 	{ key: "builds", actions: ["builds.plan", "builds.complete"] },
 	{ key: "stock", actions: ["stock.adjust", "stock.count"] },
+	{ key: "storage", actions: ["storage.assign", "storage.plan", "storage.delete"] },
 	{ key: "purchasing", actions: ["purchasing.order", "purchasing.receive", "purchasing.delete"] },
 	{ key: "data", actions: ["import.preview", "import.commit", "backup.download", "backup.restore"] },
 	{ key: "history", actions: ["history.revert"] },

@@ -148,6 +148,166 @@
 		}
 	}
 
+	// The value of a form's field by name: a text input, a select, or a group of radios (RadioNodeList).
+	const fieldValue = (form, name) => {
+		const el = form.elements.namedItem(name);
+		return el && "value" in el ? String(el.value) : "";
+	};
+
+	// <div data-show-if="kind:rack,cabinet|placement:plan">: shown only while one of its conditions holds (a field of its
+	// form has one of the listed values). Without JavaScript everything stays visible and the server ignores what does
+	// not apply.
+	for (const form of document.querySelectorAll("form")) {
+		const parts = [...form.querySelectorAll("[data-show-if]")];
+		if (parts.length === 0) continue;
+		const update = () => {
+			for (const el of parts) {
+				const show = el.dataset.showIf.split("|").some((cond) => {
+					const [name, values] = cond.split(":");
+					return values.split(",").includes(fieldValue(form, name));
+				});
+				el.hidden = !show;
+			}
+		};
+		form.addEventListener("change", update);
+		update();
+	}
+
+	// Plan editor (<svg data-plan-editor data-form="…">, D198): the unit being edited ([data-editing]) follows the form's
+	// fields as they change, and dragging it (or its corner handle) moves (or resizes) it in whole squares and fills the
+	// fields. Without JavaScript the fields alone place the unit.
+	for (const svg of document.querySelectorAll("svg[data-plan-editor]")) {
+		const form = document.getElementById(svg.dataset.form ?? "");
+		const unit = svg.querySelector("[data-editing]");
+		if (!(form instanceof HTMLFormElement) || !(unit instanceof SVGElement)) continue;
+		const sq = Number(svg.dataset.square) || 24;
+		const shape = unit.querySelector("[data-shape]");
+		const front = unit.querySelector("[data-front]");
+		const code = unit.querySelector("[data-code]");
+		const size = unit.querySelector("[data-size]");
+		const handle = unit.querySelector("[data-handle]");
+		const read = (name, min) => {
+			const n = Number.parseInt(fieldValue(form, name), 10);
+			return Number.isFinite(n) ? Math.max(min, n) : min;
+		};
+		const write = (name, value) => {
+			const el = form.elements.namedItem(name);
+			if (el instanceof HTMLInputElement) el.value = String(value);
+		};
+		const set = (el, attrs) => {
+			for (const [k, v] of Object.entries(attrs)) el?.setAttribute(k, String(v));
+		};
+		const draw = () => {
+			const cols = read("width", 1);
+			const rows = read("depth", 1);
+			const x = read("col", 0) * sq;
+			const y = read("row", 0) * sq;
+			const w = cols * sq;
+			const h = rows * sq;
+			set(shape, { x, y, width: w, height: h });
+			set(handle, { x: x + w - 7, y: y + h - 7 });
+			set(code, { x: x + w / 2, y: y + h / 2 + 5 });
+			set(size, { x: x + w / 2, y: y - 7 });
+			if (code) code.textContent = fieldValue(form, "code").toUpperCase() || "?";
+			if (size) size.textContent = `${cols / 2} × ${rows / 2} m`;
+			const side = fieldValue(form, "front");
+			const edge =
+				side === "north"
+					? [x, y, x + w, y]
+					: side === "west"
+						? [x, y, x, y + h]
+						: side === "east"
+							? [x + w, y, x + w, y + h]
+							: [x, y + h, x + w, y + h];
+			set(front, { x1: edge[0], y1: edge[1], x2: edge[2], y2: edge[3] });
+			const kind = fieldValue(form, "kind");
+			set(front, { visibility: kind === "rack" || kind === "cabinet" ? "visible" : "hidden" });
+		};
+		form.addEventListener("input", draw);
+		form.addEventListener("change", draw);
+		const squares = (event) => {
+			const matrix = svg.getScreenCTM();
+			if (!matrix) return null;
+			const p = new DOMPoint(event.clientX, event.clientY).matrixTransform(matrix.inverse());
+			return { x: p.x / sq, y: p.y / sq };
+		};
+		let drag = null;
+		svg.addEventListener("pointerdown", (event) => {
+			if (!(event.target instanceof Element)) return;
+			const mode = event.target.closest("[data-handle]")
+				? "resize"
+				: event.target.closest("[data-shape]")
+					? "move"
+					: null;
+			const at = mode ? squares(event) : null;
+			if (!mode || !at) return;
+			event.preventDefault();
+			svg.setPointerCapture(event.pointerId);
+			drag = { mode, at, col: read("col", 0), row: read("row", 0), width: read("width", 1), depth: read("depth", 1) };
+		});
+		svg.addEventListener("pointermove", (event) => {
+			const at = drag ? squares(event) : null;
+			if (!drag || !at) return;
+			const dx = Math.round(at.x - drag.at.x);
+			const dy = Math.round(at.y - drag.at.y);
+			if (drag.mode === "move") {
+				write("col", Math.max(0, drag.col + dx));
+				write("row", Math.max(0, drag.row + dy));
+			} else {
+				write("width", Math.max(1, drag.width + dx));
+				write("depth", Math.max(1, drag.depth + dy));
+			}
+			draw();
+		});
+		const end = () => {
+			drag = null;
+		};
+		svg.addEventListener("pointerup", end);
+		svg.addEventListener("pointercancel", end);
+		draw();
+	}
+
+	// Bins preview of the plan editor (<div data-bins-preview data-form="…" data-range="Bins {from} to {to}.">): the grid
+	// of levels × positions and the first and last bin codes, redrawn as the fields change.
+	for (const preview of document.querySelectorAll("[data-bins-preview]")) {
+		const form = document.getElementById(preview.dataset.form ?? "");
+		const svg = preview.querySelector("[data-bins-svg]");
+		const text = preview.querySelector("[data-bins-text]");
+		if (!(form instanceof HTMLFormElement) || !(svg instanceof SVGElement)) continue;
+		const NS = "http://www.w3.org/2000/svg";
+		const count = (name, max) => {
+			const n = Number.parseInt(fieldValue(form, name), 10);
+			return Number.isFinite(n) ? Math.min(max, Math.max(1, n)) : 1;
+		};
+		const redraw = () => {
+			const levels = count("levels", 20);
+			const positions = count("positions", 30);
+			svg.setAttribute("viewBox", `0 0 ${positions * 22 + 2} ${levels * 14 + 2}`);
+			const cells = [];
+			for (let i = 0; i < levels * positions; i++) {
+				const rect = document.createElementNS(NS, "rect");
+				for (const [k, v] of Object.entries({
+					x: (i % positions) * 22 + 1,
+					y: Math.floor(i / positions) * 14 + 1,
+					width: 20,
+					height: 12,
+					rx: 2,
+					class: "fill-card stroke-foreground/40",
+				}))
+					rect.setAttribute(k, String(v));
+				cells.push(rect);
+			}
+			svg.replaceChildren(...cells);
+			const code = fieldValue(form, "code").toUpperCase() || "?";
+			if (text)
+				text.textContent = (preview.dataset.range ?? "")
+					.replace("{from}", `${code}-1-1`)
+					.replace("{to}", `${code}-${levels}-${positions}`);
+		};
+		form.addEventListener("input", redraw);
+		form.addEventListener("change", redraw);
+	}
+
 	// <input type="file" data-image-input>: photos are shrunk in the browser before upload (longest side
 	// 1600 px, WebP, or JPEG where WebP cannot be encoded), so a tablet's camera picture weighs a few hundred
 	// KB instead of several MB. On any failure the original file is sent; the server checks it anyway.
