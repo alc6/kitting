@@ -118,7 +118,6 @@ export function LocationBadge(props: { location: Location | undefined; link?: bo
 
 /** The large label of the part page: the code, and where it is in words. */
 export function LocationLabel(props: { location: Location }) {
-	const { t } = useApp();
 	const l = props.location;
 	return (
 		<div class="flex w-fit max-w-full min-w-44 flex-col gap-1.5 rounded-md border-[1.5px] border-location-border bg-location px-4 py-3 text-location-foreground">
