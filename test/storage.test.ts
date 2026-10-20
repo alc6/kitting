@@ -719,6 +719,15 @@ describe("the plan's square size and main area (D209)", () => {
 		expect(lines(await (await request("/locations/new")).text())).toHaveLength(79 + 49);
 	});
 
+	it("starts a new rack at 2 x 1 m, half a metre from the corner, whatever the squares", async () => {
+		const field = (html: string, name: string) => new RegExp(`name="${name}"[^>]*value="(\\d+)"`).exec(html)?.[1];
+		const at50 = await (await request("/locations/new")).text();
+		expect(["col", "row", "width", "depth"].map((n) => field(at50, n))).toEqual(["1", "1", "4", "2"]);
+		await save({ square_cm: "10" });
+		const at10 = await (await request("/locations/new")).text();
+		expect(["col", "row", "width", "depth"].map((n) => field(at10, n))).toEqual(["5", "5", "20", "10"]);
+	});
+
 	it("draws a unit of a given real size the same whatever the squares", async () => {
 		const id = await drawUnit({ code: "A", col: "2", row: "2", width: "10", depth: "2" });
 		const rect = (html: string) =>
