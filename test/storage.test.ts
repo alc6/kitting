@@ -631,10 +631,16 @@ describe("the plan's square size and main area (D209)", () => {
 	});
 
 	it("is for planners; others cannot even open the form", async () => {
+		await drawUnit({ col: "2", width: "10" });
 		await setRole("planner");
 		expect((await save({ square_cm: "25" }, NOT_ADMIN)).status).toBe(303);
 		expect(await (await request("/locations/plan-settings", {}, NOT_ADMIN)).text()).toContain('value="25"');
-		expect(await (await request("/locations", {}, NOT_ADMIN)).text()).toContain("Plan settings");
+		const page = await (await request("/locations", {}, NOT_ADMIN)).text();
+		expect(page).toContain("Plan settings");
+		expect(page).toContain("1 square = 0.25 m.");
+		expect(await one("SELECT summary FROM change_sets ORDER BY id DESC LIMIT 1")).toEqual({
+			summary: "Change the settings of the workshop plan",
+		});
 		for (const role of ["operator", "viewer"] as const) {
 			await setRole(role);
 			expect((await save({ square_cm: "50" }, NOT_ADMIN)).status, role).toBe(403);

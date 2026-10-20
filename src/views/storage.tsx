@@ -23,7 +23,7 @@ import { cn } from "../lib/cn";
 import { useApp } from "./context";
 import { Icon, type IconNode, icons } from "./icons";
 
-/** One square of the plan (half a metre), in SVG units. */
+/** One square of the plan, in SVG units (its real size is a setting, D209). */
 export const SQ = 24;
 
 export const KIND_ICONS: Record<StorageKind, IconNode> = {
