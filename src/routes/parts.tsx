@@ -1970,6 +1970,7 @@ async function locationTab(c: Context<AppEnv>, part: Part, location: Location | 
 							<PlanSvg
 								units={units}
 								size={planSize(units, plan)}
+								squareCm={plan.squareCm}
 								highlight={location ? planHighlight(location) : undefined}
 								links="view"
 							/>

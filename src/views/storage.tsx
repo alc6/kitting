@@ -20,11 +20,22 @@ import {
 } from "../domain/storage";
 import { type Dict, fmt } from "../i18n";
 import { cn } from "../lib/cn";
+import { formatMetres } from "../lib/units";
 import { useApp } from "./context";
 import { Icon, type IconNode, icons } from "./icons";
 
-/** One square of the plan, in SVG units (its real size is a setting, D209). */
-export const SQ = 24;
+/** The plan is drawn at 48 SVG units per metre, whatever the size of a square (D210). */
+export const PX_PER_M = 48;
+/** SVG units of a drawing of `n` squares of `squareCm` cm, to 0.01 (a square is 0.48 * squareCm units). */
+export const planPx = (squareCm: number) => (n: number) => Math.round(n * squareCm * PX_PER_M) / 100;
+type Px = ReturnType<typeof planPx>;
+/** Where the grid draws its lines: every `step` squares, at round distances and not closer than 12 units. */
+export function gridStep(squareCm: number): number {
+	const roundCm = [10, 20, 25, 50, 100, 200, 500, 1000];
+	const min = Math.ceil((12 * 100) / (PX_PER_M * squareCm));
+	for (let step = min; step * squareCm <= 1000; step++) if (roundCm.includes(step * squareCm)) return step;
+	return min;
+}
 
 export const KIND_ICONS: Record<StorageKind, IconNode> = {
 	rack: icons.rows3,
@@ -172,11 +183,15 @@ export type PlanEditing = {
 };
 
 const r1 = (n: number) => Math.round(n * 10) / 10;
+/** Half a metre around a cropped room, in SVG units. */
+const CROP_MARGIN = PX_PER_M / 2;
 const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, Math.max(1, n - 1))}…` : s);
 
 export function PlanSvg(props: {
 	units: StorageUnit[];
 	size: { width: number; depth: number };
+	/** The size of a square in centimetres (`plan.squareCm`). */
+	squareCm: number;
 	highlight?: PlanHighlight | undefined;
 	/** Units link to their page ("view") or to their editor ("edit"). */
 	links?: "view" | "edit";
@@ -185,13 +200,14 @@ export function PlanSvg(props: {
 	editing?: PlanEditing;
 	/** Doors and landmarks have no page: in "view" mode they open their editor when this is set, else nothing. */
 	editDrawn?: boolean;
-	/** Draw only this area (a room), one square of margin around it. */
+	/** Draw only this area (a room), half a metre of margin around it. */
 	crop?: { col: number; row: number; width: number; depth: number } | undefined;
 }) {
 	const { t } = useApp();
-	const { size, editing } = props;
-	const W = size.width * SQ;
-	const H = size.depth * SQ;
+	const { size, editing, squareCm } = props;
+	const px = planPx(squareCm);
+	const W = px(size.width);
+	const H = px(size.depth);
 	const pad = 16;
 	const foot = props.compact ? 6 : 30;
 	const drawn = props.units.filter((u) => onPlan(u) && u.id !== editing?.unitId);
@@ -201,26 +217,17 @@ export function PlanSvg(props: {
 	const storing = drawn.filter((u) => holdsParts(u.kind));
 	const lines = [];
 	if (!props.compact) {
-		const strong = (i: number) => editing !== undefined && i % 2 === 0;
-		for (let i = 1; i < size.width; i++)
+		// Lines every `step` squares; the strong ones (editor) are the metres, else every second line.
+		const step = gridStep(squareCm);
+		const strong = (i: number) =>
+			editing !== undefined && (100 % squareCm === 0 ? (i * squareCm) % 100 === 0 : (i / step) % 2 === 0);
+		for (let i = step; i < size.width; i += step)
 			lines.push(
-				<line
-					x1={i * SQ}
-					y1={0}
-					x2={i * SQ}
-					y2={H}
-					class={strong(i) ? "stroke-foreground/15" : "stroke-foreground/7"}
-				/>,
+				<line x1={px(i)} y1={0} x2={px(i)} y2={H} class={strong(i) ? "stroke-foreground/15" : "stroke-foreground/7"} />,
 			);
-		for (let j = 1; j < size.depth; j++)
+		for (let j = step; j < size.depth; j += step)
 			lines.push(
-				<line
-					x1={0}
-					y1={j * SQ}
-					x2={W}
-					y2={j * SQ}
-					class={strong(j) ? "stroke-foreground/15" : "stroke-foreground/7"}
-				/>,
+				<line x1={0} y1={px(j)} x2={W} y2={px(j)} class={strong(j) ? "stroke-foreground/15" : "stroke-foreground/7"} />,
 			);
 	}
 	const link = (u: StorageUnit) => {
@@ -231,7 +238,7 @@ export function PlanSvg(props: {
 	};
 	const crop = props.crop;
 	const viewBox = crop
-		? `${(crop.col - 1) * SQ} ${(crop.row - 1) * SQ} ${(crop.width + 2) * SQ} ${(crop.depth + 2) * SQ}`
+		? `${px(crop.col) - CROP_MARGIN} ${px(crop.row) - CROP_MARGIN} ${px(crop.width) + 2 * CROP_MARGIN} ${px(crop.depth) + 2 * CROP_MARGIN}`
 		: `${-pad} ${-pad} ${W + pad * 2} ${H + pad + foot}`;
 	return (
 		<svg
@@ -241,39 +248,41 @@ export function PlanSvg(props: {
 			aria-label={t.locations.plan}
 			data-plan-editor={editing ? "" : undefined}
 			data-form={editing?.formId}
-			data-square={editing ? SQ : undefined}
+			data-square={editing ? px(1) : undefined}
+			data-square-cm={editing ? squareCm : undefined}
 		>
 			<rect x={0} y={0} width={W} height={H} rx={4} class="fill-muted/60" />
 			{rooms.map((r) => (
-				<rect x={r.col * SQ} y={r.row * SQ} width={r.width * SQ} height={r.depth * SQ} class="fill-background" />
+				<rect x={px(r.col)} y={px(r.row)} width={px(r.width)} height={px(r.depth)} class="fill-background" />
 			))}
 			<g stroke-width="1">{lines}</g>
 			{rooms.length ? null : (
 				<rect x={0} y={0} width={W} height={H} class="fill-none stroke-foreground" stroke-width="4" />
 			)}
 			{rooms.map((r) => (
-				<Room room={r} compact={props.compact ?? false} href={link(r)} />
+				<Room room={r} px={px} compact={props.compact ?? false} href={link(r)} />
 			))}
 			{doors.map((d) => (
-				<Door door={d} href={link(d)} />
+				<Door door={d} px={px} href={link(d)} />
 			))}
 			{landmarks.map((u) => (
-				<Landmark unit={u} href={link(u)} />
+				<Landmark unit={u} px={px} href={link(u)} />
 			))}
 			{storing.map((u) => (
 				<UnitShape
 					unit={u}
+					px={px}
 					highlight={props.highlight?.unitId === u.id ? props.highlight : undefined}
 					compact={props.compact ?? false}
 					href={link(u)}
 				/>
 			))}
-			{editing ? <EditingShape editing={editing} /> : null}
-			{props.highlight ? <HighlightTag units={storing} highlight={props.highlight} /> : null}
+			{editing ? <EditingShape editing={editing} px={px} squareCm={squareCm} /> : null}
+			{props.highlight ? <HighlightTag px={px} units={storing} highlight={props.highlight} /> : null}
 			{props.compact || crop ? null : (
 				<g class="fill-muted-foreground text-[10.5px]">
-					<path d={`M0 ${H + 14} V${H + 18} H${2 * SQ} V${H + 14}`} class="fill-none stroke-muted-foreground" />
-					<text x={2 * SQ + 6} y={H + 21}>
+					<path d={`M0 ${H + 14} V${H + 18} H${PX_PER_M} V${H + 14}`} class="fill-none stroke-muted-foreground" />
+					<text x={PX_PER_M + 6} y={H + 21}>
 						1 m
 					</text>
 				</g>
@@ -294,26 +303,27 @@ function Linked(props: { href: string | null; children?: Child }) {
 }
 
 /** A room: its walls and its name in the top left corner. */
-function Room(props: { room: StorageUnit; compact: boolean; href: string | null }) {
+function Room(props: { room: StorageUnit; px: Px; compact: boolean; href: string | null }) {
+	const px = props.px;
 	const r = props.room;
 	return (
 		<Linked href={props.href}>
 			<rect
-				x={r.col * SQ}
-				y={r.row * SQ}
-				width={r.width * SQ}
-				height={r.depth * SQ}
+				x={px(r.col)}
+				y={px(r.row)}
+				width={px(r.width)}
+				height={px(r.depth)}
 				stroke-width="5"
 				stroke-linejoin="round"
 				class="fill-none stroke-foreground group-hover:stroke-ring"
 			/>
 			{props.compact ? null : (
 				<text
-					x={r.col * SQ + 10}
-					y={r.row * SQ + 19}
+					x={px(r.col) + 10}
+					y={px(r.row) + 19}
 					class="fill-muted-foreground text-[10.5px] font-semibold tracking-wider uppercase"
 				>
-					{clip(r.name || r.code, Math.floor((r.width * SQ - 16) / 7.5))}
+					{clip(r.name || r.code, Math.floor((px(r.width) - 16) / 7.5))}
 				</text>
 			)}
 			<title>{r.name || r.code}</title>
@@ -325,12 +335,13 @@ function Room(props: { room: StorageUnit; compact: boolean; href: string | null 
  * A door: a rectangle straddling a wall. The wall runs along its longer side through its middle; the door cuts it and
  * swings towards its front.
  */
-function Door(props: { door: StorageUnit; href: string | null }) {
+function Door(props: { door: StorageUnit; px: Px; href: string | null }) {
+	const px = props.px;
 	const d = props.door;
-	const x = d.col * SQ;
-	const y = d.row * SQ;
-	const w = d.width * SQ;
-	const h = d.depth * SQ;
+	const x = px(d.col);
+	const y = px(d.row);
+	const w = px(d.width);
+	const h = px(d.depth);
 	let cut: [number, number, number, number];
 	let leaf: string;
 	let arc: string;
@@ -357,24 +368,25 @@ function Door(props: { door: StorageUnit; href: string | null }) {
 	);
 }
 
-function Landmark(props: { unit: StorageUnit; href: string | null }) {
+function Landmark(props: { unit: StorageUnit; px: Px; href: string | null }) {
+	const px = props.px;
 	const u = props.unit;
-	const w = u.width * SQ;
+	const w = px(u.width);
 	return (
 		<Linked href={props.href}>
 			<rect
-				x={u.col * SQ}
-				y={u.row * SQ}
+				x={px(u.col)}
+				y={px(u.row)}
 				width={w}
-				height={u.depth * SQ}
+				height={px(u.depth)}
 				rx={3}
 				stroke-width="1.2"
 				stroke-dasharray="4 4"
 				class="fill-muted stroke-muted-foreground/60 group-hover:stroke-ring"
 			/>
 			<text
-				x={u.col * SQ + w / 2}
-				y={(u.row + u.depth / 2) * SQ + 4}
+				x={px(u.col) + w / 2}
+				y={px(u.row + u.depth / 2) + 4}
 				text-anchor="middle"
 				class="fill-muted-foreground text-[11px] font-medium italic"
 			>
@@ -385,21 +397,23 @@ function Landmark(props: { unit: StorageUnit; href: string | null }) {
 }
 
 function UnitShape(props: {
+	px: Px;
 	unit: StorageUnit;
 	highlight: PlanHighlight | undefined;
 	compact: boolean;
 	href: string | null;
 }) {
+	const px = props.px;
 	const { t } = useApp();
 	const u = props.unit;
-	const x = u.col * SQ;
-	const y = u.row * SQ;
-	const w = u.width * SQ;
-	const h = u.depth * SQ;
+	const x = px(u.col);
+	const y = px(u.row);
+	const w = px(u.width);
+	const h = px(u.depth);
 	const hl = props.highlight;
 	const cx = x + w / 2;
 	const cy = y + h / 2;
-	const showName = !props.compact && u.name !== "" && w >= 5 * SQ && h >= 2 * SQ;
+	const showName = !props.compact && u.name !== "" && w >= 120 && h >= 48;
 	const dividers = [];
 	if (hasBins(u.kind) && u.positions > 1) {
 		const along = u.front === "south" || u.front === "north";
@@ -437,10 +451,10 @@ function UnitShape(props: {
 			/>
 			{seg ? (
 				<rect
-					x={r1(seg.x * SQ + 2)}
-					y={r1(seg.y * SQ + 2)}
-					width={r1(seg.w * SQ - 4)}
-					height={r1(seg.h * SQ - 4)}
+					x={r1(px(seg.x) + 2)}
+					y={r1(px(seg.y) + 2)}
+					width={r1(px(seg.w) - 4)}
+					height={r1(px(seg.h) - 4)}
 					rx={2}
 					class="fill-location"
 				/>
@@ -450,10 +464,10 @@ function UnitShape(props: {
 			</g>
 			{u.kind === "floor" ? null : (
 				<line
-					x1={fx1 * SQ}
-					y1={fy1 * SQ}
-					x2={fx2 * SQ}
-					y2={fy2 * SQ}
+					x1={px(fx1)}
+					y1={px(fy1)}
+					x2={px(fx2)}
+					y2={px(fy2)}
 					stroke-width="3.4"
 					stroke-linecap="round"
 					class={hl ? "stroke-location-border" : "stroke-foreground"}
@@ -485,7 +499,8 @@ function UnitShape(props: {
 }
 
 /** The location's code as a label on the aisle side of the highlighted unit, pointing at its bin. */
-function HighlightTag(props: { units: StorageUnit[]; highlight: PlanHighlight }) {
+function HighlightTag(props: { px: Px; units: StorageUnit[]; highlight: PlanHighlight }) {
+	const px = props.px;
 	const u = props.units.find((x) => x.id === props.highlight.unitId);
 	if (!u) return null;
 	const hl = props.highlight;
@@ -493,8 +508,8 @@ function HighlightTag(props: { units: StorageUnit[]; highlight: PlanHighlight })
 		hl.position !== null && hasBins(u.kind)
 			? positionRect(u, hl.position)
 			: { x: u.col, y: u.row, w: u.width, h: u.depth };
-	const sx = (seg.x + seg.w / 2) * SQ;
-	const sy = (seg.y + seg.h / 2) * SQ;
+	const sx = px(seg.x + seg.w / 2);
+	const sy = px(seg.y + seg.h / 2);
 	const tw = 14 + hl.label.length * 7.4;
 	const th = 20;
 	const gap = 12;
@@ -502,16 +517,16 @@ function HighlightTag(props: { units: StorageUnit[]; highlight: PlanHighlight })
 	let cy = sy;
 	let ptr = "";
 	if (u.kind === "floor" || u.front === "north") {
-		cy = u.row * SQ - gap - th / 2;
+		cy = px(u.row) - gap - th / 2;
 		ptr = `M${cx - 5} ${cy + th / 2 - 0.5} L${cx} ${cy + th / 2 + 6} L${cx + 5} ${cy + th / 2 - 0.5}`;
 	} else if (u.front === "south") {
-		cy = (u.row + u.depth) * SQ + gap + th / 2;
+		cy = px(u.row + u.depth) + gap + th / 2;
 		ptr = `M${cx - 5} ${cy - th / 2 + 0.5} L${cx} ${cy - th / 2 - 6} L${cx + 5} ${cy - th / 2 + 0.5}`;
 	} else if (u.front === "west") {
-		cx = u.col * SQ - gap - tw / 2;
+		cx = px(u.col) - gap - tw / 2;
 		ptr = `M${cx + tw / 2 - 0.5} ${cy - 5} L${cx + tw / 2 + 6} ${cy} L${cx + tw / 2 - 0.5} ${cy + 5}`;
 	} else {
-		cx = (u.col + u.width) * SQ + gap + tw / 2;
+		cx = px(u.col + u.width) + gap + tw / 2;
 		ptr = `M${cx - tw / 2 + 0.5} ${cy - 5} L${cx - tw / 2 - 6} ${cy} L${cx - tw / 2 + 0.5} ${cy + 5}`;
 	}
 	return (
@@ -532,12 +547,14 @@ function HighlightTag(props: { units: StorageUnit[]; highlight: PlanHighlight })
 }
 
 /** The unit of the editor, placed from the form; app.js keeps it in step with the fields and lets people drag it. */
-function EditingShape(props: { editing: PlanEditing }) {
+function EditingShape(props: { editing: PlanEditing; px: Px; squareCm: number }) {
+	const { locale } = useApp();
+	const px = props.px;
 	const e = props.editing;
-	const x = e.col * SQ;
-	const y = e.row * SQ;
-	const w = Math.max(1, e.width) * SQ;
-	const h = Math.max(1, e.depth) * SQ;
+	const x = px(e.col);
+	const y = px(e.row);
+	const w = px(Math.max(1, e.width));
+	const h = px(Math.max(1, e.depth));
 	const [fx1, fy1, fx2, fy2] = frontEdge({ ...e, positions: 1, kind: "rack" });
 	return (
 		<g data-editing>
@@ -553,10 +570,10 @@ function EditingShape(props: { editing: PlanEditing }) {
 			/>
 			<line
 				data-front
-				x1={fx1 * SQ}
-				y1={fy1 * SQ}
-				x2={fx2 * SQ}
-				y2={fy2 * SQ}
+				x1={px(fx1)}
+				y1={px(fy1)}
+				x2={px(fx2)}
+				y2={px(fy2)}
 				stroke-width="4"
 				stroke-linecap="round"
 				class="pointer-events-none stroke-primary"
@@ -577,7 +594,7 @@ function EditingShape(props: { editing: PlanEditing }) {
 				text-anchor="middle"
 				class="pointer-events-none fill-muted-foreground text-[10px] tabular-nums"
 			>
-				{`${Math.max(1, e.width) / 2} × ${Math.max(1, e.depth) / 2} m`}
+				{`${formatMetres(Math.max(1, e.width) * props.squareCm, locale)} × ${formatMetres(Math.max(1, e.depth) * props.squareCm, locale)} m`}
 			</text>
 			<rect
 				data-handle

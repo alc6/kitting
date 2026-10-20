@@ -180,7 +180,13 @@
 		const form = document.getElementById(svg.dataset.form ?? "");
 		const unit = svg.querySelector("[data-editing]");
 		if (!(form instanceof HTMLFormElement) || !(unit instanceof SVGElement)) continue;
+		// data-square: SVG units of one square (not always a whole number); data-square-cm: its real size.
 		const sq = Number(svg.dataset.square) || 24;
+		const squareCm = Number(svg.dataset.squareCm) || 50;
+		const metres = new Intl.NumberFormat(document.documentElement.lang || undefined, {
+			maximumFractionDigits: 2,
+			useGrouping: false,
+		});
 		const shape = unit.querySelector("[data-shape]");
 		const front = unit.querySelector("[data-front]");
 		const code = unit.querySelector("[data-code]");
@@ -209,7 +215,8 @@
 			set(code, { x: x + w / 2, y: y + h / 2 + 5 });
 			set(size, { x: x + w / 2, y: y - 7 });
 			if (code) code.textContent = fieldValue(form, "code").toUpperCase() || "?";
-			if (size) size.textContent = `${cols / 2} × ${rows / 2} m`;
+			if (size)
+				size.textContent = `${metres.format((cols * squareCm) / 100)} × ${metres.format((rows * squareCm) / 100)} m`;
 			const side = fieldValue(form, "front");
 			const edge =
 				side === "north"

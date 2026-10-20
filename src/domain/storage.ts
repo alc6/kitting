@@ -27,11 +27,13 @@ import { listParts, onHandSql } from "./parts";
 /** More is a typing mistake, and the front view would not fit a tablet. */
 export const MAX_LEVELS = 20;
 export const MAX_POSITIONS = 30;
-/** The plan is at least this many squares, and grows with the units, up to PLAN_MAX each way. */
-export const PLAN_MIN = { width: 24, depth: 14 } as const;
-export const PLAN_MAX = 200;
 /** The size of a square of the plan, in centimetres: half a metre unless the workshop sets another (D209). */
 export const SQUARE_CM = { default: 50, min: 5, max: 500 } as const;
+/** The plan is at least this big, and grows with the units up to PLAN_MAX_CM each way: limits are in centimetres (D210). */
+export const PLAN_MIN_CM = { width: 1200, depth: 700 } as const;
+export const PLAN_MAX_CM = 10000;
+/** How many squares of this size fit in the plan's largest side. */
+export const planMaxSquares = (squareCm: number) => Math.floor(PLAN_MAX_CM / squareCm);
 
 /** Keys of the plan's rows in `settings`. A missing row means the default. */
 export const PLAN_SETTINGS = { squareCm: "plan_square_cm", width: "plan_width", depth: "plan_depth" } as const;
@@ -192,7 +194,8 @@ export function checkUnitIn(
 	} else {
 		if (d.width < 1) errors.width = "not_positive";
 		if (d.depth < 1) errors.depth = "not_positive";
-		const limit = plan.area ?? { width: PLAN_MAX, depth: PLAN_MAX };
+		const max = planMaxSquares(plan.squareCm);
+		const limit = plan.area ?? { width: max, depth: max };
 		const outside = plan.area ? "storage_outside_area" : "storage_outside_plan";
 		if (d.col + d.width > limit.width) errors.col = outside;
 		if (d.row + d.depth > limit.depth) errors.row = outside;
@@ -308,8 +311,8 @@ export function planSize(
 	if (plan.area) return { ...plan.area };
 	const drawn = units.filter((u) => (u.parentUnitId ?? null) === null);
 	return {
-		width: Math.max(PLAN_MIN.width, ...drawn.map((u) => u.col + u.width + 1)),
-		depth: Math.max(PLAN_MIN.depth, ...drawn.map((u) => u.row + u.depth + 1)),
+		width: Math.max(Math.ceil(PLAN_MIN_CM.width / plan.squareCm), ...drawn.map((u) => u.col + u.width + 1)),
+		depth: Math.max(Math.ceil(PLAN_MIN_CM.depth / plan.squareCm), ...drawn.map((u) => u.row + u.depth + 1)),
 	};
 }
 
@@ -326,10 +329,11 @@ export async function loadPlanSettings(db: Db): Promise<PlanSettings> {
 		.from(settings)
 		.where(inArray(settings.key, Object.values(PLAN_SETTINGS)));
 	const byKey = new Map(rows.map((r) => [r.key, r.value]));
-	const width = wholeSetting(byKey.get(PLAN_SETTINGS.width), 1, PLAN_MAX);
-	const depth = wholeSetting(byKey.get(PLAN_SETTINGS.depth), 1, PLAN_MAX);
+	const squareCm = wholeSetting(byKey.get(PLAN_SETTINGS.squareCm), SQUARE_CM.min, SQUARE_CM.max) ?? SQUARE_CM.default;
+	const width = wholeSetting(byKey.get(PLAN_SETTINGS.width), 1, planMaxSquares(squareCm));
+	const depth = wholeSetting(byKey.get(PLAN_SETTINGS.depth), 1, planMaxSquares(squareCm));
 	return {
-		squareCm: wholeSetting(byKey.get(PLAN_SETTINGS.squareCm), SQUARE_CM.min, SQUARE_CM.max) ?? SQUARE_CM.default,
+		squareCm,
 		area: width !== null && depth !== null ? { width, depth } : null,
 	};
 }
@@ -360,12 +364,13 @@ const extent = (units: Rect[]) => ({
  */
 function rescaled(units: Rect[], from: number, to: number): { rects: Rect[] } | { error: string } {
 	const rects: Rect[] = [];
+	const max = planMaxSquares(to);
 	for (const u of units) {
 		const values = [u.col, u.row, u.width, u.depth];
 		if (values.some((n) => (n * from) % to !== 0)) return { error: "plan_square_fraction" };
 		const [col, row, width, depth] = values.map((n) => (n * from) / to) as [number, number, number, number];
 		if (width < 1 || depth < 1) return { error: "plan_square_fraction" };
-		if (col + width > PLAN_MAX || row + depth > PLAN_MAX) return { error: "plan_square_outside" };
+		if (col + width > max || row + depth > max) return { error: "plan_square_outside" };
 		rects.push({ col, row, width, depth });
 	}
 	return { rects };
@@ -396,7 +401,7 @@ export function checkPlanSettings(
 			if (cm === null) errors[name] = "required";
 			else if (!errors.square_cm) {
 				if (cm % squareCm !== 0) errors[name] = "plan_area_whole";
-				else if (cm / squareCm > PLAN_MAX) errors[name] = "plan_area_range";
+				else if (cm / squareCm > planMaxSquares(squareCm)) errors[name] = "plan_area_range";
 				else squares.push(cm / squareCm);
 			}
 		}
