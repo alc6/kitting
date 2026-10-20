@@ -1557,7 +1557,7 @@ every location again, and an assistant could not say where a part is. D207 puts 
   in the code and in the texts. A workshop with small racks wants finer squares, and one that knows its walls wants a
   plan of exactly that size.
   - Three rows of the existing tracked `settings` table, no migration: `plan_square_cm` (whole centimetres, 5 to 500,
-    default 50), `plan_width` and `plan_depth` (squares, 1 to `PLAN_MAX`). A missing row is the default, so a fixed area
+    default 50), `plan_width` and `plan_depth` (squares, 1 to `planMaxSquares()`, D210). A missing row is the default, so a fixed area
     is removed by deleting its two rows (a side without the other is read as no area). Only changed rows are written,
     and a form that changes nothing opens no change set. `loadPlanSettings()` reads them; `planSize()` and
     `checkUnitIn()` take the settings, so every caller (six pages and the CSV import, which loads them once) states them.
@@ -1565,15 +1565,15 @@ every location again, and an assistant could not say where a part is. D207 puts 
     when the squares are halved. Every unit drawn on the plan (not those standing in a bin) has `col`, `row`, `width` and
     `depth` multiplied by old/new in the same change set, by one `UPDATE` (the history triggers still log each row). It
     is refused, on the square field, when a value would not be a whole number (50 to 100 works only if every value is
-    even) or a unit would end up beyond `PLAN_MAX`. The units never end up under one square, as a whole positive number
-    stays at least 1. `PLAN_MIN` (the 24 × 14 squares of the automatic plan) is in squares and does not scale.
+    even) or a unit would end up beyond the plan's limit (D210). The units never end up under one square, as a whole positive number
+    stays at least 1. The minimum of the automatic plan was in squares (24 × 14); D210 made it 12 × 7 m.
   - **Main area.** Typed in metres (two decimals, `field.metres()`, no floats), read with the square size submitted in
     the same form, so the form holds the full state: the area shown is the current one in metres, and the result is the
     same as rescaling the area with the units. It must be a whole number of squares, both sides or none. With an area,
     `planSize()` is exactly that, and a unit on the plan must fit inside it (`storage_outside_area`, which states the
     size; the form and the import both show it, the import through the `vars` of its row issue). Saving an area smaller
     than the units (after any rescale) is refused with the size they need; no margin is required, unlike the
-    automatic plan that keeps one square. Without an area nothing changes: the plan grows with its units up to 200.
+    automatic plan that keeps one square. Without an area nothing changes: the plan grows with its units up to 100 m (D210).
   - **Permission and undo.** The form is `/locations/plan-settings`, a planner's action (`storage.plan`, no new action:
     it is the same drawing of the plan). Undo follows the table: `TABLE_ACTIONS.settings` is `users.manage`, so only an
     administrator can undo a change of the plan's settings, and the undo restores the rows and the units together
@@ -1582,3 +1582,26 @@ every location again, and an assistant could not say where a part is. D207 puts 
   - Texts show the configured size (`{size}` in `planHint` and `placeHint`, `formatMetres()`: "0.25 m", "0,25 m"); the
     CSV description and `docs/csv.md` say 0.5 m unless changed on the Locations page. No MCP tool or skill text mentions
     the size, so nothing there changes.
+
+- **D210. The plan's limits and its drawing scale are in metres, not in squares.** D209 made the square settable, but
+  kept limits counted in squares: at 10 cm the 200 squares of `PLAN_MAX` were 20 m, the automatic plan shrank to
+  2.4 × 1.4 m, and the drawing (24 units per square) blew a 10 cm grid up five times against its labels. A 10 cm grid
+  must still cover a 30 m workshop and look the same as a 50 cm one.
+  - **Limits.** `PLAN_MAX_CM` is 100 m each way (`planMaxSquares(squareCm)` = `floor(10000 / squareCm)`: 200 at 50 cm,
+    1000 at 10 cm, 2000 at 5 cm) and the automatic plan is at least `PLAN_MIN_CM` 12 × 7 m (`ceil(cm / squareCm)`
+    squares, 24 × 14 at 50 cm, so nothing changes with the default). The bounds of a stored `plan_width`/`plan_depth`
+    depend on the square stored beside them. Because the limit is the same real length whatever the square, a rescale
+    can never push a unit beyond it (a unit's extent in cm does not change); that check in `rescaled()` stays as a
+    guard. The error texts state the limit in metres ("100 m at most each way"), true for every square size, so they
+    need no variable.
+  - **Drawing.** The plan is drawn at 48 SVG units per metre (`PX_PER_M`; today's 24 units per 50 cm square), and
+    `PlanSvg` takes `squareCm` and threads a `px(squares)` function (rounded to 0.01) to its shapes instead of a
+    constant. Text sizes, strokes and paddings stay in units, so a unit of a given real size looks the same whatever the
+    grid, and the plan's viewBox only depends on its size in metres. The scale bar is always 1 m = 48 units (it was
+    wrong for any square but 50 cm). A cropped room keeps half a metre of margin. `data-square` carries the units per
+    square (4.8 at 10 cm, not always whole: `app.js` snaps dragging to it) and `data-square-cm` the real size, for the
+    "w × d m" label of the editor (it also assumed 50 cm).
+  - **Grid.** A line every `gridStep()` squares: the smallest step that is at least 12 units apart and falls on a round
+    distance (10, 20, 25, 50, 100, 200, 500 or 1000 cm), else just the smallest step that is 12 units apart. 50 cm:
+    every square as before; 10 cm: every 50 cm. In the editor the strong lines are the metres when the square divides
+    100 cm, else every second line. A 100 m plan thus has at most a few hundred lines.
