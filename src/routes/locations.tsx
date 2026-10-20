@@ -301,6 +301,7 @@ locationRoutes.get("/", async (c) => {
 								<PlanSvg
 									units={units}
 									size={planSize(units, plan)}
+									squareCm={plan.squareCm}
 									highlight={located ? planHighlight(located) : undefined}
 									links="view"
 									editDrawn={canPlan}
@@ -452,6 +453,7 @@ function UnitForm(props: {
 								<PlanSvg
 									units={props.units}
 									size={planSize([...others, editing], props.plan)}
+									squareCm={props.plan.squareCm}
 									editing={editing}
 									links="edit"
 								/>
@@ -766,6 +768,7 @@ async function renderPartLocation(
 								<PlanSvg
 									units={units}
 									size={planSize(units, plan)}
+									squareCm={plan.squareCm}
 									highlight={current ? planHighlight(current) : undefined}
 									links="view"
 								/>
@@ -1041,6 +1044,7 @@ async function renderUnit(
 								<PlanSvg
 									units={units}
 									size={planSize(units, plan)}
+									squareCm={plan.squareCm}
 									compact
 									highlight={{
 										unitId: chain[0]?.unit.id ?? unit.id,
@@ -1207,7 +1211,14 @@ async function renderRoom(c: Context<AppEnv>, room: StorageUnit) {
 				<Card>
 					<CardContent>
 						<div class="overflow-x-auto rounded-lg border bg-background">
-							<PlanSvg units={units} size={planSize(units, plan)} links="view" editDrawn={canPlan} crop={room} />
+							<PlanSvg
+								units={units}
+								size={planSize(units, plan)}
+								squareCm={plan.squareCm}
+								links="view"
+								editDrawn={canPlan}
+								crop={room}
+							/>
 						</div>
 					</CardContent>
 				</Card>

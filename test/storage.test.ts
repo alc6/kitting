@@ -9,6 +9,7 @@ import {
 	locationSortKey,
 	type PlanUnit,
 	parseBin,
+	planMaxSquares,
 	planSize,
 	positionRect,
 } from "../src/domain/storage";
@@ -526,7 +527,12 @@ describe("the plan's square size and main area (D209)", () => {
 	it("sizes the plan to its fixed area, whatever the units", () => {
 		const far = [{ col: 30, row: 2, width: 4, depth: 20 }];
 		expect(planSize(far, { squareCm: 50, area: { width: 40, depth: 25 } })).toEqual({ width: 40, depth: 25 });
-		expect(planSize(far, { squareCm: 25, area: null })).toEqual({ width: 35, depth: 23 });
+		// The 12 x 7 m minimum is 48 x 28 squares of 25 cm; units further out make the plan grow.
+		expect(planSize(far, { squareCm: 25, area: null })).toEqual({ width: 48, depth: 28 });
+		expect(planSize([{ col: 60, row: 2, width: 4, depth: 40 }], { squareCm: 25, area: null })).toEqual({
+			width: 65,
+			depth: 43,
+		});
 	});
 
 	it("rescales the units drawn on the plan so they keep their real size", async () => {
@@ -569,8 +575,9 @@ describe("the plan's square size and main area (D209)", () => {
 		expect((await save({ square_cm: "100" })).status).toBe(303);
 		expect(await unitAt("P")).toEqual({ col: 13, row: 5, width: 2, depth: 2 });
 		expect(await settings()).toEqual([{ key: "plan_square_cm", value: "100" }]);
-		// Back to 5 cm: A would be 200 squares wide from column 20.
-		await refused(await save({ square_cm: "5" }), "beyond the plan&#39;s limit of 200 squares");
+		// The limit is 100 m whatever the squares: finer ones never push a unit beyond it, so 5 cm is fine.
+		expect((await save({ square_cm: "5" })).status).toBe(303);
+		expect(await unitAt("A")).toEqual({ col: 20, row: 40, width: 200, depth: 20 });
 		await refused(await save({ square_cm: "4" }), "Between 5 and 500 cm.");
 		await refused(await save({ square_cm: "501" }), "Between 5 and 500 cm.");
 		await refused(await save({ square_cm: "" }), "Between 5 and 500 cm.");
@@ -599,10 +606,10 @@ describe("the plan's square size and main area (D209)", () => {
 			"Too small for the units on the plan: 20 × 8 squares at least.",
 		);
 		expect((await save({ width_m: "10", depth_m: "4" })).status).toBe(303);
-		// Both sides or none; whole squares; at most 200 of them.
+		// Both sides or none; whole squares; at most 100 m each way.
 		await refused(await save({ width_m: "10" }), "Required.");
 		await refused(await save({ width_m: "10.3", depth_m: "4" }), "Must be a whole number of squares of 0.5 m.");
-		await refused(await save({ width_m: "101", depth_m: "4" }), "Between 1 and 200 squares.");
+		await refused(await save({ width_m: "101", depth_m: "4" }), "At most 100 m each way.");
 		await refused(await save({ width_m: "abc", depth_m: "4" }), "Not a valid length in metres");
 		// Neither side removes the area: the plan grows with its units again.
 		expect((await save()).status).toBe(303);
@@ -628,6 +635,103 @@ describe("the plan's square size and main area (D209)", () => {
 		const sets = await rows("SELECT id FROM change_sets");
 		expect((await save({ square_cm: "25", width_m: "10", depth_m: "6" })).status).toBe(303);
 		expect(await rows("SELECT id FROM change_sets")).toHaveLength(sets.length);
+	});
+
+	it("counts the limits in metres: a small square still covers a big workshop (D210)", async () => {
+		expect([5, 10, 50, 7, 500].map(planMaxSquares)).toEqual([2000, 1000, 200, 1428, 20]);
+		// The automatic plan is 12 x 7 m at least, whatever the squares.
+		expect(planSize([], { squareCm: 10, area: null })).toEqual({ width: 120, depth: 70 });
+		expect(planSize([], { squareCm: 7, area: null })).toEqual({ width: 172, depth: 100 });
+		expect(planSize([], { squareCm: 500, area: null })).toEqual({ width: 3, depth: 2 });
+		expect(planSize([], DEFAULT_PLAN)).toEqual({ width: 24, depth: 14 });
+		expect((await save({ square_cm: "10" })).status).toBe(303);
+		// Up to 100 m (1000 squares) from the corner, and not past it.
+		expect(await drawUnit({ code: "A", col: "900", row: "1", width: "100", depth: "20" })).toBeGreaterThan(0);
+		await refused(
+			await postForm("/locations", unitForm({ code: "B", col: "991", row: "30", width: "10" })),
+			"Too far out: the plan is 100 m at most each way.",
+		);
+		await refused(
+			await postForm("/locations", unitForm({ code: "B", col: "1", row: "990", depth: "11" })),
+			"Too far out: the plan is 100 m at most each way.",
+		);
+		// The same page in French states the metric limit too.
+		const fr = await postForm(
+			"/locations",
+			unitForm({ code: "B", col: "991", row: "30", width: "10" }),
+			{},
+			{ Cookie: "kitting_lang=fr" },
+		);
+		expect(await fr.text()).toContain("le plan fait 100 m au plus dans chaque sens");
+	});
+
+	it("rescales a plan of 30 m to finer squares, and takes an area of up to 100 m", async () => {
+		// 30 m is 300 squares of 10 cm: the old limit of 200 squares refused it.
+		await drawUnit({ code: "A", col: "50", row: "1", width: "10", depth: "2" });
+		expect((await save({ square_cm: "10" })).status).toBe(303);
+		expect(await unitAt("A")).toEqual({ col: 250, row: 5, width: 50, depth: 10 });
+		await refused(await save({ square_cm: "10", width_m: "100.1", depth_m: "50" }), "At most 100 m each way.");
+		expect((await save({ square_cm: "10", width_m: "80", depth_m: "40" })).status).toBe(303);
+		expect(await settings()).toEqual([
+			{ key: "plan_depth", value: "400" },
+			{ key: "plan_square_cm", value: "10" },
+			{ key: "plan_width", value: "800" },
+		]);
+		const form = await (await request("/locations/plan-settings")).text();
+		expect(form).toContain('value="80"');
+		expect(form).toContain('value="40"');
+		await refused(
+			await postForm("/locations", unitForm({ code: "B", col: "790", row: "1", width: "20" })),
+			"Outside the plan, which is 800 × 400 squares.",
+		);
+		expect((await save({ square_cm: "10", width_m: "100", depth_m: "100" })).status).toBe(303);
+		expect(await (await request("/locations/plan-settings")).text()).toContain('value="100"');
+		// Coarser squares: the area is rescaled with the units, in metres; 100 m is 20 squares of 5 m at most.
+		await refused(await save({ square_cm: "500", width_m: "105", depth_m: "50" }), "At most 100 m each way.");
+	});
+
+	it("draws the plan to scale: 48 units per metre, a grid thinned to round distances", async () => {
+		const lines = (html: string) => [...html.matchAll(/<line [^>]*class="stroke-foreground\/(7|15)"/g)];
+		const at50 = await (await request("/locations/new")).text();
+		expect(at50).toContain('data-square="24"');
+		expect(at50).toContain("M0 350 V354 H48 V350");
+		expect(at50).toContain('viewBox="-16 -16 608 382"');
+		// 24 x 14 squares: 23 + 13 lines, the strong ones (editor) every second line, i.e. every metre.
+		expect(lines(at50)).toHaveLength(36);
+		expect(lines(at50).filter((m) => m[1] === "15")).toHaveLength(17);
+		expect(at50).toContain('<line x1="24" y1="0" x2="24" y2="336"');
+		expect(at50).toContain('<line x1="552" y1="0" x2="552" y2="336"');
+
+		await save({ square_cm: "10" });
+		const at10 = await (await request("/locations/new")).text();
+		expect(at10).toContain('data-square="4.8"');
+		expect(at10).toContain('data-square-cm="10"');
+		// 120 x 70 squares of 4.8 units: the same 12 x 7 m, so the same size on screen. The scale bar is 1 m.
+		expect(at10).toContain('viewBox="-16 -16 608 382"');
+		expect(at10).toContain("M0 350 V354 H48 V350");
+		// Lines every 50 cm (5 squares, 24 units apart), the strong ones every metre.
+		expect(lines(at10)).toHaveLength(36);
+		expect(lines(at10).filter((m) => m[1] === "15")).toHaveLength(17);
+		expect(at10).toContain('<line x1="24" y1="0" x2="24" y2="336"');
+		expect(at10).not.toContain('<line x1="4.8"');
+		// A bigger plan stays bounded: 40 x 25 m has 79 + 49 lines, not 399 + 249.
+		await save({ square_cm: "10", width_m: "40", depth_m: "25" });
+		expect(lines(await (await request("/locations/new")).text())).toHaveLength(79 + 49);
+	});
+
+	it("draws a unit of a given real size the same whatever the squares", async () => {
+		const id = await drawUnit({ code: "A", col: "2", row: "2", width: "10", depth: "2" });
+		const rect = (html: string) =>
+			/<rect x="([\d.]+)" y="([\d.]+)" width="([\d.]+)" height="([\d.]+)" rx="2"/.exec(html);
+		const at50 = rect(await (await request("/locations")).text());
+		await save({ square_cm: "10" });
+		const at10 = rect(await (await request("/locations")).text());
+		expect(at50?.slice(1)).toEqual(["48", "48", "240", "48"]);
+		expect(at10?.slice(1)).toEqual(at50?.slice(1));
+		// Dragging in the editor snaps to squares of 4.8 units; the size label is in metres.
+		const editor = await (await request(`/locations/${id}/edit`)).text();
+		expect(editor).toContain('data-square="4.8"');
+		expect(editor).toContain("5 × 1 m");
 	});
 
 	it("is for planners; others cannot even open the form", async () => {

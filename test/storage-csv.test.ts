@@ -192,8 +192,19 @@ describe("storage_units.csv and the plan's main area (D209)", () => {
 		]);
 	});
 
-	it("keeps the limit of 200 squares when the area is automatic", async () => {
+	it("keeps the limit of 100 m when the area is automatic", async () => {
 		const p = await plan("storage_units", `${HEADER}\nFAR,Far,rack,195,1,10,2,south,2,2,,\n`);
 		expect(issues(p)).toEqual(["2:col:storage_outside_plan"]);
+	});
+
+	it("counts the limit in metres: with squares of 10 cm it is 1000 squares", async () => {
+		await seedSql(
+			stmt("INSERT INTO settings (key, value, created_by, updated_by) VALUES ('plan_square_cm', '10', 's', 's')"),
+		);
+		const p = await plan(
+			"storage_units",
+			`${HEADER}\nOK,Fits,rack,990,1,10,2,south,2,2,,\nFAR,Far,rack,995,10,10,2,south,2,2,,\n`,
+		);
+		expect(issues(p)).toEqual(["3:col:storage_outside_plan"]);
 	});
 });
