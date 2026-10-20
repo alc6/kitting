@@ -522,8 +522,11 @@ function UnitForm(props: {
 	);
 }
 
-/** A new unit: in the bin given by `in`, else a 4 × 2 rack facing south on the first free spot of the top row. */
-function newUnitValues(units: StorageUnit[], inBin: string | undefined): FormValues {
+/**
+ * A new unit: in the bin given by `in`, else a 2 × 1 m rack facing south on the first free spot of the top row, half a
+ * metre from the corner and from its neighbour, whatever the size of a square (D210).
+ */
+function newUnitValues(units: StorageUnit[], inBin: string | undefined, squareCm: number): FormValues {
 	const base = { notes: "", name: "", code: "" };
 	if (inBin && parseBin(inBin)?.level) {
 		return {
@@ -540,17 +543,19 @@ function newUnitValues(units: StorageUnit[], inBin: string | undefined): FormVal
 			positions: "3",
 		};
 	}
+	const squares = (cm: number) => Math.max(1, Math.round(cm / squareCm));
+	const gap = squares(50);
 	const drawn = units.filter((u) => u.parentUnitId === null && holdsParts(u.kind));
-	const col = Math.max(1, ...drawn.filter((u) => u.row <= 3).map((u) => u.col + u.width + 1));
+	const col = Math.max(gap, ...drawn.filter((u) => u.row <= squares(150)).map((u) => u.col + u.width + gap));
 	return {
 		...base,
 		kind: "rack",
 		placement: "plan",
 		front: "south",
 		col: String(col),
-		row: "1",
-		width: "4",
-		depth: "2",
+		row: String(gap),
+		width: String(squares(200)),
+		depth: String(squares(100)),
 		levels: "4",
 		positions: "4",
 	};
@@ -588,7 +593,8 @@ async function renderUnitForm(
 }
 
 locationRoutes.get("/new", requirePermission("storage.plan"), async (c) => {
-	return renderUnitForm(c, null, newUnitValues(await allUnits(c), c.req.query("in")), {});
+	const [units, plan] = await Promise.all([allUnits(c), loadPlanSettings(c.var.db)]);
+	return renderUnitForm(c, null, newUnitValues(units, c.req.query("in"), plan.squareCm), {});
 });
 
 async function saveUnit(c: Context<AppEnv>, unit: StorageUnit | null) {

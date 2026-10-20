@@ -1605,3 +1605,5 @@ every location again, and an assistant could not say where a part is. D207 puts 
     distance (10, 20, 25, 50, 100, 200, 500 or 1000 cm), else just the smallest step that is 12 units apart. 50 cm:
     every square as before; 10 cm: every 50 cm. In the editor the strong lines are the metres when the square divides
     100 cm, else every second line. A 100 m plan thus has at most a few hundred lines.
+  - **New units.** A new rack starts at 2 × 1 m, half a metre from the corner and from its neighbour, converted to
+    squares (4 × 2 at 50 cm as before, 20 × 10 at 10 cm, not a 0.4 × 0.2 m speck).
