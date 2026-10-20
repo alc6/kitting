@@ -248,6 +248,7 @@ Where each part is kept, drawn on a plan of the workshop, shown wherever someone
 - [x] MCP, kept small: `get_location` (a part's bin and path, what a bin, unit or room holds, the plan), `location` in
       `get_part`, set by `update_part`; no location on other tools, no tool to draw the plan (D208)
 - [x] README and the Kitting skill ("Where is it?", "Put it away", two eval cases)
+- [x] The square's size and a fixed main area, set on the Locations page; units keep their real size (D209)
 
 ## M20: PO charges and landed cost ✅
 

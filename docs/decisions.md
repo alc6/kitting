@@ -1550,3 +1550,35 @@ every location again, and an assistant could not say where a part is. D207 puts 
   - No tool draws or edits the plan: units and rooms are geometry, edited with the plan in view. `storage.delete`
     joins `NEVER_OVER_MCP`; `storage.plan` is not offered either, for now.
   - The skill has two workflows ("Where is it?", "Put it away"), two examples and two eval cases.
+
+## The plan's square size and main area (M19, setting)
+
+- **D209. The square's size and a fixed main area are settings of the plan, not constants.** A square was half a metre
+  in the code and in the texts. A workshop with small racks wants finer squares, and one that knows its walls wants a
+  plan of exactly that size.
+  - Three rows of the existing tracked `settings` table, no migration: `plan_square_cm` (whole centimetres, 5 to 500,
+    default 50), `plan_width` and `plan_depth` (squares, 1 to `PLAN_MAX`). A missing row is the default, so a fixed area
+    is removed by deleting its two rows (a side without the other is read as no area). Only changed rows are written,
+    and a form that changes nothing opens no change set. `loadPlanSettings()` reads them; `planSize()` and
+    `checkUnitIn()` take the settings, so every caller (six pages and the CSV import, which loads them once) states them.
+  - **Changing the square rescales the units.** Units are stored in squares, so keeping them would halve every rack
+    when the squares are halved. Every unit drawn on the plan (not those standing in a bin) has `col`, `row`, `width` and
+    `depth` multiplied by old/new in the same change set, by one `UPDATE` (the history triggers still log each row). It
+    is refused, on the square field, when a value would not be a whole number (50 to 100 works only if every value is
+    even) or a unit would end up beyond `PLAN_MAX`. The units never end up under one square, as a whole positive number
+    stays at least 1. `PLAN_MIN` (the 24 × 14 squares of the automatic plan) is in squares and does not scale.
+  - **Main area.** Typed in metres (two decimals, `field.metres()`, no floats), read with the square size submitted in
+    the same form, so the form holds the full state: the area shown is the current one in metres, and the result is the
+    same as rescaling the area with the units. It must be a whole number of squares, both sides or none. With an area,
+    `planSize()` is exactly that, and a unit on the plan must fit inside it (`storage_outside_area`, which states the
+    size; the form and the import both show it, the import through the `vars` of its row issue). Saving an area smaller
+    than the units (after any rescale) is refused with the size they need; no margin is required, unlike the
+    automatic plan that keeps one square. Without an area nothing changes: the plan grows with its units up to 200.
+  - **Permission and undo.** The form is `/locations/plan-settings`, a planner's action (`storage.plan`, no new action:
+    it is the same drawing of the plan). Undo follows the table: `TABLE_ACTIONS.settings` is `users.manage`, so only an
+    administrator can undo a change of the plan's settings, and the undo restores the rows and the units together
+    because they share the change set. We accept that rather than key undo by setting. The recent changes name the
+    row by its key (`plan_square_cm`), which reads well enough without a label mechanism.
+  - Texts show the configured size (`{size}` in `planHint` and `placeHint`, `formatMetres()`: "0.25 m", "0,25 m"); the
+    CSV description and `docs/csv.md` say 0.5 m unless changed on the Locations page. No MCP tool or skill text mentions
+    the size, so nothing there changes.

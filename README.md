@@ -22,7 +22,8 @@ maintain, and a small workshop fits in the free plans.
   manufacturing (assembly, batch size, machine time), and the Builds page lists the production requirements of the
   planned builds (sub-assemblies and printed parts, in whole batches) next to what Purchasing must buy.
 - Stock kept as a ledger of movements, with adjustments, inventory counts and stock valuation.
-- Storage locations: a plan of the workshop with rooms, racks, drawer cabinets and their bins, and where each part is
+- Storage locations: a plan of the workshop (squares of a chosen size, optionally a fixed main area) with rooms, racks,
+  drawer cabinets and their bins, and where each part is
   kept, shown on the part, the pick list, receipts, inventory counts and search.
 - Part options, such as a colour: one part in recipes, its stock counted per value, and the values of a build followed
   by its components and sub-assemblies.
