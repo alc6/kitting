@@ -111,6 +111,14 @@ export const fr: Dict = {
 		invalid_storage_code: "Utilisez 1 à 6 lettres ou chiffres, sans espace ni tiret.",
 		storage_code_taken: "Une autre unité de stockage a ce code.",
 		storage_outside_plan: "Trop loin : le plan fait 200 carreaux au plus.",
+		storage_outside_area: "En dehors du plan, qui fait {width} × {depth} carreaux.",
+		invalid_metres: "Longueur en mètres non valide (2 décimales au plus).",
+		plan_square_range: "Entre 5 et 500 cm.",
+		plan_square_fraction: "Certaines unités ne tomberaient pas sur des carreaux entiers avec cette taille.",
+		plan_square_outside: "Certaines unités dépasseraient la limite du plan : 200 carreaux.",
+		plan_area_whole: "Doit être un nombre entier de carreaux de {square} m.",
+		plan_area_range: "Entre 1 et 200 carreaux.",
+		plan_area_small: "Trop petit pour les unités du plan : {width} × {depth} carreaux au moins.",
 		storage_overlap: "Chevauche une autre unité de stockage sur le plan.",
 		storage_levels_range: "Entre 1 et 20 niveaux.",
 		storage_positions_range: "Entre 1 et 30 positions.",
@@ -928,7 +936,7 @@ export const fr: Dict = {
 		help: {
 			suppliers: "Mise à jour ou création par nom.",
 			storage_units:
-				"Le plan de l’atelier, mis à jour ou créé par code (obligatoire sur chaque ligne, pièces et portes comprises). kind vaut rack, cabinet, floor, room, door ou landmark ; col, row, width et depth le placent sur le plan en carreaux d’un demi-mètre ; front vaut south, north, west ou east ; levels et positions donnent les cases des rayonnages et des armoires. parent_bin (A-3-3) pose un rayonnage ou une armoire dans une case d’une autre unité au lieu du plan : placez cette unité plus haut dans le fichier. Les colonnes absentes du fichier gardent leur valeur actuelle.",
+				"Le plan de l’atelier, mis à jour ou créé par code (obligatoire sur chaque ligne, pièces et portes comprises). kind vaut rack, cabinet, floor, room, door ou landmark ; col, row, width et depth le placent sur le plan, en carreaux du plan (0,5 m sauf réglage sur la page Emplacements) ; front vaut south, north, west ou east ; levels et positions donnent les cases des rayonnages et des armoires. parent_bin (A-3-3) pose un rayonnage ou une armoire dans une case d’une autre unité au lieu du plan : placez cette unité plus haut dans le fichier. Les colonnes absentes du fichier gardent leur valeur actuelle.",
 			parts:
 				"Mise à jour ou création par ref. Les colonnes absentes du fichier gardent leur valeur actuelle. Les fournisseurs sont reconnus par leur nom. location est la case où l’article est rangé (A-2-3, A-2 ou P, parmi les unités de stockage) ; vide, elle reste telle quelle, et sa note est conservée.",
 			part_options:
@@ -1057,7 +1065,17 @@ export const fr: Dict = {
 		intro:
 			"Le plan de l’atelier et l’emplacement de chaque article. Cherchez un article ou une case pour le trouver sur le plan.",
 		plan: "Plan de l’atelier",
-		planHint: "1 carreau = 0,5 m. Le bord épais d’une unité est sa face d’accès, d’où l’on prend les articles.",
+		planHint: "1 carreau = {size} m. Le bord épais d’une unité est sa face d’accès, d’où l’on prend les articles.",
+		planSettings: "Réglages du plan",
+		planSettingsIntro: "La taille d’un carreau du plan et, si vous le souhaitez, la zone principale de l’atelier.",
+		squareCm: "Taille d’un carreau (cm)",
+		squareHint:
+			"Entre 5 et 500. Les unités gardent leur taille réelle quand elle change : avec des carreaux deux fois plus petits, chaque unité en occupe deux fois plus. Refusé si une unité ne tomberait pas sur des carreaux entiers.",
+		areaSection: "Zone principale",
+		areaHint:
+			"En mètres, un nombre entier de carreaux dans chaque sens, depuis le coin en haut à gauche. Laissez les deux vides pour que le plan s’agrandisse avec ses unités.",
+		areaWidth: "Largeur (m)",
+		areaDepth: "Profondeur (m)",
 		units: "Unités de stockage",
 		drawnOnly: "Pièces, portes et repères",
 		addUnit: "Ajouter une unité",
@@ -1109,7 +1127,7 @@ export const fr: Dict = {
 			"Le côté d’où l’on prend les articles (le sud est en bas du plan). Pour une porte, le côté vers lequel elle s’ouvre.",
 		place: "Place sur le plan",
 		placeHint:
-			"En carreaux de 0,5 m depuis le coin en haut à gauche. Faites glisser l’unité sur le plan pour la déplacer, ou son coin pour la redimensionner.",
+			"En carreaux de {size} m depuis le coin en haut à gauche. Faites glisser l’unité sur le plan pour la déplacer, ou son coin pour la redimensionner.",
 		col: "Colonne",
 		row: "Rangée",
 		width: "Largeur",
@@ -1648,6 +1666,7 @@ export const fr: Dict = {
 			assemblyLineOptions: "Modification des valeurs d’option de {ref} dans l’assemblage {assembly}",
 			storageUnitCreate: "Création de l’unité de stockage {code}",
 			storageUnitEdit: "Modification de l’unité de stockage {code}",
+			planSettings: "Modification des réglages du plan de l’atelier",
 			storageUnitDelete: "Suppression de l’unité de stockage {code}",
 			partLocationSet: "Emplacement de {ref} : {bin}",
 			partLocationClear: "Retrait de l’emplacement de {ref}",

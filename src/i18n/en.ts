@@ -112,6 +112,14 @@ export const en = {
 		invalid_storage_code: "Use 1 to 6 letters or digits, without spaces or hyphens.",
 		storage_code_taken: "Another storage unit has this code.",
 		storage_outside_plan: "Too far out: the plan is 200 squares at most.",
+		storage_outside_area: "Outside the plan, which is {width} × {depth} squares.",
+		invalid_metres: "Not a valid length in metres (up to 2 decimals).",
+		plan_square_range: "Between 5 and 500 cm.",
+		plan_square_fraction: "Some units would not fall on whole squares at this size.",
+		plan_square_outside: "Some units would end up beyond the plan's limit of 200 squares.",
+		plan_area_whole: "Must be a whole number of squares of {square} m.",
+		plan_area_range: "Between 1 and 200 squares.",
+		plan_area_small: "Too small for the units on the plan: {width} × {depth} squares at least.",
 		storage_overlap: "Overlaps another storage unit on the plan.",
 		storage_levels_range: "Between 1 and 20 levels.",
 		storage_positions_range: "Between 1 and 30 positions.",
@@ -911,7 +919,7 @@ export const en = {
 		help: {
 			suppliers: "Upsert by name.",
 			storage_units:
-				"The workshop plan, upserted by code (required on every row, rooms and doors included). kind is rack, cabinet, floor, room, door or landmark; col, row, width and depth place it on the plan in half-metre squares; front is south, north, west or east; levels and positions give the bins of racks and cabinets. parent_bin (A-3-3) puts a rack or a cabinet in a bin of another unit instead of on the plan: list that unit first. Columns left out of the file keep their current values.",
+				"The workshop plan, upserted by code (required on every row, rooms and doors included). kind is rack, cabinet, floor, room, door or landmark; col, row, width and depth place it on the plan in squares of the plan (0.5 m unless changed on the Locations page); front is south, north, west or east; levels and positions give the bins of racks and cabinets. parent_bin (A-3-3) puts a rack or a cabinet in a bin of another unit instead of on the plan: list that unit first. Columns left out of the file keep their current values.",
 			parts:
 				"Upsert by ref. Columns left out of the file keep their current values. Suppliers are matched by name. location is the bin where the part is kept (A-2-3, A-2 or P, from the storage units); empty leaves it as it is, and its note is kept.",
 			part_options:
@@ -1030,7 +1038,17 @@ export const en = {
 		title: "Locations",
 		intro: "The workshop plan and where each part is kept. Search a part or a bin to find it on the plan.",
 		plan: "Workshop plan",
-		planHint: "1 square = 0.5 m. The thick edge of a unit is its front, where parts are taken from.",
+		planHint: "1 square = {size} m. The thick edge of a unit is its front, where parts are taken from.",
+		planSettings: "Plan settings",
+		planSettingsIntro: "The size of a square of the plan and, if you want, the main area of the workshop.",
+		squareCm: "Size of a square (cm)",
+		squareHint:
+			"Between 5 and 500. Units keep their real size when it changes: with squares half as big, every unit is drawn on twice as many. Refused when a unit would not fall on whole squares.",
+		areaSection: "Main area",
+		areaHint:
+			"In metres, a whole number of squares each way, from the top left corner. Leave both empty to let the plan grow with its units.",
+		areaWidth: "Width (m)",
+		areaDepth: "Depth (m)",
 		units: "Storage units",
 		drawnOnly: "Rooms, doors and landmarks",
 		addUnit: "Add unit",
@@ -1080,7 +1098,7 @@ export const en = {
 		frontHint: "The side parts are taken from (south is the bottom of the plan). For a door, the side it opens to.",
 		place: "Place on the plan",
 		placeHint:
-			"In squares of 0.5 m from the top left corner. Drag the unit on the plan to move it, or its corner to resize it.",
+			"In squares of {size} m from the top left corner. Drag the unit on the plan to move it, or its corner to resize it.",
 		col: "Column",
 		row: "Row",
 		width: "Width",
@@ -1611,6 +1629,7 @@ export const en = {
 			assemblyLineOptions: "Change the option values of {ref} in assembly {assembly}",
 			storageUnitCreate: "Create storage unit {code}",
 			storageUnitEdit: "Edit storage unit {code}",
+			planSettings: "Change the settings of the workshop plan",
 			storageUnitDelete: "Delete storage unit {code}",
 			partLocationSet: "Set the location of {ref} to {bin}",
 			partLocationClear: "Clear the location of {ref}",

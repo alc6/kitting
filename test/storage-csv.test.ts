@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { type ImportPlan, planImport } from "../src/domain/import";
 import { revertChangeSet } from "../src/domain/revert";
 import { fullCode, locationsOf } from "../src/domain/storage";
-import { changeSql, importCsv, loadDemo, one, partId, request, rows, stmt, TESTER, testDb } from "./helpers";
+import { changeSql, importCsv, loadDemo, one, partId, request, rows, seedSql, stmt, TESTER, testDb } from "./helpers";
 
 const plan = async (type: "storage_units" | "parts", csv: string): Promise<ImportPlan> => {
 	const p = await planImport({ db: testDb(), locale: "en" }, type, csv);
@@ -172,5 +172,28 @@ describe("the location column of parts.csv", () => {
 		expect(await code("PAD-FELT")).toBe("A-2-3");
 		expect(await code("SWITCH-INL")).toBe("B-1-2");
 		expect(await code("NEW-1")).toBe("C-2");
+	});
+});
+
+describe("storage_units.csv and the plan's main area (D209)", () => {
+	it("refuses a unit outside a fixed area, with the plan's size, and accepts one inside it", async () => {
+		await seedSql(
+			stmt("INSERT INTO settings (key, value, created_by, updated_by) VALUES ('plan_width', '20', 's', 's')"),
+			stmt("INSERT INTO settings (key, value, created_by, updated_by) VALUES ('plan_depth', '12', 's', 's')"),
+		);
+		const p = await plan(
+			"storage_units",
+			`${HEADER}\nIN,Inside,rack,10,5,10,2,south,2,2,,\nOUT,Outside,rack,15,8,10,2,south,2,2,,\nLOW,Too low,rack,1,11,2,2,south,2,2,,\n`,
+		);
+		expect(issues(p)).toEqual(["3:col:storage_outside_area", "4:row:storage_outside_area"]);
+		expect(p.errors[0]?.vars).toEqual({ width: 20, depth: 12 });
+		expect(actions(await plan("storage_units", `${HEADER}\nIN,Inside,rack,10,5,10,2,south,2,2,,\n`))).toEqual([
+			"create",
+		]);
+	});
+
+	it("keeps the limit of 200 squares when the area is automatic", async () => {
+		const p = await plan("storage_units", `${HEADER}\nFAR,Far,rack,195,1,10,2,south,2,2,,\n`);
+		expect(issues(p)).toEqual(["2:col:storage_outside_plan"]);
 	});
 });

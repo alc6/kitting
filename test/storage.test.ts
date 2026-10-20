@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { revertChangeSet } from "../src/domain/revert";
 import {
 	binCode,
+	DEFAULT_PLAN,
 	frontEdge,
 	locationSortKey,
 	type PlanUnit,
@@ -47,8 +48,8 @@ describe("bin codes and plan geometry", () => {
 	});
 
 	it("sizes the plan to its units, with a minimum", () => {
-		expect(planSize([])).toEqual({ width: 24, depth: 14 });
-		expect(planSize([{ col: 30, row: 2, width: 4, depth: 20 }])).toEqual({ width: 35, depth: 23 });
+		expect(planSize([], DEFAULT_PLAN)).toEqual({ width: 24, depth: 14 });
+		expect(planSize([{ col: 30, row: 2, width: 4, depth: 20 }], DEFAULT_PLAN)).toEqual({ width: 35, depth: 23 });
 	});
 
 	it("sorts locations by unit, level and position, parts without one last", () => {
@@ -507,5 +508,147 @@ describe("the part's Location tab", () => {
 		expect(tab).toContain("Top shelf box");
 		const moved = await postForm(`/locations/parts/${id}?back=%2Fparts%2F${id}%2Flocation`, { bin: "A-1-1", note: "" });
 		expect(moved.headers.get("Location")).toBe(`/parts/${id}/location?ok=saved`);
+	});
+});
+
+describe("the plan's square size and main area (D209)", () => {
+	const save = (over: Record<string, string> = {}, env = {}) =>
+		postForm("/locations/plan-settings", { square_cm: "50", width_m: "", depth_m: "", ...over }, env);
+	const unitAt = (code: string) => one("SELECT col, row, width, depth FROM storage_units WHERE code = ?", code);
+	const settings = () => rows("SELECT key, value FROM settings WHERE key LIKE 'plan_%' ORDER BY key");
+	const refused = async (res: Response, message: string) => {
+		expect(res.status, message).toBe(422);
+		expect(await res.text()).toContain(message);
+	};
+	const admin = { role: "admin", seeCosts: true } as const;
+	const undo = { user: TESTER, summary: () => "Undo" };
+
+	it("sizes the plan to its fixed area, whatever the units", () => {
+		const far = [{ col: 30, row: 2, width: 4, depth: 20 }];
+		expect(planSize(far, { squareCm: 50, area: { width: 40, depth: 25 } })).toEqual({ width: 40, depth: 25 });
+		expect(planSize(far, { squareCm: 25, area: null })).toEqual({ width: 35, depth: 23 });
+	});
+
+	it("rescales the units drawn on the plan so they keep their real size", async () => {
+		await drawUnit({ code: "A", col: "1", row: "3", width: "10", depth: "2" });
+		await drawUnit({ code: "P", kind: "floor", col: "15", row: "5", width: "3", depth: "3" });
+		await drawUnit({ code: "S1", kind: "cabinet", placement: "bin", parent_bin: "A-1-1", width: "2" });
+		const before = await unitAt("S1");
+		expect((await save({ square_cm: "25" })).status).toBe(303);
+		expect(await unitAt("A")).toEqual({ col: 2, row: 6, width: 20, depth: 4 });
+		expect(await unitAt("P")).toEqual({ col: 30, row: 10, width: 6, depth: 6 });
+		// A unit standing in a bin is not drawn on the plan: left alone.
+		expect(await unitAt("S1")).toEqual(before);
+		expect(await settings()).toEqual([{ key: "plan_square_cm", value: "25" }]);
+		const set = await one<{ id: number; summary: string }>(
+			"SELECT id, summary FROM change_sets ORDER BY id DESC LIMIT 1",
+		);
+		expect(set.summary).toBe("Change the settings of the workshop plan");
+		expect(await one("SELECT updated_by FROM storage_units WHERE code = 'A'")).toEqual({ updated_by: TESTER });
+		// The hints state the size; the form shows it back.
+		expect(await (await request("/locations")).text()).toContain("1 square = 0.25 m.");
+		expect(await (await request("/locations/new")).text()).toContain("In squares of 0.25 m");
+		expect(await (await request("/locations/plan-settings")).text()).toContain('value="25"');
+		const fr = await request("/locations", { headers: { Cookie: "kitting_lang=fr" } });
+		expect(await fr.text()).toContain("1 carreau = 0,25 m.");
+		// Undoing it (an admin action) brings back the squares and the units.
+		expect(await revertChangeSet(testDb(), admin, set.id, undo)).toMatchObject({ ok: true });
+		expect(await unitAt("A")).toEqual({ col: 1, row: 3, width: 10, depth: 2 });
+		expect(await settings()).toEqual([]);
+	});
+
+	it("refuses a size that would put a unit between squares, or beyond the plan", async () => {
+		await drawUnit({ code: "A", col: "2", row: "4", width: "20", depth: "2" });
+		const p = await drawUnit({ code: "P", kind: "floor", col: "25", row: "9", width: "3", depth: "3" });
+		// 50 -> 100 cm halves every value: P is odd.
+		await refused(await save({ square_cm: "100" }), "Some units would not fall on whole squares at this size.");
+		expect(await unitAt("A")).toEqual({ col: 2, row: 4, width: 20, depth: 2 });
+		expect(await settings()).toEqual([]);
+		const even = unitForm({ code: "P", kind: "floor", col: "26", row: "10", width: "4", depth: "4" });
+		expect((await postForm(`/locations/${p}`, even)).status).toBe(303);
+		expect((await save({ square_cm: "100" })).status).toBe(303);
+		expect(await unitAt("P")).toEqual({ col: 13, row: 5, width: 2, depth: 2 });
+		expect(await settings()).toEqual([{ key: "plan_square_cm", value: "100" }]);
+		// Back to 5 cm: A would be 200 squares wide from column 20.
+		await refused(await save({ square_cm: "5" }), "beyond the plan&#39;s limit of 200 squares");
+		await refused(await save({ square_cm: "4" }), "Between 5 and 500 cm.");
+		await refused(await save({ square_cm: "501" }), "Between 5 and 500 cm.");
+		await refused(await save({ square_cm: "" }), "Between 5 and 500 cm.");
+		await refused(await save({ square_cm: "12.5" }), "Must be a whole number.");
+	});
+
+	it("fixes the main area in metres, refuses units outside it, and clears it", async () => {
+		await drawUnit({ code: "A", col: "1", row: "1", width: "10", depth: "2" });
+		// Squares of 0.5 m: 10 x 6 m is 20 x 12 squares, and the rack needs 11 x 3.
+		expect((await save({ width_m: "10", depth_m: "6" })).status).toBe(303);
+		expect(await settings()).toEqual([
+			{ key: "plan_depth", value: "12" },
+			{ key: "plan_width", value: "20" },
+		]);
+		const form = await (await request("/locations/plan-settings")).text();
+		expect(form).toContain('value="10"');
+		expect(form).toContain('value="6"');
+		// A unit that does not fit is refused, with the plan's size; one that fits is accepted.
+		const outside = "Outside the plan, which is 20 × 12 squares.";
+		await refused(await postForm("/locations", unitForm({ code: "B", col: "12", row: "6", width: "10" })), outside);
+		await refused(await postForm("/locations", unitForm({ code: "B", col: "3", row: "11", depth: "2" })), outside);
+		expect((await postForm("/locations", unitForm({ code: "B", col: "10", row: "6", width: "10" }))).status).toBe(303);
+		// Smaller than what is drawn: refused, with what it needs. No margin is asked.
+		await refused(
+			await save({ width_m: "5", depth_m: "6" }),
+			"Too small for the units on the plan: 20 × 8 squares at least.",
+		);
+		expect((await save({ width_m: "10", depth_m: "4" })).status).toBe(303);
+		// Both sides or none; whole squares; at most 200 of them.
+		await refused(await save({ width_m: "10" }), "Required.");
+		await refused(await save({ width_m: "10.3", depth_m: "4" }), "Must be a whole number of squares of 0.5 m.");
+		await refused(await save({ width_m: "101", depth_m: "4" }), "Between 1 and 200 squares.");
+		await refused(await save({ width_m: "abc", depth_m: "4" }), "Not a valid length in metres");
+		// Neither side removes the area: the plan grows with its units again.
+		expect((await save()).status).toBe(303);
+		expect(await settings()).toEqual([]);
+		const free = unitForm({ code: "C", col: "30", row: "1", width: "4" });
+		expect((await postForm("/locations", free)).status).toBe(303);
+	});
+
+	it("reads the area in the new squares, and holds the rescaled units to it", async () => {
+		await drawUnit({ code: "A", col: "1", row: "1", width: "10", depth: "2" });
+		await save({ width_m: "10", depth_m: "6" });
+		// The same area in metres with finer squares: 40 x 24 squares of 0.25 m; the rack is 20 wide from column 2.
+		expect((await save({ square_cm: "25", width_m: "10", depth_m: "6" })).status).toBe(303);
+		expect(await unitAt("A")).toEqual({ col: 2, row: 2, width: 20, depth: 4 });
+		expect(await settings()).toEqual([
+			{ key: "plan_depth", value: "24" },
+			{ key: "plan_square_cm", value: "25" },
+			{ key: "plan_width", value: "40" },
+		]);
+		// The rack reaches 22 squares of 0.25 m: 5.5 m.
+		await refused(await save({ square_cm: "25", width_m: "5", depth_m: "6" }), "22 × 6 squares at least");
+		// A form that changes nothing writes nothing.
+		const sets = await rows("SELECT id FROM change_sets");
+		expect((await save({ square_cm: "25", width_m: "10", depth_m: "6" })).status).toBe(303);
+		expect(await rows("SELECT id FROM change_sets")).toHaveLength(sets.length);
+	});
+
+	it("is for planners; others cannot even open the form", async () => {
+		await setRole("planner");
+		expect((await save({ square_cm: "25" }, NOT_ADMIN)).status).toBe(303);
+		expect(await (await request("/locations/plan-settings", {}, NOT_ADMIN)).text()).toContain('value="25"');
+		expect(await (await request("/locations", {}, NOT_ADMIN)).text()).toContain("Plan settings");
+		for (const role of ["operator", "viewer"] as const) {
+			await setRole(role);
+			expect((await save({ square_cm: "50" }, NOT_ADMIN)).status, role).toBe(403);
+			expect((await request("/locations/plan-settings", {}, NOT_ADMIN)).status, role).toBe(403);
+			expect(await (await request("/locations", {}, NOT_ADMIN)).text(), role).not.toContain("Plan settings");
+		}
+		expect(await settings()).toEqual([{ key: "plan_square_cm", value: "25" }]);
+	});
+
+	it("names the setting in the recent changes; only an administrator can undo it", async () => {
+		await save({ square_cm: "25" });
+		const set = await one<{ id: number }>("SELECT max(id) AS id FROM change_sets");
+		expect(await (await request(`/history/${set.id}`)).text()).toContain("plan_square_cm");
+		const planner = { role: "planner", seeCosts: false } as const;
+		expect(await revertChangeSet(testDb(), planner, set.id, undo)).toMatchObject({ ok: false });
 	});
 });

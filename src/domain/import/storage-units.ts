@@ -4,7 +4,15 @@
 import { eq, type SQL, sql } from "drizzle-orm";
 import { partLocations, type StorageUnit, storageUnits } from "../../db/schema";
 import { validate } from "../../lib/validation";
-import { checkUnitIn, storageUnitInput, type UnitValues, type UsedBin, unitToForm, unitTree } from "../storage";
+import {
+	checkUnitIn,
+	loadPlanSettings,
+	storageUnitInput,
+	type UnitValues,
+	type UsedBin,
+	unitToForm,
+	unitTree,
+} from "../storage";
 import { checkHeader, emptyPlan, fieldIssues, type Importer, type PlanRow, type RowIssue } from "./types";
 
 const COLUMNS = [
@@ -61,11 +69,12 @@ export const storageUnitsImporter: Importer = {
 		const { errors, warnings } = checkHeader(this, table);
 		if (errors.length) return emptyPlan("storage_units", errors, warnings);
 
-		const [existing, located] = await Promise.all([
+		const [existing, located, settings] = await Promise.all([
 			db.select().from(storageUnits),
 			db
 				.select({ unitId: partLocations.unitId, level: partLocations.level, position: partLocations.position })
 				.from(partLocations),
+			loadPlanSettings(db),
 		]);
 		// The plan as the rows so far leave it: existing units as updated, new ones under ids below zero.
 		const plan = new Map<number, StorageUnit>(existing.map((u) => [u.id, u]));
@@ -105,9 +114,15 @@ export const storageUnitsImporter: Importer = {
 				issues.push(...fieldIssues(rec.line, v.errors, (f) => f));
 				continue;
 			}
-			const checked = checkUnitIn([...plan.values()], current ? (used.get(current.id) ?? []) : [], v.data, current?.id);
+			const checked = checkUnitIn(
+				[...plan.values()],
+				current ? (used.get(current.id) ?? []) : [],
+				v.data,
+				current?.id,
+				settings,
+			);
 			if (!checked.ok) {
-				issues.push(...fieldIssues(rec.line, checked.errors, (f) => f));
+				issues.push(...fieldIssues(rec.line, checked.errors, (f) => f, checked.vars));
 				continue;
 			}
 			const values = checked.values;
