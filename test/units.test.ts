@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
 	ceilDiv,
 	formatCents,
+	formatMetres,
 	formatMoney,
 	formatQty,
 	lineCostCents,
@@ -49,6 +50,11 @@ describe("formatting", () => {
 		expect(formatQty(-250)).toBe("-0.25");
 		expect(formatQty(1234567000)).toBe("1,234,567");
 		expect(formatQty(1234567000, "fr")).toBe("1\u202f234\u202f567");
+	});
+
+	it("formats centimetres as metres", () => {
+		expect([50, 25, 100, 5, 125, 500].map((cm) => formatMetres(cm))).toEqual(["0.5", "0.25", "1", "0.05", "1.25", "5"]);
+		expect(formatMetres(25, "fr")).toBe("0,25");
 	});
 
 	it("formats money with two decimals", () => {

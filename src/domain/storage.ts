@@ -1,10 +1,10 @@
 // Storage locations (D194–D200): the workshop plan, drawn as rooms, doors, landmarks and storage units on a grid of
-// half-metre squares, and the home location of each part. Bins are not rows: a unit of L levels × P positions has the
+// squares (half a metre unless changed, D209), and the home location of each part. Bins are not rows: a unit of L levels × P positions has the
 // bins "<code>-<level>-<position>", level counted from the floor and position from the left when facing the unit's
 // front. A unit can stand in a bin of another one (a drawer cabinet on a shelf): a location is then read through the
 // chain of bins that holds it. Stock is not counted per bin: a location tells people where to look and where to put
 // away.
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { type AnyColumn, and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import {
 	type PartKind,
@@ -16,6 +16,7 @@ import {
 	type StorageFront,
 	type StorageKind,
 	type StorageUnit,
+	settings,
 	storageUnits,
 } from "../db/schema";
 import type { Statement } from "../lib/db";
@@ -29,6 +30,15 @@ export const MAX_POSITIONS = 30;
 /** The plan is at least this many squares, and grows with the units, up to PLAN_MAX each way. */
 export const PLAN_MIN = { width: 24, depth: 14 } as const;
 export const PLAN_MAX = 200;
+/** The size of a square of the plan, in centimetres: half a metre unless the workshop sets another (D209). */
+export const SQUARE_CM = { default: 50, min: 5, max: 500 } as const;
+
+/** Keys of the plan's rows in `settings`. A missing row means the default. */
+export const PLAN_SETTINGS = { squareCm: "plan_square_cm", width: "plan_width", depth: "plan_depth" } as const;
+
+/** The plan's settings: the square's size, and a fixed main area in squares (null: it grows with the units). */
+export type PlanSettings = { squareCm: number; area: { width: number; depth: number } | null };
+export const DEFAULT_PLAN: PlanSettings = { squareCm: SQUARE_CM.default, area: null };
 /** How many units deep a location can be: a box in a drawer cabinet on a rack is three. */
 export const MAX_DEPTH = 4;
 
@@ -106,7 +116,10 @@ function madeUpCode(d: StorageUnitInput, taken: Set<string>): string {
 	return `${base.slice(0, 2)}${Date.now() % 10000}`;
 }
 
-export type CheckedUnit = { ok: true; values: UnitValues } | { ok: false; errors: FieldErrors };
+/** `vars` fill the error messages that state a size (the plan's area). */
+export type CheckedUnit =
+	| { ok: true; values: UnitValues }
+	| { ok: false; errors: FieldErrors; vars?: Record<string, number> };
 /** The bins of a unit that hold parts (level and position as in `part_locations`). */
 export type UsedBin = { level: number | null; position: number | null };
 
@@ -115,7 +128,7 @@ export type UsedBin = { level: number | null; position: number | null };
  * still in use. Returns the values to write, or the field errors.
  */
 export async function checkUnit(db: Db, d: StorageUnitInput, id?: number): Promise<CheckedUnit> {
-	const [all, used] = await Promise.all([
+	const [all, used, plan] = await Promise.all([
 		db.select().from(storageUnits),
 		id
 			? db
@@ -123,15 +136,22 @@ export async function checkUnit(db: Db, d: StorageUnitInput, id?: number): Promi
 					.from(partLocations)
 					.where(eq(partLocations.unitId, id))
 			: Promise.resolve([]),
+		loadPlanSettings(db),
 	]);
-	return checkUnitIn(all, used, d, id);
+	return checkUnitIn(all, used, d, id, plan);
 }
 
 /**
  * `checkUnit` against a plan in memory: `all` the units as they stand (an import passes the plan as the rows before
- * this one leave it), `used` the bins of unit `id` that hold parts.
+ * this one leave it), `used` the bins of unit `id` that hold parts, `plan` the plan's settings (a fixed area is a wall).
  */
-export function checkUnitIn(all: StorageUnit[], used: UsedBin[], d: StorageUnitInput, id?: number): CheckedUnit {
+export function checkUnitIn(
+	all: StorageUnit[],
+	used: UsedBin[],
+	d: StorageUnitInput,
+	id: number | undefined,
+	plan: PlanSettings,
+): CheckedUnit {
 	const errors: FieldErrors = {};
 	const others = all.filter((u) => u.id !== id);
 	const bins = hasBins(d.kind);
@@ -172,8 +192,10 @@ export function checkUnitIn(all: StorageUnit[], used: UsedBin[], d: StorageUnitI
 	} else {
 		if (d.width < 1) errors.width = "not_positive";
 		if (d.depth < 1) errors.depth = "not_positive";
-		if (d.col + d.width > PLAN_MAX) errors.col = "storage_outside_plan";
-		if (d.row + d.depth > PLAN_MAX) errors.row = "storage_outside_plan";
+		const limit = plan.area ?? { width: PLAN_MAX, depth: PLAN_MAX };
+		const outside = plan.area ? "storage_outside_area" : "storage_outside_plan";
+		if (d.col + d.width > limit.width) errors.col = outside;
+		if (d.row + d.depth > limit.depth) errors.row = outside;
 		if (!errors.width && !errors.depth) {
 			const drawn = others.filter(onPlan);
 			// Two storage units cannot stand on the same squares, nor two rooms; rooms, doors and landmarks contain units.
@@ -198,7 +220,7 @@ export function checkUnitIn(all: StorageUnit[], used: UsedBin[], d: StorageUnitI
 				errors.positions = "storage_bin_in_use";
 		}
 	}
-	if (Object.keys(errors).length) return { ok: false, errors };
+	if (Object.keys(errors).length) return { ok: false, errors, vars: plan.area ?? undefined };
 	return {
 		ok: true,
 		values: {
@@ -275,16 +297,174 @@ export async function getUnit(db: Db, id: number): Promise<StorageUnit | undefin
 	return rows[0];
 }
 
-/** The plan's size in squares: the minimum, or more when units stand further out (one square of margin). */
-export function planSize(units: (Rect & Partial<Pick<StorageUnit, "parentUnitId">>)[]): {
+/** The plan's size in squares: the fixed area when there is one, else the minimum or more when units stand further out. */
+export function planSize(
+	units: (Rect & Partial<Pick<StorageUnit, "parentUnitId">>)[],
+	plan: PlanSettings,
+): {
 	width: number;
 	depth: number;
 } {
+	if (plan.area) return { ...plan.area };
 	const drawn = units.filter((u) => (u.parentUnitId ?? null) === null);
 	return {
 		width: Math.max(PLAN_MIN.width, ...drawn.map((u) => u.col + u.width + 1)),
 		depth: Math.max(PLAN_MIN.depth, ...drawn.map((u) => u.row + u.depth + 1)),
 	};
+}
+
+// ---------------------------------------------------------------------------
+// The plan's settings (D209): the size of a square, and a fixed main area
+
+const wholeSetting = (v: string | undefined, min: number, max: number): number | null =>
+	v !== undefined && /^\d+$/.test(v) && Number(v) >= min && Number(v) <= max ? Number(v) : null;
+
+/** The settings in force; a missing or unusable row is the default, and an area needs both its sides. */
+export async function loadPlanSettings(db: Db): Promise<PlanSettings> {
+	const rows = await db
+		.select({ key: settings.key, value: settings.value })
+		.from(settings)
+		.where(inArray(settings.key, Object.values(PLAN_SETTINGS)));
+	const byKey = new Map(rows.map((r) => [r.key, r.value]));
+	const width = wholeSetting(byKey.get(PLAN_SETTINGS.width), 1, PLAN_MAX);
+	const depth = wholeSetting(byKey.get(PLAN_SETTINGS.depth), 1, PLAN_MAX);
+	return {
+		squareCm: wholeSetting(byKey.get(PLAN_SETTINGS.squareCm), SQUARE_CM.min, SQUARE_CM.max) ?? SQUARE_CM.default,
+		area: width !== null && depth !== null ? { width, depth } : null,
+	};
+}
+
+/** The form: the square in centimetres, the main area in metres (both sides or none). */
+export const planSettingsInput = z.object({
+	square_cm: field.int(),
+	width_m: field.metres(),
+	depth_m: field.metres(),
+});
+export type PlanSettingsInput = z.output<typeof planSettingsInput>;
+
+/** What saving the settings does: the new settings, and by how much the drawn units' squares are multiplied. */
+export type PlanChange = { plan: PlanSettings; rescale: { from: number; to: number } | null };
+export type CheckedPlanSettings =
+	| { ok: true; change: PlanChange }
+	| { ok: false; errors: FieldErrors; vars: Record<string, number> };
+
+/** Squares of the plan units need, from the top left corner. */
+const extent = (units: Rect[]) => ({
+	width: Math.max(0, ...units.map((u) => u.col + u.width)),
+	depth: Math.max(0, ...units.map((u) => u.row + u.depth)),
+});
+
+/**
+ * The drawn units after the squares change from `from` to `to` cm: each value multiplied by from/to, so that a unit keeps
+ * its real size. An error key when one would not be a whole number of squares, or would end up beyond the plan's limit.
+ */
+function rescaled(units: Rect[], from: number, to: number): { rects: Rect[] } | { error: string } {
+	const rects: Rect[] = [];
+	for (const u of units) {
+		const values = [u.col, u.row, u.width, u.depth];
+		if (values.some((n) => (n * from) % to !== 0)) return { error: "plan_square_fraction" };
+		const [col, row, width, depth] = values.map((n) => (n * from) / to) as [number, number, number, number];
+		if (width < 1 || depth < 1) return { error: "plan_square_fraction" };
+		if (col + width > PLAN_MAX || row + depth > PLAN_MAX) return { error: "plan_square_outside" };
+		rects.push({ col, row, width, depth });
+	}
+	return { rects };
+}
+
+/**
+ * Checks the settings form against the units drawn on the plan (not those standing in a bin). Changing the square
+ * rescales them; the main area is typed in metres and must be a whole number of the new squares, and big enough for
+ * the units (after they are rescaled).
+ */
+export function checkPlanSettings(
+	units: StorageUnit[],
+	current: PlanSettings,
+	input: PlanSettingsInput,
+): CheckedPlanSettings {
+	const errors: FieldErrors = {};
+	const squareCm = input.square_cm;
+	if (squareCm < SQUARE_CM.min || squareCm > SQUARE_CM.max) errors.square_cm = "plan_square_range";
+
+	let area: PlanSettings["area"] = null;
+	const sides = [
+		["width_m", input.width_m],
+		["depth_m", input.depth_m],
+	] as const;
+	if (sides.some(([, cm]) => cm !== null)) {
+		const squares: number[] = [];
+		for (const [name, cm] of sides) {
+			if (cm === null) errors[name] = "required";
+			else if (!errors.square_cm) {
+				if (cm % squareCm !== 0) errors[name] = "plan_area_whole";
+				else if (cm / squareCm > PLAN_MAX) errors[name] = "plan_area_range";
+				else squares.push(cm / squareCm);
+			}
+		}
+		if (squares.length === 2) area = { width: squares[0] as number, depth: squares[1] as number };
+	}
+
+	const drawn = units.filter(onPlan);
+	let rects: Rect[] = drawn;
+	const rescale = !errors.square_cm && squareCm !== current.squareCm ? { from: current.squareCm, to: squareCm } : null;
+	if (rescale) {
+		const r = rescaled(drawn, rescale.from, rescale.to);
+		if ("error" in r) errors.square_cm = r.error;
+		else rects = r.rects;
+	}
+
+	const need = extent(rects);
+	if (area && !errors.width_m && area.width < need.width) errors.width_m = "plan_area_small";
+	if (area && !errors.depth_m && area.depth < need.depth) errors.depth_m = "plan_area_small";
+	if (Object.keys(errors).length) return { ok: false, errors, vars: { width: need.width, depth: need.depth } };
+	return { ok: true, change: { plan: { squareCm, area }, rescale } };
+}
+
+/** Whether saving changes nothing (no row to write). */
+export const planUnchanged = (current: PlanSettings, next: PlanSettings) =>
+	current.squareCm === next.squareCm &&
+	current.area?.width === next.area?.width &&
+	current.area?.depth === next.area?.depth;
+
+const upsertSetting = (db: Db, key: string, value: string, user: string, now: string) =>
+	db
+		.insert(settings)
+		.values({ key, value, createdAt: now, createdBy: user, updatedAt: now, updatedBy: user })
+		.onConflictDoUpdate({ target: settings.key, set: { value, updatedAt: now, updatedBy: user } });
+
+/**
+ * The statements that save the settings, in one change set: the rows of `settings` (a removed area deletes its rows),
+ * and one UPDATE that multiplies the drawn units' squares (exact: `checkPlanSettings` saw that every value divides).
+ */
+export function planSettingsStatements(db: Db, current: PlanSettings, change: PlanChange, user: string, now: string) {
+	const { plan, rescale } = change;
+	const out: Statement[] = [];
+	if (plan.squareCm !== current.squareCm)
+		out.push(upsertSetting(db, PLAN_SETTINGS.squareCm, String(plan.squareCm), user, now));
+	if (plan.area) {
+		if (plan.area.width !== current.area?.width)
+			out.push(upsertSetting(db, PLAN_SETTINGS.width, String(plan.area.width), user, now));
+		if (plan.area.depth !== current.area?.depth)
+			out.push(upsertSetting(db, PLAN_SETTINGS.depth, String(plan.area.depth), user, now));
+	} else if (current.area) {
+		out.push(db.delete(settings).where(inArray(settings.key, [PLAN_SETTINGS.width, PLAN_SETTINGS.depth])));
+	}
+	if (rescale) {
+		const by = (col: AnyColumn) => sql`${col} * ${rescale.from} / ${rescale.to}`;
+		out.push(
+			db
+				.update(storageUnits)
+				.set({
+					col: by(storageUnits.col),
+					row: by(storageUnits.row),
+					width: by(storageUnits.width),
+					depth: by(storageUnits.depth),
+					updatedAt: now,
+					updatedBy: user,
+				})
+				.where(isNull(storageUnits.parentUnitId)),
+		);
+	}
+	return out;
 }
 
 // ---------------------------------------------------------------------------

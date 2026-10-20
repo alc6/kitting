@@ -67,6 +67,10 @@ export const formatQty = (milli: number, locale: NumberLocale = "en"): string =>
 export const formatQtyInput = (milli: number, locale: NumberLocale = "en"): string =>
 	formatScaled(milli, 3, { locale, group: false });
 
+/** Centimetres as metres, for texts and inputs: 50 -> "0.5" (en) / "0,5" (fr), 25 -> "0.25", 100 -> "1". */
+export const formatMetres = (cm: number, locale: NumberLocale = "en"): string =>
+	formatScaled(cm, 2, { locale, group: false });
+
 /** 123456 -> "1,234.56" (en) / "1 234,56" (fr). */
 export const formatCents = (cents: number, locale: NumberLocale = "en"): string =>
 	formatScaled(cents, 2, { locale, minDecimals: 2, group: true });

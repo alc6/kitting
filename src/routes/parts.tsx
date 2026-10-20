@@ -71,6 +71,7 @@ import {
 	indexUnits,
 	type Location,
 	listUnits,
+	loadPlanSettings,
 	locationCode,
 	locationOf,
 	nestedIn,
@@ -1949,7 +1950,8 @@ async function pricesTab(c: Context<AppEnv>, part: Part, pastPrice?: { values: F
 /** The Location tab (D197): where the part is kept, the plan with its bin marked, the unit's front, and the change form. */
 async function locationTab(c: Context<AppEnv>, part: Part, location: Location | undefined) {
 	const t = c.var.t;
-	const units = (await listUnits(c.var.db)).map((r) => r.unit);
+	const [rows, plan] = await Promise.all([listUnits(c.var.db), loadPlanSettings(c.var.db)]);
+	const units = rows.map((r) => r.unit);
 	const unit = location ? units.find((u) => u.id === location.unit.id) : undefined;
 	const [contents, nested] = unit
 		? [await unitContents(c.var.db, unit.id), nestedIn(indexUnits(units), unit.id)]
@@ -1967,7 +1969,7 @@ async function locationTab(c: Context<AppEnv>, part: Part, location: Location | 
 						<div class="overflow-x-auto rounded-lg border bg-background">
 							<PlanSvg
 								units={units}
-								size={planSize(units)}
+								size={planSize(units, plan)}
 								highlight={location ? planHighlight(location) : undefined}
 								links="view"
 							/>

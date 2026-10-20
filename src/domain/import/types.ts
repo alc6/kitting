@@ -80,8 +80,13 @@ export function checkHeader(importer: Importer, table: CsvTable): { errors: RowI
 }
 
 /** Converts validation errors (field -> key) into row issues. */
-export function fieldIssues(line: number, errors: Record<string, string>, columnFor: (field: string) => string) {
-	return Object.entries(errors).map(([fieldName, key]) => ({ line, column: columnFor(fieldName), key }));
+export function fieldIssues(
+	line: number,
+	errors: Record<string, string>,
+	columnFor: (field: string) => string,
+	vars?: Record<string, string | number>,
+): RowIssue[] {
+	return Object.entries(errors).map(([fieldName, key]) => ({ line, column: columnFor(fieldName), key, vars }));
 }
 
 export function emptyPlan(type: ImportType, errors: RowIssue[], warnings: RowIssue[]): ImportPlan {

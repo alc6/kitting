@@ -26,8 +26,9 @@ The workshop plan (the Locations page): rooms, doors, landmarks and the units th
 same door again on every import). Columns you leave out keep their current values.
 
 - `kind` is `rack`, `cabinet` (a drawer cabinet), `floor` (a floor area, one place), `room`, `door` or `landmark`.
-- `col`, `row`, `width` and `depth` place the unit on the plan, in half-metre squares from the top left. Units that
-  hold parts may not overlap, nor may rooms; a unit belongs to the room around its centre.
+- `col`, `row`, `width` and `depth` place the unit on the plan, in squares of the plan (0.5 m unless changed on the
+  Locations page) from the top left. Units that hold parts may not overlap, nor may rooms; a unit belongs to the room
+  around its centre. A plan with a fixed main area refuses units outside it.
 - `front` is the side people pick from: `south`, `north`, `west` or `east`.
 - `levels` and `positions` give the bins of racks and cabinets: `A-2-3` is level 2 from the floor, position 3 from the
   left when facing the front. Other kinds have one place.

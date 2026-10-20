@@ -1,7 +1,7 @@
 // zod field builders shared by HTML forms and CSV import rows. Every value arrives as
 // a string; issue messages are i18n keys from Dict.errors (translated by errorText()).
 import { z } from "zod";
-import { parseBool, parseCents, parseMilli, parseMinutes } from "./units";
+import { parseBool, parseCents, parseMilli, parseMinutes, parseScaled } from "./units";
 
 const issue = (ctx: z.RefinementCtx, message: string) => {
 	ctx.addIssue({ code: "custom", message });
@@ -92,6 +92,16 @@ export const field = {
 				if (!/^\d+$/.test(v)) return issue(ctx, "not_integer");
 				const n = Number(v);
 				return Number.isSafeInteger(n) ? n : issue(ctx, "invalid_number");
+			}),
+	/** A length in metres (up to 2 decimals) as whole centimetres; empty -> null. */
+	metres: () =>
+		z
+			.string()
+			.trim()
+			.transform((v, ctx): number | null => {
+				if (v === "") return null;
+				const cm = parseScaled(v, 2);
+				return cm === null || cm <= 0 ? issue(ctx, "invalid_metres") : cm;
 			}),
 	bool: () =>
 		z

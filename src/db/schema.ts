@@ -582,8 +582,8 @@ export const priceHistory = sqliteTable(
 );
 
 // A storage unit of the workshop plan (D194): a rack, a drawer cabinet or a floor area that holds parts, or a room, a
-// door or a landmark drawn for orientation. On the plan it is a rectangle of the grid (half-metre squares, `col`/`row`
-// from the top left) with a front, the side people pick from. Its bins are its levels × positions: bin "A-2-3" is unit
+// door or a landmark drawn for orientation. On the plan it is a rectangle of the grid (squares, half a metre unless set in
+// `settings`, D209; `col`/`row` from the top left) with a front, the side people pick from. Its bins are its levels × positions: bin "A-2-3" is unit
 // A, level 2 counted from the floor, position 3 counted from the left when facing the front. Bins are not rows: they
 // follow from the unit's size. A unit can also stand in a bin of another one instead of on the plan (D199): a drawer
 // cabinet on shelf A-3-3 has `parent_unit_id` A, level 3, position 3, and its own bins.

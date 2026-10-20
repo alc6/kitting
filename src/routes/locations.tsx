@@ -9,6 +9,7 @@ import {
 	binCode,
 	binCodes,
 	chainOf,
+	checkPlanSettings,
 	checkUnit,
 	createUnitStatement,
 	deleteUnitStatement,
@@ -22,6 +23,7 @@ import {
 	KIND_ORDER,
 	type Location,
 	listUnits,
+	loadPlanSettings,
 	locate,
 	locationCode,
 	locationInput,
@@ -30,10 +32,14 @@ import {
 	nestable,
 	nestedIn,
 	type PlanSearch,
+	type PlanSettings,
 	parseBin,
 	partByRef,
 	partsInUnits,
+	planSettingsInput,
+	planSettingsStatements,
 	planSize,
+	planUnchanged,
 	resolveBin,
 	type StoredPart,
 	setLocationStatements,
@@ -49,6 +55,7 @@ import {
 } from "../domain/storage";
 import { errorText, fmt } from "../i18n";
 import { cn } from "../lib/cn";
+import { formatMetres } from "../lib/units";
 import { type FieldErrors, validate } from "../lib/validation";
 import { requirePermission } from "../middleware/roles";
 import type { AppEnv } from "../types";
@@ -213,10 +220,11 @@ locationRoutes.get("/", async (c) => {
 	const t = c.var.t;
 	const db = c.var.db;
 	const q = (c.req.query("q") ?? "").trim();
-	const [rows, unlocated, found] = await Promise.all([
+	const [rows, unlocated, found, plan] = await Promise.all([
 		listUnits(db),
 		unlocatedParts(db),
 		q ? findOnPlan(db, q) : Promise.resolve(null),
+		loadPlanSettings(db),
 	]);
 	const units = rows.map((r) => r.unit);
 	const idx = indexUnits(units);
@@ -242,10 +250,17 @@ locationRoutes.get("/", async (c) => {
 			<PageHeader
 				title={t.locations.title}
 				actions={
-					canPlan && units.length > 0 ? (
-						<Button href="/locations/new" icon={icons.plus}>
-							{t.locations.addUnit}
-						</Button>
+					canPlan ? (
+						<>
+							<Button href="/locations/plan-settings" variant="outline" icon={icons.cog}>
+								{t.locations.planSettings}
+							</Button>
+							{units.length > 0 ? (
+								<Button href="/locations/new" icon={icons.plus}>
+									{t.locations.addUnit}
+								</Button>
+							) : null}
+						</>
 					) : undefined
 				}
 			/>
@@ -285,13 +300,15 @@ locationRoutes.get("/", async (c) => {
 							<div class="overflow-x-auto rounded-lg border bg-background">
 								<PlanSvg
 									units={units}
-									size={planSize(units)}
+									size={planSize(units, plan)}
 									highlight={located ? planHighlight(located) : undefined}
 									links="view"
 									editDrawn={canPlan}
 								/>
 							</div>
-							<p class="text-xs text-muted-foreground">{t.locations.planHint}</p>
+							<p class="text-xs text-muted-foreground">
+								{fmt(t.locations.planHint, { size: formatMetres(plan.squareCm, c.var.locale) })}
+							</p>
 						</CardContent>
 					</Card>
 					<div class="flex flex-col gap-4">
@@ -366,11 +383,12 @@ function UnitForm(props: {
 	values: FormValues;
 	errors: FormErrors;
 	units: StorageUnit[];
+	plan: PlanSettings;
 	unitId: number | null;
 	cancel: string;
 	submit: string;
 }) {
-	const { t } = useApp();
+	const { t, locale } = useApp();
 	const p = { values: props.values, errors: props.errors };
 	const v = props.values;
 	const int = (k: string, d: number) => {
@@ -431,9 +449,16 @@ function UnitForm(props: {
 						</div>
 						<div data-show-if="placement:plan|kind:floor,room,door,landmark" class="flex flex-col gap-4">
 							<div class="overflow-x-auto rounded-lg border bg-background touch-none">
-								<PlanSvg units={props.units} size={planSize([...others, editing])} editing={editing} links="edit" />
+								<PlanSvg
+									units={props.units}
+									size={planSize([...others, editing], props.plan)}
+									editing={editing}
+									links="edit"
+								/>
 							</div>
-							<p class="-mt-2 text-sm text-muted-foreground">{t.locations.placeHint}</p>
+							<p class="-mt-2 text-sm text-muted-foreground">
+								{fmt(t.locations.placeHint, { size: formatMetres(props.plan.squareCm, locale) })}
+							</p>
 							<div class="grid grid-cols-2 gap-4 sm:grid-cols-4">
 								<TextField name="col" label={t.locations.col} inputmode="numeric" {...p} />
 								<TextField name="row" label={t.locations.row} inputmode="numeric" {...p} />
@@ -535,9 +560,10 @@ async function renderUnitForm(
 	values: FormValues,
 	errors: FieldErrors,
 	status: 200 | 422 = 200,
+	vars: Record<string, number> = {},
 ) {
 	const t = c.var.t;
-	const units = await allUnits(c);
+	const [units, plan] = await Promise.all([allUnits(c), loadPlanSettings(c.var.db)]);
 	const title = unit ? unitTitle(t, unit) : t.locations.newUnit;
 	return page(
 		c,
@@ -547,8 +573,9 @@ async function renderUnitForm(
 			<UnitForm
 				action={unit ? `/locations/${unit.id}` : "/locations"}
 				values={values}
-				errors={translateErrors(c, errors)}
+				errors={translateErrors(c, errors, vars)}
 				units={units}
+				plan={plan}
 				unitId={unit?.id ?? null}
 				cancel={unit ? `/locations/${unit.id}` : "/locations"}
 				submit={unit ? t.common.save : t.common.create}
@@ -570,7 +597,7 @@ async function saveUnit(c: Context<AppEnv>, unit: StorageUnit | null) {
 	// Only racks and drawer cabinets can stand in a bin; the others are always on the plan.
 	const data = nestable(v.data.kind) ? v.data : { ...v.data, placement: "plan" as const };
 	const checked = await checkUnit(c.var.db, data, unit?.id);
-	if (!checked.ok) return renderUnitForm(c, unit, body, checked.errors, 422);
+	if (!checked.ok) return renderUnitForm(c, unit, body, checked.errors, 422, checked.vars);
 	const code = checked.values.code;
 	if (!unit) {
 		const { results } = await saveChanges(c, fmt(t.history.summaries.storageUnitCreate, { code }), [
@@ -587,6 +614,89 @@ async function saveUnit(c: Context<AppEnv>, unit: StorageUnit | null) {
 locationRoutes.post("/", requirePermission("storage.plan"), (c) => saveUnit(c, null));
 
 // ---------------------------------------------------------------------------
+// The plan's settings (D209): the size of a square, and a fixed main area
+
+function planSettingsValues(plan: PlanSettings, locale: "en" | "fr"): FormValues {
+	const metres = (squares: number | undefined) =>
+		squares === undefined ? "" : formatMetres(squares * plan.squareCm, locale);
+	return {
+		square_cm: String(plan.squareCm),
+		width_m: metres(plan.area?.width),
+		depth_m: metres(plan.area?.depth),
+	};
+}
+
+async function renderPlanSettings(
+	c: Context<AppEnv>,
+	values: FormValues,
+	errors: FieldErrors,
+	vars: Record<string, string | number> = {},
+	status: 200 | 422 = 200,
+) {
+	const t = c.var.t;
+	const p = { values, errors: translateErrors(c, errors, vars) };
+	return page(
+		c,
+		t.locations.planSettings,
+		<>
+			<PageHeader title={t.locations.planSettings} subtitle={t.locations.planSettingsIntro} />
+			<Card>
+				<CardContent>
+					<form method="post" action="/locations/plan-settings" class="flex max-w-2xl flex-col gap-8">
+						<ErrorBanner show={Object.keys(errors).length > 0} />
+						<FieldSet legend={t.locations.squareCm}>
+							<div class="max-w-48">
+								<TextField name="square_cm" label={t.locations.squareCm} inputmode="numeric" {...p} />
+							</div>
+							<p class="-mt-2 text-sm text-muted-foreground">{t.locations.squareHint}</p>
+						</FieldSet>
+						<FieldSet legend={t.locations.areaSection}>
+							<div class="grid gap-4 sm:grid-cols-2">
+								<TextField name="width_m" label={t.locations.areaWidth} inputmode="decimal" {...p} />
+								<TextField name="depth_m" label={t.locations.areaDepth} inputmode="decimal" {...p} />
+							</div>
+							<p class="-mt-2 text-sm text-muted-foreground">{t.locations.areaHint}</p>
+						</FieldSet>
+						<div class="flex flex-wrap items-center gap-2 border-t pt-6">
+							<Button icon={icons.save}>{t.common.save}</Button>
+							<Button href="/locations" variant="outline">
+								{t.common.cancel}
+							</Button>
+						</div>
+					</form>
+				</CardContent>
+			</Card>
+		</>,
+		status,
+	);
+}
+
+locationRoutes.get("/plan-settings", requirePermission("storage.plan"), async (c) => {
+	return renderPlanSettings(c, planSettingsValues(await loadPlanSettings(c.var.db), c.var.locale), {});
+});
+
+locationRoutes.post("/plan-settings", requirePermission("storage.plan"), async (c) => {
+	const body = (await c.req.parseBody()) as FormValues;
+	const v = validate(planSettingsInput, body);
+	if (!v.ok) return renderPlanSettings(c, body, v.errors, {}, 422);
+	const db = c.var.db;
+	const [units, current] = await Promise.all([allUnits(c), loadPlanSettings(db)]);
+	const checked = checkPlanSettings(units, current, v.data);
+	if (!checked.ok) {
+		const square = formatMetres(Math.max(1, v.data.square_cm), c.var.locale);
+		return renderPlanSettings(c, body, checked.errors, { ...checked.vars, square }, 422);
+	}
+	if (!planUnchanged(current, checked.change.plan)) {
+		await saveChanges(
+			c,
+			c.var.t.history.summaries.planSettings,
+			planSettingsStatements(db, current, checked.change, c.var.user, nowIso()),
+		);
+	}
+	return redirectOk(c, "/locations");
+});
+
+// ---------------------------------------------------------------------------
 // Where a part is kept
 
 async function renderPartLocation(
@@ -598,7 +708,7 @@ async function renderPartLocation(
 ) {
 	const t = c.var.t;
 	const db = c.var.db;
-	const [current, units] = await Promise.all([locationOf(db, part.id), allUnits(c)]);
+	const [current, units, plan] = await Promise.all([locationOf(db, part.id), allUnits(c), loadPlanSettings(db)]);
 	const back = safeBack(c.req.query("back")) ?? `/parts/${part.id}`;
 	const title = fmt(t.locations.locationOf, { ref: part.ref });
 	const e = translateErrors(c, errors);
@@ -655,7 +765,7 @@ async function renderPartLocation(
 							<div class="overflow-x-auto rounded-lg border bg-background">
 								<PlanSvg
 									units={units}
-									size={planSize(units)}
+									size={planSize(units, plan)}
 									highlight={current ? planHighlight(current) : undefined}
 									links="view"
 								/>
@@ -723,10 +833,11 @@ async function renderUnit(
 	const t = c.var.t;
 	const db = c.var.db;
 	const view = c.var;
-	const [contents, units, refs] = await Promise.all([
+	const [contents, units, refs, plan] = await Promise.all([
 		unitContents(db, unit.id),
 		allUnits(c),
 		can(view, "storage.assign") ? partOptions(db, ["buy", "make"]) : Promise.resolve([]),
+		loadPlanSettings(db),
 	]);
 	const idx = indexUnits(units);
 	const self: Location = locate(idx, unit, null, null);
@@ -929,7 +1040,7 @@ async function renderUnit(
 							<a href={`/locations?q=${encodeURIComponent(unit.code)}`} class="block">
 								<PlanSvg
 									units={units}
-									size={planSize(units)}
+									size={planSize(units, plan)}
 									compact
 									highlight={{
 										unitId: chain[0]?.unit.id ?? unit.id,
@@ -1035,7 +1146,7 @@ locationRoutes.get("/:id", async (c) => {
 /** A room: its part of the plan, the units in it, and every part kept there in walking order. */
 async function renderRoom(c: Context<AppEnv>, room: StorageUnit) {
 	const t = c.var.t;
-	const units = await allUnits(c);
+	const [units, plan] = await Promise.all([allUnits(c), loadPlanSettings(c.var.db)]);
 	const idx = indexUnits(units);
 	const inside = unitsInRoom(idx, room.id);
 	const stored = (await partsInUnits(c.var.db, [...inside]))
@@ -1096,7 +1207,7 @@ async function renderRoom(c: Context<AppEnv>, room: StorageUnit) {
 				<Card>
 					<CardContent>
 						<div class="overflow-x-auto rounded-lg border bg-background">
-							<PlanSvg units={units} size={planSize(units)} links="view" editDrawn={canPlan} crop={room} />
+							<PlanSvg units={units} size={planSize(units, plan)} links="view" editDrawn={canPlan} crop={room} />
 						</div>
 					</CardContent>
 				</Card>
