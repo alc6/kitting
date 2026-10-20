@@ -20,7 +20,7 @@ concurrency:
 
 env:
   # The Kitting release to deploy. Keep it equal to the ref=v... of the module in main.tf; a step checks it.
-  KITTING_VERSION: "0.5.0"
+  KITTING_VERSION: "0.6.0"
   KITTING_REPO: alc6/kitting
 
 jobs:
