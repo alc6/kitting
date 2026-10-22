@@ -487,6 +487,32 @@ describe("rooms as pages", () => {
 		expect(stock).toContain('href="/locations"');
 		expect(stock).not.toContain('href="/stock/locations"');
 	});
+
+	it("deletes a door or a landmark from its editor, for administrators only", async () => {
+		const rack = await drawUnit();
+		const door = await drawUnit({ kind: "door", code: "", name: "", col: "8", row: "9", width: "2", depth: "2" });
+		const bench = await drawUnit({ code: "BENCH", kind: "landmark", col: "1", row: "14" });
+		for (const id of [door, bench]) {
+			const form = await (await request(`/locations/${id}/edit`)).text();
+			expect(form).toContain(`action="/locations/${id}/delete"`);
+			// Cancel goes back to the plan: the unit's own page would send it back here.
+			expect(form).not.toContain(`href="/locations/${id}"`);
+		}
+		// A rack is deleted from its own page, not its editor.
+		expect(await (await request(`/locations/${rack}/edit`)).text()).not.toContain(`/locations/${rack}/delete`);
+		const del = await postForm(`/locations/${door}/delete`, {});
+		expect(del.headers.get("Location")).toBe("/locations?ok=deleted");
+		expect(await rows("SELECT code FROM storage_units ORDER BY id")).toEqual([{ code: "A" }, { code: "BENCH" }]);
+		expect(await one("SELECT summary FROM change_sets ORDER BY id DESC LIMIT 1")).toEqual({
+			summary: "Delete storage unit DOOR",
+		});
+		// Planners edit the landmark but cannot delete it.
+		await setRole("planner");
+		const form = await (await request(`/locations/${bench}/edit`, {}, NOT_ADMIN)).text();
+		expect(form).toContain('name="code"');
+		expect(form).not.toContain(`/locations/${bench}/delete`);
+		expect((await postForm(`/locations/${bench}/delete`, {}, NOT_ADMIN)).status).toBe(403);
+	});
 });
 
 describe("the part's Location tab", () => {
