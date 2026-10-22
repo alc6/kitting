@@ -561,6 +561,9 @@ function newUnitValues(units: StorageUnit[], inBin: string | undefined, squareCm
 	};
 }
 
+/** Doors and landmarks hold nothing and have no page of their own: their editor stands in for it. */
+const editorOnly = (kind: StorageUnit["kind"]) => kind === "door" || kind === "landmark";
+
 async function renderUnitForm(
 	c: Context<AppEnv>,
 	unit: StorageUnit | null,
@@ -572,11 +575,30 @@ async function renderUnitForm(
 	const t = c.var.t;
 	const [units, plan] = await Promise.all([allUnits(c), loadPlanSettings(c.var.db)]);
 	const title = unit ? unitTitle(t, unit) : t.locations.newUnit;
+	const ownPage = unit !== null && !editorOnly(unit.kind);
 	return page(
 		c,
 		title,
 		<>
-			<PageHeader title={title} subtitle={unit ? t.locations.editUnit : undefined} />
+			<PageHeader
+				title={title}
+				subtitle={unit ? t.locations.editUnit : undefined}
+				actions={
+					unit && !ownPage ? (
+						<MoreMenu
+							items={[
+								can(c.var, "storage.delete") && {
+									label: t.locations.deleteUnit,
+									icon: icons.trash,
+									action: `/locations/${unit.id}/delete`,
+									confirm: t.locations.confirmDelete,
+									destructive: true,
+								},
+							]}
+						/>
+					) : undefined
+				}
+			/>
 			<UnitForm
 				action={unit ? `/locations/${unit.id}` : "/locations"}
 				values={values}
@@ -584,7 +606,7 @@ async function renderUnitForm(
 				units={units}
 				plan={plan}
 				unitId={unit?.id ?? null}
-				cancel={unit ? `/locations/${unit.id}` : "/locations"}
+				cancel={ownPage ? `/locations/${unit.id}` : "/locations"}
 				submit={unit ? t.common.save : t.common.create}
 			/>
 		</>,
@@ -1147,8 +1169,8 @@ locationRoutes.get("/:id", async (c) => {
 	const unit = id ? await getUnit(c.var.db, id) : undefined;
 	if (!unit) return notFound(c);
 	if (unit.kind === "room") return renderRoom(c, unit);
-	// Doors and landmarks hold nothing: their page is their editor, or the plan for those who may not edit it.
-	if (unit.kind === "door" || unit.kind === "landmark")
+	// Doors and landmarks: their page is their editor, or the plan for those who may not edit it.
+	if (editorOnly(unit.kind))
 		return c.redirect(can(c.var, "storage.plan") ? `/locations/${unit.id}/edit` : "/locations", 303);
 	return renderUnit(c, unit, { values: {}, errors: {} });
 });
