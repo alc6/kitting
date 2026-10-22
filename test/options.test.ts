@@ -472,6 +472,25 @@ describe("purchasing per value", () => {
 		const po = await (await request(`/purchasing/po/${blackLine.po_id}/export.csv`)).text();
 		expect(po).toContain("Colour=black");
 	});
+
+	it("swaps only the option selects when a part is picked on the add-line form", async () => {
+		const n = await nightLight();
+		const created = await ok(
+			await postForm("/purchasing/po", { supplier_id: String(n.supplier), expected_at: "", notes: "" }),
+		);
+		const poId = Number(/\/po\/(\d+)/.exec(created.headers.get("Location") ?? "")?.[1]);
+		// The loader sits inside the add-line form, whose target is the whole #po-lines: it must not inherit it.
+		const html = await (await request(`/purchasing/po/${poId}`)).text();
+		const loader = /<div[^>]*id="po-line-options"[^>]*>/.exec(html)?.[0] ?? "";
+		expect(loader).toContain('hx-target="this"');
+		expect(loader).toContain('hx-select="#po-line-options"');
+		const res = await request(`/purchasing/po/${poId}/line-options?part=NL-COVER`);
+		expect(res.status).toBe(200);
+		const fragment = await res.text();
+		expect(fragment).toContain('id="po-line-options"');
+		expect(fragment).toContain(`name="option:${await optionId("NL-COVER")}"`);
+		expect(fragment).not.toContain('id="po-lines"');
+	});
 });
 
 describe("renaming values", () => {

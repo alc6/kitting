@@ -183,6 +183,9 @@ function LineOptions(props: { poId: number; options: OptionDef[]; values: FormVa
 			hx-get={`/purchasing/po/${props.poId}/line-options`}
 			hx-trigger="change from:#f-part"
 			hx-include="#f-part"
+			// Explicit: otherwise inherited from the add-line form (#po-lines), and picking a part emptied the lines.
+			hx-target="this"
+			hx-select="#po-line-options"
 			hx-swap="outerHTML"
 		>
 			<OptionSelects
