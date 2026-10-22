@@ -1,4 +1,4 @@
-# Publishes a release when a version tag is pushed (`git tag v0.6.0 && git push origin v0.6.0`).
+# Publishes a release when a version tag is pushed (`git tag v0.6.1 && git push origin v0.6.1`).
 # The release carries kitting-<version>.tar.gz and its sha256: the built Worker, the static files, the D1
 # migrations and the deploy script. Installers pin a tag and deploy that bundle with their own settings, without
 # copying the code (docs/deploy.md, "Install with Terraform"; decision D141).
