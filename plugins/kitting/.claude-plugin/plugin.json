@@ -1,7 +1,7 @@
 {
 	"name": "kitting",
 	"displayName": "Kitting",
-	"version": "0.6.1",
+	"version": "0.6.2",
 	"description": "Work with a Kitting mini-MRP from Claude: the know-how (parts, assemblies, stock, builds, purchase orders) and the MCP connector to your own deployment.",
 	"author": { "name": "Kitting contributors" },
 	"license": "MIT",
