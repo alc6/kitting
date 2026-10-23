@@ -294,3 +294,66 @@ describe("rooms of several rectangles in storage_units.csv", () => {
 		]);
 	});
 });
+
+describe("undoing changes to rooms of several rectangles", () => {
+	const undoLast = async () => revertChangeSet(testDb(), admin, (await lastSet()).id, undo);
+	const settings = (over: Record<string, string>) =>
+		postForm("/locations/plan-settings", { square_cm: "50", width_m: "", depth_m: "", ...over });
+
+	it("undoes creating a room with its areas, unless an area was added since", async () => {
+		await draw(roomForm());
+		expect(await undoLast()).toMatchObject({ ok: true });
+		expect(await rows("SELECT id FROM storage_units")).toEqual([]);
+		expect(await rows("SELECT id FROM room_areas")).toEqual([]);
+		const room = await draw(roomForm());
+		const created = (await lastSet()).id;
+		await postForm(
+			`/locations/${room}`,
+			roomForm({ code: "STOC", area3_col: "10", area3_row: "0", area3_width: "2", area3_depth: "2" }),
+		);
+		expect(await revertChangeSet(testDb(), admin, created, undo)).toMatchObject({ ok: false, reason: "conflict" });
+		expect(await areas(room)).toHaveLength(2);
+	});
+
+	it("undoes a change of squares and an import of areas", async () => {
+		const room = await draw(roomForm());
+		expect((await settings({ square_cm: "25" })).status).toBe(303);
+		expect(await undoLast()).toMatchObject({ ok: true });
+		expect(await areas(room)).toEqual([{ col: 0, row: 6, width: 4, depth: 4 }]);
+		await importCsv("storage_units", `code,areas\nSTOC,"0,6,4,4; 6,6,4,2;"\n`);
+		expect(await areas(room)).toHaveLength(2);
+		expect(await undoLast()).toMatchObject({ ok: true });
+		expect(await areas(room)).toEqual([{ col: 0, row: 6, width: 4, depth: 4 }]);
+	});
+
+	it("leaves areas an undo left on a unit that is no longer a room out of the plan, and drops them on its next save", async () => {
+		// A rack becomes a room, then gets an area; undoing the change of kind leaves the area on the rack.
+		const x = await draw(rackForm({ code: "X", col: "0", row: "0", width: "4", depth: "2" }));
+		const { area2_col, area2_row, area2_width, area2_depth, ...room } = roomForm({
+			code: "X",
+			col: "0",
+			row: "0",
+			width: "4",
+			depth: "2",
+		});
+		await postForm(`/locations/${x}`, room);
+		const toRoom = (await lastSet()).id;
+		await postForm(`/locations/${x}`, { ...room, area2_col: "0", area2_row: "2", area2_width: "1", area2_depth: "1" });
+		expect(await revertChangeSet(testDb(), admin, toRoom, undo)).toMatchObject({ ok: true });
+		expect(await one("SELECT kind FROM storage_units WHERE id = ?", x)).toEqual({ kind: "rack" });
+		expect(await areas(x)).toHaveLength(1);
+		// Squares of 1 m would cut that 0.5 m area: it is not a room's, so it is neither checked nor rescaled.
+		expect((await settings({ square_cm: "100" })).status).toBe(303);
+		expect(await areas(x)).toEqual([{ col: 0, row: 2, width: 1, depth: 1 }]);
+		expect(
+			(await postForm(`/locations/${x}`, rackForm({ code: "X", col: "0", row: "0", width: "2", depth: "1" }))).status,
+		).toBe(303);
+		expect(await areas(x)).toEqual([]);
+	});
+
+	it("saves a unit that is not a room whatever its hidden area fields hold", async () => {
+		const res = await postForm("/locations", { ...rackForm(), area2_col: "2.5", area2_row: "x" });
+		expect(res.status).toBe(303);
+		expect(await rows("SELECT id FROM room_areas")).toEqual([]);
+	});
+});

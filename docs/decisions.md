@@ -1639,7 +1639,12 @@ names in the locations. D211 lets one room cover several rectangles.
     half its width) and the remove buttons post the form and only redraw it, nothing is saved before Save, and a hidden
     first button keeps Enter for Save. With JavaScript each area is a dashed shape dragged and resized like the room.
     Saving updates only the areas that changed (matched by order), in the room's change set; a room that becomes
-    another kind loses its areas, and deleting a room deletes its areas first, so an undo restores both.
+    another kind loses its areas, and deleting a room deletes its areas first, so an undo restores both. Moving the
+    room's rectangle does not move its areas: each rectangle is placed on its own (a moved L is refused until its areas
+    follow). Area fields are ignored for any other kind, so hidden fields never block a save.
+  - **Areas left on a unit that is not a room.** Undoing a change of kind to room, made in an earlier change set than
+    the areas, leaves the areas on the unit: they are not drawn, not checked and not rescaled with the squares (the
+    rescale only touches rooms' areas), and the unit's next save deletes them.
   - **CSV.** `storage_units.csv` gets an `areas` column after `depth`: `col,row,width,depth` per area, separated by
     semicolons (`0,6,4,4; 6,6,4,2`). Empty: none; left out of the file: unchanged. An area's error is reported on that
     column. The assembly room of `examples/full` is now an L. MCP is unchanged: `get_location` names rooms and their

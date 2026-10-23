@@ -440,7 +440,7 @@ function UnitForm(props: {
 			<CardContent>
 				<form id="unit-form" method="post" action={props.action} class="flex flex-col gap-8">
 					{/* The default button: Enter in a field saves, and never adds or removes an area. */}
-					<Button hidden aria-label={props.submit} />
+					<button type="submit" class="sr-only" tabindex={-1} aria-hidden="true" />
 					<ErrorBanner show={Object.keys(props.errors).length > 0} />
 					<FieldSet legend={t.locations.sectionUnit}>
 						<ChoiceCards
@@ -685,7 +685,8 @@ async function saveUnit(c: Context<AppEnv>, unit: ShapedUnit | null) {
 	if (body.area_add) return renderUnitForm(c, unit, withNewArea(body), {});
 	if (body.area_remove) return renderUnitForm(c, unit, withoutArea(body, Number(body.area_remove)), {});
 	const v = validate(storageUnitInput, body);
-	const read = readAreaFields(body);
+	// Area fields only count for a room: hidden for the other kinds, they must not block saving.
+	const read = body.kind === "room" ? readAreaFields(body) : { ok: true as const, areas: [] as Rect[] };
 	if (!v.ok || !read.ok)
 		return renderUnitForm(c, unit, body, { ...(v.ok ? {} : v.errors), ...(read.ok ? {} : read.errors) }, 422);
 	// Only racks and drawer cabinets can stand in a bin; the others are always on the plan.

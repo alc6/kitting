@@ -555,7 +555,6 @@ function HighlightTag(props: { px: Px; units: StorageUnit[]; highlight: PlanHigh
 	);
 }
 
-/** The unit of the editor, placed from the form; app.js keeps it in step with the fields and lets people drag it. */
 /**
  * Another rectangle of the room being edited (D211): moved and resized like the room's own one, its fields named
  * `area<n>_col`… (`data-prefix`). Dashed, so that the room's own rectangle stands out.
@@ -613,6 +612,7 @@ function AreaShape(props: { area: Rect; n: number; px: Px; squareCm: number }) {
 	);
 }
 
+/** The unit of the editor, placed from the form; app.js keeps it in step with the fields and lets people drag it. */
 function EditingShape(props: { editing: PlanEditing; px: Px; squareCm: number }) {
 	const { locale } = useApp();
 	const px = props.px;

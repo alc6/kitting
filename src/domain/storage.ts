@@ -255,6 +255,7 @@ export function parseAreasCell(text: string): Rect[] | null {
 	if (t === "") return [];
 	const out: Rect[] = [];
 	for (const group of t.split(";")) {
+		if (group.trim() === "") continue;
 		const m = /^\s*(\d{1,6})\s*,\s*(\d{1,6})\s*,\s*(\d{1,6})\s*,\s*(\d{1,6})\s*$/.exec(group);
 		if (!m) return null;
 		out.push({ col: Number(m[1]), row: Number(m[2]), width: Number(m[3]), depth: Number(m[4]) });
@@ -783,7 +784,14 @@ export function planSettingsStatements(db: Db, current: PlanSettings, change: Pl
 					updatedAt: now,
 					updatedBy: user,
 				})
-				.where(sql`1 = 1`),
+				// Only rooms' areas: an undo can leave areas on a unit that is no longer a room (it changed kind in an
+				// earlier change set); those are never drawn nor checked, and its next save deletes them.
+				.where(
+					inArray(
+						roomAreas.roomId,
+						db.select({ id: storageUnits.id }).from(storageUnits).where(eq(storageUnits.kind, "room")),
+					),
+				),
 		);
 	}
 	return out;
