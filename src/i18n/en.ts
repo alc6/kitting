@@ -1464,6 +1464,7 @@ export const en = {
 			part_option_values: "Option value",
 			build_option_choices: "Values chosen for a build",
 			storage_units: "Storage unit",
+			room_areas: "Room area",
 			part_locations: "Location",
 		},
 		fields: {
@@ -1538,6 +1539,7 @@ export const en = {
 			level: "level",
 			unit_id: "storage unit",
 			parent_unit_id: "in unit",
+			room_id: "room",
 			parent_level: "in level",
 			parent_position: "in position",
 			shipping_cents: "shipping",

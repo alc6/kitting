@@ -47,6 +47,7 @@ export const TABLE_ACTIONS: Record<string, Action> = {
 	build_option_choices: "builds.plan",
 	files: "files.edit",
 	storage_units: "storage.plan",
+	room_areas: "storage.plan",
 	part_locations: "storage.assign",
 };
 

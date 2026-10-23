@@ -1500,6 +1500,7 @@ export const fr: Dict = {
 			part_option_values: "Valeur d’option",
 			build_option_choices: "Valeurs choisies pour une fabrication",
 			storage_units: "Unité de stockage",
+			room_areas: "Zone de pièce",
 			part_locations: "Emplacement",
 		},
 		fields: {
@@ -1574,6 +1575,7 @@ export const fr: Dict = {
 			level: "niveau",
 			unit_id: "unité de stockage",
 			parent_unit_id: "dans l’unité",
+			room_id: "pièce",
 			parent_level: "au niveau",
 			parent_position: "à la position",
 			shipping_cents: "frais de port",
