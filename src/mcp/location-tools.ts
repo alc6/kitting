@@ -21,6 +21,7 @@ import {
 	parseBin,
 	partsInUnits,
 	roomOf,
+	type ShapedUnit,
 	type StoredPart,
 	type UnitIndex,
 	unitContents,
@@ -70,7 +71,7 @@ const storedView = (unitCode: string, p: StoredPart) => ({
 });
 
 /** The whole plan: rooms, the units that hold parts as a tree, and the stocked parts not put away yet. */
-async function planView(db: Db, units: StorageUnit[], counts: Map<number, number>, max: number) {
+async function planView(db: Db, units: ShapedUnit[], counts: Map<number, number>, max: number) {
 	const idx = indexUnits(units);
 	const unlocated = await unlocatedParts(db);
 	const drawn = units.filter((u) => onPlan(u) && holdsParts(u.kind)).sort((a, b) => (a.code < b.code ? -1 : 1));

@@ -11,6 +11,8 @@ import {
 	type PartLocation,
 	partLocations,
 	parts,
+	type RoomArea,
+	roomAreas,
 	STORAGE_FRONTS,
 	STORAGE_KINDS,
 	type StorageFront,
@@ -83,7 +85,8 @@ export const drawnOnly = (kind: StorageKind) => !holdsParts(kind);
 
 export const onPlan = (u: Pick<StorageUnit, "parentUnitId">) => u.parentUnitId === null;
 
-export function unitToForm(u: StorageUnit, units: Map<number, StorageUnit>): Record<string, string> {
+/** A unit as the form and storage_units.csv show it: `areas` is the CSV's cell, `area2_col`… the form's fields. */
+export function unitToForm(u: ShapedUnit, units: Map<number, StorageUnit>): Record<string, string> {
 	const parent = u.parentUnitId === null ? undefined : units.get(u.parentUnitId);
 	return {
 		code: u.code,
@@ -99,12 +102,241 @@ export function unitToForm(u: StorageUnit, units: Map<number, StorageUnit>): Rec
 		levels: String(u.levels),
 		positions: String(u.positions),
 		notes: u.notes,
+		areas: areasCell(u.areas),
+		...areasToForm(u.areas),
 	};
 }
 
-type Rect = { col: number; row: number; width: number; depth: number };
+export type Rect = { col: number; row: number; width: number; depth: number };
 const overlaps = (a: Rect, b: Rect) =>
 	a.col < b.col + b.width && b.col < a.col + a.width && a.row < b.row + b.depth && b.row < a.row + a.depth;
+const rectOf = (r: Rect): Rect => ({ col: r.col, row: r.row, width: r.width, depth: r.depth });
+
+// ---------------------------------------------------------------------------
+// Rooms made of several rectangles (D211)
+
+/** A room is its own rectangle plus at most this many areas: an L needs one, a U two. */
+export const MAX_AREAS = 7;
+
+/**
+ * A unit as the plan reads it: a room carries its other rectangles (`room_areas`, D211), any other unit none. Every
+ * function that draws the plan or says which room a unit is in takes this type, so that a loader that forgets the areas
+ * does not compile.
+ */
+export type ShapedUnit = StorageUnit & { areas: Rect[] };
+
+/** Attaches the rooms' areas (in id order) to the units. */
+export function withAreas(units: StorageUnit[], areas: Pick<RoomArea, "roomId" | "col" | "row" | "width" | "depth">[]) {
+	const byRoom = new Map<number, Rect[]>();
+	for (const a of areas) byRoom.set(a.roomId, [...(byRoom.get(a.roomId) ?? []), rectOf(a)]);
+	return units.map((u): ShapedUnit => ({ ...u, areas: u.kind === "room" ? (byRoom.get(u.id) ?? []) : [] }));
+}
+
+/** Every unit of the plan with its areas. */
+export async function loadUnits(db: Db): Promise<ShapedUnit[]> {
+	const [units, areas] = await Promise.all([
+		db.select().from(storageUnits),
+		db.select().from(roomAreas).orderBy(asc(roomAreas.id)),
+	]);
+	return withAreas(units, areas);
+}
+
+/** The rectangles a unit covers on the plan: a room's own and its areas, one for any other unit. */
+export const rectsOf = (u: Rect & { areas?: Rect[] }): Rect[] => [rectOf(u), ...(u.areas ?? [])];
+
+/** The smallest rectangle around these. */
+export function boundsOf(rects: Rect[]): Rect {
+	const col = Math.min(...rects.map((r) => r.col));
+	const row = Math.min(...rects.map((r) => r.row));
+	return {
+		col,
+		row,
+		width: Math.max(...rects.map((r) => r.col + r.width)) - col,
+		depth: Math.max(...rects.map((r) => r.row + r.depth)) - row,
+	};
+}
+
+/**
+ * Whether a point (a unit's centre: a multiple of half a square) is strictly inside these rectangles taken together. A
+ * point on the line where two of them meet is inside, one on the outer walls is not: the four points a quarter of a
+ * square around it must all be inside one of the rectangles.
+ */
+export function insideRects(rects: Rect[], x: number, y: number): boolean {
+	const within = (px: number, py: number) =>
+		rects.some((r) => px > r.col && px < r.col + r.width && py > r.row && py < r.row + r.depth);
+	return [-0.25, 0.25].every((dx) => [-0.25, 0.25].every((dy) => within(x + dx, y + dy)));
+}
+
+/** Two rectangles are one room when they overlap or share a stretch of wall; touching at a corner is not enough. */
+function joined(a: Rect, b: Rect): boolean {
+	const x = Math.min(a.col + a.width, b.col + b.width) - Math.max(a.col, b.col);
+	const y = Math.min(a.row + a.depth, b.row + b.depth) - Math.max(a.row, b.row);
+	return x >= 0 && y >= 0 && (x > 0 || y > 0);
+}
+
+/** The indexes of the areas that are not joined to the room's own rectangle, directly or through other areas. */
+export function detachedAreas(main: Rect, areas: Rect[]): number[] {
+	const reached = new Set<number>();
+	const queue: Rect[] = [main];
+	while (queue.length) {
+		const r = queue.shift() as Rect;
+		areas.forEach((a, i) => {
+			if (!reached.has(i) && joined(r, a)) {
+				reached.add(i);
+				queue.push(a);
+			}
+		});
+	}
+	return areas.map((_, i) => i).filter((i) => !reached.has(i));
+}
+
+/**
+ * The walls around these rectangles taken together, as closed loops of corners (in squares, clockwise on screen). Lines
+ * where two rectangles meet or overlap are inside, so they are no wall. Worked out on the grid of the rectangles' own
+ * edges, not on squares, so it stays small whatever the size of a square.
+ */
+export function outlineOf(rects: Rect[]): [number, number][][] {
+	const xs = [...new Set(rects.flatMap((r) => [r.col, r.col + r.width]))].sort((a, b) => a - b);
+	const ys = [...new Set(rects.flatMap((r) => [r.row, r.row + r.depth]))].sort((a, b) => a - b);
+	const nx = xs.length - 1;
+	const ny = ys.length - 1;
+	const x = (i: number) => xs[i] as number;
+	const y = (j: number) => ys[j] as number;
+	const covered: boolean[] = [];
+	for (let j = 0; j < ny; j++)
+		for (let i = 0; i < nx; i++)
+			covered.push(
+				rects.some((r) => r.col <= x(i) && x(i + 1) <= r.col + r.width && r.row <= y(j) && y(j + 1) <= r.row + r.depth),
+			);
+	const inside = (i: number, j: number) => i >= 0 && j >= 0 && i < nx && j < ny && covered[j * nx + i] === true;
+	// Each wall is an edge between a covered cell and an uncovered one, directed so that the room is on its right.
+	type Edge = { from: [number, number]; to: [number, number]; used: boolean };
+	const edges: Edge[] = [];
+	const add = (from: [number, number], to: [number, number]) => edges.push({ from, to, used: false });
+	for (let j = 0; j < ny; j++)
+		for (let i = 0; i < nx; i++) {
+			if (!inside(i, j)) continue;
+			if (!inside(i, j - 1)) add([x(i), y(j)], [x(i + 1), y(j)]);
+			if (!inside(i + 1, j)) add([x(i + 1), y(j)], [x(i + 1), y(j + 1)]);
+			if (!inside(i, j + 1)) add([x(i + 1), y(j + 1)], [x(i), y(j + 1)]);
+			if (!inside(i - 1, j)) add([x(i), y(j + 1)], [x(i), y(j)]);
+		}
+	const key = (p: [number, number]) => `${p[0]},${p[1]}`;
+	const starting = new Map<string, Edge[]>();
+	for (const e of edges) starting.set(key(e.from), [...(starting.get(key(e.from)) ?? []), e]);
+	const loops: [number, number][][] = [];
+	for (const first of edges) {
+		if (first.used) continue;
+		const corners: [number, number][] = [];
+		for (let e: Edge | undefined = first; e && !e.used; ) {
+			e.used = true;
+			corners.push(e.from);
+			e = starting.get(key(e.to))?.find((n) => !n.used);
+		}
+		// Keep the corners only: drop the points in the middle of a straight wall.
+		const n = corners.length;
+		loops.push(
+			corners.filter((p, k) => {
+				const a = corners[(k + n - 1) % n] as [number, number];
+				const b = corners[(k + 1) % n] as [number, number];
+				return !((a[0] === p[0] && p[0] === b[0]) || (a[1] === p[1] && p[1] === b[1]));
+			}),
+		);
+	}
+	return loops;
+}
+
+/** Areas as one cell of storage_units.csv: "col,row,width,depth" each, separated by semicolons. */
+export const areasCell = (areas: Rect[]) => areas.map((a) => `${a.col},${a.row},${a.width},${a.depth}`).join("; ");
+
+/** Reads the `areas` cell back: null when it is not shaped like one. */
+export function parseAreasCell(text: string): Rect[] | null {
+	const t = text.trim();
+	if (t === "") return [];
+	const out: Rect[] = [];
+	for (const group of t.split(";")) {
+		const m = /^\s*(\d{1,6})\s*,\s*(\d{1,6})\s*,\s*(\d{1,6})\s*,\s*(\d{1,6})\s*$/.exec(group);
+		if (!m) return null;
+		out.push({ col: Number(m[1]), row: Number(m[2]), width: Number(m[3]), depth: Number(m[4]) });
+	}
+	return out;
+}
+
+/** The form's names of area `n` (counted from 2: the room's own rectangle is the first). */
+export const areaField = (n: number, side: keyof Rect) => `area${n}_${side}`;
+const SIDES = ["col", "row", "width", "depth"] as const;
+
+/** The form's fields of these areas. */
+export function areasToForm(areas: Rect[]): Record<string, string> {
+	const out: Record<string, string> = {};
+	areas.forEach((a, i) => {
+		for (const side of SIDES) out[areaField(i + 2, side)] = String(a[side]);
+	});
+	return out;
+}
+
+/** How many areas a posted form has: area2_*, area3_*… up to the first missing one. */
+export function areaCount(body: Record<string, unknown>): number {
+	let n = 0;
+	while (n < MAX_AREAS && SIDES.some((side) => body[areaField(n + 2, side)] !== undefined)) n++;
+	return n;
+}
+
+/** The areas a form posted, or the errors of their fields. */
+export function readAreaFields(
+	body: Record<string, unknown>,
+): { ok: true; areas: Rect[] } | { ok: false; errors: FieldErrors } {
+	const areas: Rect[] = [];
+	const errors: FieldErrors = {};
+	const whole = field.int();
+	for (let i = 0; i < areaCount(body); i++) {
+		const a: Rect = { col: 0, row: 0, width: 0, depth: 0 };
+		for (const side of SIDES) {
+			const name = areaField(i + 2, side);
+			const raw = body[name];
+			const r = whole.safeParse(typeof raw === "string" ? raw : "");
+			if (r.success) a[side] = r.data;
+			else errors[name] = r.error.issues[0]?.message ?? "invalid";
+		}
+		areas.push(a);
+	}
+	return Object.keys(errors).length ? { ok: false, errors } : { ok: true, areas };
+}
+
+/** The form's fields without area `n`, the next ones moved up. */
+export function withoutArea(body: Record<string, string>, n: number): Record<string, string> {
+	const out: Record<string, string> = {};
+	for (const [k, v] of Object.entries(body)) if (!/^area\d+_/.test(k)) out[k] = v;
+	const count = areaCount(body);
+	let to = 2;
+	for (let from = 2; from < count + 2; from++) {
+		if (from === n) continue;
+		for (const side of SIDES) out[areaField(to, side)] = body[areaField(from, side)] ?? "";
+		to++;
+	}
+	return out;
+}
+
+/** The form's fields with one more area: below the room's rectangle, half its width and as deep, to start an L. */
+export function withNewArea(body: Record<string, string>): Record<string, string> {
+	const count = areaCount(body);
+	if (count >= MAX_AREAS) return body;
+	const num = (k: string, d: number) => (/^\d+$/.test(body[k]?.trim() ?? "") ? Number(body[k]) : d);
+	const main = {
+		col: num("col", 0),
+		row: num("row", 0),
+		width: Math.max(1, num("width", 2)),
+		depth: Math.max(1, num("depth", 2)),
+	};
+	const n = count + 2;
+	return {
+		...body,
+		[areaField(n, "col")]: String(main.col),
+		[areaField(n, "row")]: String(main.row + main.depth),
+		[areaField(n, "width")]: String(Math.max(1, Math.ceil(main.width / 2))),
+		[areaField(n, "depth")]: String(main.depth),
+	};
+}
 
 /** What a unit's row holds once checked: the code made up if needed, the parent bin resolved. */
 export type UnitValues = Omit<StorageUnit, "id" | "createdAt" | "updatedAt" | "createdBy" | "updatedBy">;
@@ -120,7 +352,7 @@ function madeUpCode(d: StorageUnitInput, taken: Set<string>): string {
 
 /** `vars` fill the error messages that state a size (the plan's area). */
 export type CheckedUnit =
-	| { ok: true; values: UnitValues }
+	| { ok: true; values: UnitValues; areas: Rect[] }
 	| { ok: false; errors: FieldErrors; vars?: Record<string, number> };
 /** The bins of a unit that hold parts (level and position as in `part_locations`). */
 export type UsedBin = { level: number | null; position: number | null };
@@ -129,9 +361,9 @@ export type UsedBin = { level: number | null; position: number | null };
  * Rules a form or an import must pass beyond field formats: sizes, the plan, the code, the bin a unit stands in, bins
  * still in use. Returns the values to write, or the field errors.
  */
-export async function checkUnit(db: Db, d: StorageUnitInput, id?: number): Promise<CheckedUnit> {
+export async function checkUnit(db: Db, d: StorageUnitInput, areas: Rect[], id?: number): Promise<CheckedUnit> {
 	const [all, used, plan] = await Promise.all([
-		db.select().from(storageUnits),
+		loadUnits(db),
 		id
 			? db
 					.select({ level: partLocations.level, position: partLocations.position })
@@ -140,19 +372,21 @@ export async function checkUnit(db: Db, d: StorageUnitInput, id?: number): Promi
 			: Promise.resolve([]),
 		loadPlanSettings(db),
 	]);
-	return checkUnitIn(all, used, d, id, plan);
+	return checkUnitIn(all, used, d, id, plan, areas);
 }
 
 /**
  * `checkUnit` against a plan in memory: `all` the units as they stand (an import passes the plan as the rows before
- * this one leave it), `used` the bins of unit `id` that hold parts, `plan` the plan's settings (a fixed area is a wall).
+ * this one leave it), `used` the bins of unit `id` that hold parts, `plan` the plan's settings (a fixed area is a wall),
+ * `areas` a room's other rectangles (ignored for any other kind: saving drops them).
  */
 export function checkUnitIn(
-	all: StorageUnit[],
+	all: ShapedUnit[],
 	used: UsedBin[],
 	d: StorageUnitInput,
 	id: number | undefined,
 	plan: PlanSettings,
+	areas: Rect[] = [],
 ): CheckedUnit {
 	const errors: FieldErrors = {};
 	const others = all.filter((u) => u.id !== id);
@@ -173,6 +407,8 @@ export function checkUnitIn(
 	} else if (taken.has(code)) errors.code = "storage_code_taken";
 
 	let parent: { unitId: number; level: number | null; position: number | null } | null = null;
+	const ownAreas = d.kind === "room" && d.placement === "plan" ? areas : [];
+	if (ownAreas.length > MAX_AREAS) errors.areas = "storage_areas_many";
 	if (d.placement === "bin") {
 		if (!nestable(d.kind)) errors.kind = "storage_not_nestable";
 		const b = parseBin(d.parent_bin);
@@ -199,13 +435,26 @@ export function checkUnitIn(
 		const outside = plan.area ? "storage_outside_area" : "storage_outside_plan";
 		if (d.col + d.width > limit.width) errors.col = outside;
 		if (d.row + d.depth > limit.depth) errors.row = outside;
+		const drawn = others.filter(onPlan);
+		const otherRooms = drawn.filter((u) => u.kind === "room").flatMap(rectsOf);
 		if (!errors.width && !errors.depth) {
-			const drawn = others.filter(onPlan);
 			// Two storage units cannot stand on the same squares, nor two rooms; rooms, doors and landmarks contain units.
 			if (holdsParts(d.kind) && drawn.some((u) => holdsParts(u.kind) && overlaps(u, d))) errors.col = "storage_overlap";
-			if (d.kind === "room" && drawn.some((u) => u.kind === "room" && overlaps(u, d)))
-				errors.col = "storage_room_overlap";
+			if (d.kind === "room" && otherRooms.some((r) => overlaps(r, d))) errors.col = "storage_room_overlap";
 		}
+		// A room's other rectangles: on the plan, joined to the rest of the room, clear of the other rooms (D211).
+		const apart = errors.width || errors.depth ? new Set<number>() : new Set(detachedAreas(d, ownAreas));
+		ownAreas.forEach((a, i) => {
+			const n = i + 2;
+			const col = areaField(n, "col");
+			if (a.width < 1) errors[areaField(n, "width")] = "not_positive";
+			if (a.depth < 1) errors[areaField(n, "depth")] = "not_positive";
+			if (a.width < 1 || a.depth < 1) return;
+			if (a.col + a.width > limit.width) errors[col] = outside;
+			else if (a.row + a.depth > limit.depth) errors[areaField(n, "row")] = outside;
+			else if (otherRooms.some((r) => overlaps(r, a))) errors[col] = "storage_room_overlap";
+			else if (apart.has(i)) errors[col] = "storage_area_apart";
+		});
 	}
 
 	if (id) {
@@ -226,6 +475,7 @@ export function checkUnitIn(
 	if (Object.keys(errors).length) return { ok: false, errors, vars: plan.area ?? undefined };
 	return {
 		ok: true,
+		areas: ownAreas.map(rectOf),
 		values: {
 			code,
 			name: d.name,
@@ -268,21 +518,71 @@ export async function unitInUse(db: Db, id: number): Promise<boolean> {
 	return located.length > 0 || nested.length > 0;
 }
 
-export function deleteUnitStatement(db: Db, id: number) {
-	return db.delete(storageUnits).where(eq(storageUnits.id, id));
+/** Deletes a unit, a room's areas first (an undo then puts the room back before them). */
+export function deleteUnitStatements(db: Db, id: number): Statement[] {
+	return [db.delete(roomAreas).where(eq(roomAreas.roomId, id)), db.delete(storageUnits).where(eq(storageUnits.id, id))];
+}
+
+/**
+ * Brings a room's areas from `existing` (in id order) to `next`, matched by their order: an area that moved is updated,
+ * extra ones are added or deleted, unchanged ones are left alone (no noise in the history). A room created in the same
+ * batch is targeted by its code, as an import targets a unit created by an earlier row.
+ */
+export function roomAreaStatements(
+	db: Db,
+	room: { id: number } | { code: string },
+	existing: Pick<RoomArea, "id" | "col" | "row" | "width" | "depth">[],
+	next: Rect[],
+	user: string,
+	now: string,
+): Statement[] {
+	const out: Statement[] = [];
+	next.forEach((a, i) => {
+		const old = existing[i];
+		if (!old) {
+			const roomId = "id" in room ? room.id : sql<number>`(SELECT id FROM storage_units WHERE code = ${room.code})`;
+			out.push(
+				db
+					.insert(roomAreas)
+					.values({ roomId, ...rectOf(a), createdAt: now, updatedAt: now, createdBy: user, updatedBy: user }),
+			);
+		} else if (SIDES.some((side) => old[side] !== a[side]))
+			out.push(
+				db
+					.update(roomAreas)
+					.set({ ...rectOf(a), updatedAt: now, updatedBy: user })
+					.where(eq(roomAreas.id, old.id)),
+			);
+	});
+	for (const old of existing.slice(next.length)) out.push(db.delete(roomAreas).where(eq(roomAreas.id, old.id)));
+	return out;
+}
+
+/** A room's areas as stored, in id order. */
+export function areasOf(db: Db, roomId: number) {
+	return db.select().from(roomAreas).where(eq(roomAreas.roomId, roomId)).orderBy(asc(roomAreas.id));
 }
 
 // ---------------------------------------------------------------------------
 // Reads
 
-export async function listUnits(db: Db) {
-	return db
-		.select({
-			unit: storageUnits,
-			partCount: sql<number>`(SELECT count(*) FROM part_locations pl WHERE pl.unit_id = storage_units.id)`,
-		})
-		.from(storageUnits)
-		.orderBy(asc(storageUnits.code));
+/** Every unit (rooms with their areas), by code, with the number of parts kept in it. */
+export async function listUnits(db: Db): Promise<{ unit: ShapedUnit; partCount: number }[]> {
+	const [rows, areas] = await Promise.all([
+		db
+			.select({
+				unit: storageUnits,
+				partCount: sql<number>`(SELECT count(*) FROM part_locations pl WHERE pl.unit_id = storage_units.id)`,
+			})
+			.from(storageUnits)
+			.orderBy(asc(storageUnits.code)),
+		db.select().from(roomAreas).orderBy(asc(roomAreas.id)),
+	]);
+	const units = withAreas(
+		rows.map((r) => r.unit),
+		areas,
+	);
+	return rows.map((r, i) => ({ unit: units[i] as ShapedUnit, partCount: r.partCount }));
 }
 
 /** Whether a plan is drawn: at least one unit that holds parts (pages show locations only then). */
@@ -295,21 +595,24 @@ export async function hasPlan(db: Db): Promise<boolean> {
 	return rows.length > 0;
 }
 
-export async function getUnit(db: Db, id: number): Promise<StorageUnit | undefined> {
-	const rows = await db.select().from(storageUnits).where(eq(storageUnits.id, id)).limit(1);
-	return rows[0];
+export async function getUnit(db: Db, id: number): Promise<ShapedUnit | undefined> {
+	const [rows, areas] = await Promise.all([
+		db.select().from(storageUnits).where(eq(storageUnits.id, id)).limit(1),
+		areasOf(db, id),
+	]);
+	return withAreas(rows, areas)[0];
 }
 
 /** The plan's size in squares: the fixed area when there is one, else the minimum or more when units stand further out. */
 export function planSize(
-	units: (Rect & Partial<Pick<StorageUnit, "parentUnitId">>)[],
+	units: (Rect & Partial<Pick<StorageUnit, "parentUnitId">> & { areas?: Rect[] })[],
 	plan: PlanSettings,
 ): {
 	width: number;
 	depth: number;
 } {
 	if (plan.area) return { ...plan.area };
-	const drawn = units.filter((u) => (u.parentUnitId ?? null) === null);
+	const drawn = units.filter((u) => (u.parentUnitId ?? null) === null).flatMap(rectsOf);
 	return {
 		width: Math.max(Math.ceil(PLAN_MIN_CM.width / plan.squareCm), ...drawn.map((u) => u.col + u.width + 1)),
 		depth: Math.max(Math.ceil(PLAN_MIN_CM.depth / plan.squareCm), ...drawn.map((u) => u.row + u.depth + 1)),
@@ -382,7 +685,7 @@ function rescaled(units: Rect[], from: number, to: number): { rects: Rect[] } | 
  * the units (after they are rescaled).
  */
 export function checkPlanSettings(
-	units: StorageUnit[],
+	units: ShapedUnit[],
 	current: PlanSettings,
 	input: PlanSettingsInput,
 ): CheckedPlanSettings {
@@ -408,7 +711,8 @@ export function checkPlanSettings(
 		if (squares.length === 2) area = { width: squares[0] as number, depth: squares[1] as number };
 	}
 
-	const drawn = units.filter(onPlan);
+	// Rooms' areas are rescaled with them, and must fit too (D211).
+	const drawn = units.filter(onPlan).flatMap(rectsOf);
 	let rects: Rect[] = drawn;
 	const rescale = !errors.square_cm && squareCm !== current.squareCm ? { from: current.squareCm, to: squareCm } : null;
 	if (rescale) {
@@ -468,6 +772,19 @@ export function planSettingsStatements(db: Db, current: PlanSettings, change: Pl
 				})
 				.where(isNull(storageUnits.parentUnitId)),
 		);
+		out.push(
+			db
+				.update(roomAreas)
+				.set({
+					col: by(roomAreas.col),
+					row: by(roomAreas.row),
+					width: by(roomAreas.width),
+					depth: by(roomAreas.depth),
+					updatedAt: now,
+					updatedBy: user,
+				})
+				.where(sql`1 = 1`),
+		);
 	}
 	return out;
 }
@@ -511,8 +828,8 @@ export const fullCode = (l: Location) => [...l.via, l].map(binRefCode).join(" �
 /** The bin on the plan: the unit drawn there, and its bin that holds everything else. */
 export const rootBin = (l: Location): BinRef => l.via[0] ?? l;
 
-export type UnitIndex = Map<number, StorageUnit>;
-export const indexUnits = (units: StorageUnit[]): UnitIndex => new Map(units.map((u) => [u.id, u]));
+export type UnitIndex = Map<number, ShapedUnit>;
+export const indexUnits = (units: ShapedUnit[]): UnitIndex => new Map(units.map((u) => [u.id, u]));
 
 /** The bins a unit stands in, from the plan inwards (empty for a unit on the plan). */
 export function chainOf(idx: UnitIndex, unitId: number): BinRef[] {
@@ -551,16 +868,14 @@ export function withNested(idx: UnitIndex, unitId: number): Set<number> {
 /** The units standing in a unit's bins. */
 export const nestedIn = (idx: UnitIndex, unitId: number) => [...idx.values()].filter((u) => u.parentUnitId === unitId);
 
-/** The room a unit is in: the one around the centre of the unit drawn on the plan. */
-export function roomOf(idx: UnitIndex, unitId: number): StorageUnit | undefined {
+/** The room a unit is in: the one around the centre of the unit drawn on the plan, in any of its rectangles (D211). */
+export function roomOf(idx: UnitIndex, unitId: number): ShapedUnit | undefined {
 	const chain = chainOf(idx, unitId);
 	const drawn = idx.get(chain[0]?.unit.id ?? unitId);
 	if (!drawn || drawn.kind === "room") return undefined;
 	const cx = drawn.col + drawn.width / 2;
 	const cy = drawn.row + drawn.depth / 2;
-	return [...idx.values()].find(
-		(r) => r.kind === "room" && onPlan(r) && cx > r.col && cx < r.col + r.width && cy > r.row && cy < r.row + r.depth,
-	);
+	return [...idx.values()].find((r) => r.kind === "room" && onPlan(r) && insideRects(rectsOf(r), cx, cy));
 }
 
 /** The units in a room: those drawn inside it, and the units standing in them. */
@@ -605,7 +920,7 @@ export async function locationsOf(db: Db, partIds?: number[]): Promise<Map<numbe
 			.select()
 			.from(partLocations)
 			.where(partIds && partIds.length <= 90 ? inArray(partLocations.partId, partIds) : undefined),
-		db.select().from(storageUnits),
+		loadUnits(db),
 	]);
 	const idx = indexUnits(units);
 	const out = new Map<number, Location>();
@@ -779,7 +1094,7 @@ export async function partByRef(db: Db, ref: string) {
 export async function findBin(db: Db, text: string): Promise<Location | undefined> {
 	const b = parseBin(text);
 	if (!b) return undefined;
-	const units = await db.select().from(storageUnits);
+	const units = await loadUnits(db);
 	const unit = units.find((u) => u.code === b.code);
 	if (!unit || !holdsParts(unit.kind)) return undefined;
 	if (
@@ -827,13 +1142,14 @@ export function binCodes(units: Pick<StorageUnit, "code" | "kind" | "levels" | "
 }
 
 /** Units sorted for lists: on the plan by code, each followed by the units standing in it. */
-export function unitTree(units: StorageUnit[]): { unit: StorageUnit; depth: number }[] {
-	const idx = indexUnits(units);
-	const out: { unit: StorageUnit; depth: number }[] = [];
-	const walk = (u: StorageUnit, depth: number) => {
+export function unitTree<U extends StorageUnit>(units: U[]): { unit: U; depth: number }[] {
+	const idx = new Map(units.map((u) => [u.id, u]));
+	const out: { unit: U; depth: number }[] = [];
+	const nested = (id: number) => [...idx.values()].filter((u) => u.parentUnitId === id);
+	const walk = (u: U, depth: number) => {
 		out.push({ unit: u, depth });
 		if (depth < MAX_DEPTH * 2)
-			for (const k of nestedIn(idx, u.id).sort((a, b) => (a.code < b.code ? -1 : 1))) walk(k, depth + 1);
+			for (const k of nested(u.id).sort((a, b) => (a.code < b.code ? -1 : 1))) walk(k, depth + 1);
 	};
 	for (const u of units.filter(onPlan).sort((a, b) => (a.code < b.code ? -1 : 1))) walk(u, 0);
 	return out;
