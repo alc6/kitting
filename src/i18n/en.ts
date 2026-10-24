@@ -137,6 +137,9 @@ export const en = {
 		storage_cycle: "A unit cannot stand in itself or in a unit standing in it.",
 		storage_too_deep: "Too many units inside each other: 4 at most.",
 		storage_room_overlap: "Overlaps another room.",
+		storage_area_apart: "Must touch the room along a wall, or overlap it.",
+		storage_areas_many: "A room has 8 rectangles at most.",
+		storage_bad_areas: "Give each area as col,row,width,depth, separated by semicolons (10,6,6,4; 0,10,4,2).",
 		past_price_not_past: "The date must be before today.",
 		past_price_not_older:
 			"Only prices older than the current one can be added; change the current price on the part's form.",
@@ -919,7 +922,7 @@ export const en = {
 		help: {
 			suppliers: "Upsert by name.",
 			storage_units:
-				"The workshop plan, upserted by code (required on every row, rooms and doors included). kind is rack, cabinet, floor, room, door or landmark; col, row, width and depth place it on the plan in squares of the plan (0.5 m unless changed on the Locations page); front is south, north, west or east; levels and positions give the bins of racks and cabinets. parent_bin (A-3-3) puts a rack or a cabinet in a bin of another unit instead of on the plan: list that unit first. Columns left out of the file keep their current values.",
+				"The workshop plan, upserted by code (required on every row, rooms and doors included). kind is rack, cabinet, floor, room, door or landmark; col, row, width and depth place it on the plan in squares of the plan (0.5 m unless changed on the Locations page); areas gives a room that is not a rectangle its other rectangles, as col,row,width,depth each, separated by semicolons (0,10,6,4; 10,0,6,4); front is south, north, west or east; levels and positions give the bins of racks and cabinets. parent_bin (A-3-3) puts a rack or a cabinet in a bin of another unit instead of on the plan: list that unit first. Columns left out of the file keep their current values.",
 			parts:
 				"Upsert by ref. Columns left out of the file keep their current values. Suppliers are matched by name. location is the bin where the part is kept (A-2-3, A-2 or P, from the storage units); empty leaves it as it is, and its note is kept.",
 			part_options:
@@ -1103,6 +1106,12 @@ export const en = {
 		row: "Row",
 		width: "Width",
 		depth: "Depth",
+		areas: "Other areas of the room",
+		areasHint:
+			"A room that is not a rectangle (an L, a T, a U) is its own rectangle above plus other areas, each touching it along a wall or overlapping it. The walls go around them all.",
+		area: "Area {n}",
+		addArea: "Add an area",
+		removeArea: "Remove area {n}",
 		bins: "Bins",
 		levels: "Levels",
 		positions: "Positions per level",
@@ -1464,6 +1473,7 @@ export const en = {
 			part_option_values: "Option value",
 			build_option_choices: "Values chosen for a build",
 			storage_units: "Storage unit",
+			room_areas: "Room area",
 			part_locations: "Location",
 		},
 		fields: {
@@ -1538,6 +1548,7 @@ export const en = {
 			level: "level",
 			unit_id: "storage unit",
 			parent_unit_id: "in unit",
+			room_id: "room",
 			parent_level: "in level",
 			parent_position: "in position",
 			shipping_cents: "shipping",

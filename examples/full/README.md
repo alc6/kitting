@@ -6,7 +6,7 @@ company, supplier or price. For a first look, the small demo in [`examples/demo/
 | File | What it shows |
 | --- | --- |
 | `suppliers.csv` | Six suppliers (`.example` addresses), one of them a fast but pricier distributor. |
-| `storage_units.csv` | The workshop plan: a stockroom and an assembly room with a door between them, racks `A`, `B` and `D`, a drawer cabinet `C`, a pallet area `P`, and a cabinet of screw drawers `S1` standing on shelf `A-3-3`. |
+| `storage_units.csv` | The workshop plan: a stockroom and an L-shaped assembly room (one extra area, D211) with a door between them, racks `A`, `B` and `D`, a drawer cabinet `C`, a pallet area `P`, and a cabinet of screw drawers `S1` standing on shelf `A-3-3`. |
 | `parts.csv` | `make` product and sub-assemblies, `kit` phantoms (one nested inside the others), serial-tracked `buy` parts, a part sold by the metre, a part with no known cost, an eco-fee (`fee`), a 3D-printed cable clip with its filament bought by the kg, and a mini lamp in two colours. The lamp sells at 89.00 (excl. VAT). The `location` column puts every stocked part but the inline switch on the plan: screws in `S1` (so `A-3-3 › S1-1-1`), boxes on the pallet area, filament anywhere on the top level of rack `A` (`A-4`), sub-assemblies and lamps on rack `D` in the assembly room. |
 | `part_options.csv` | The mini lamp's Colour option, white (the default) or black, on the lamp, its head and its front cover. |
 | `part_suppliers.csv` | Supplier offers: prices from the preferred suppliers, and a second supplier (Quickparts Express: small quantities, short lead times, higher prices) for a few parts. |

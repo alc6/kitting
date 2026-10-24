@@ -136,6 +136,10 @@ export const fr: Dict = {
 		storage_cycle: "Une unité ne peut pas se trouver dans elle-même ni dans une unité qu’elle contient.",
 		storage_too_deep: "Trop d’unités les unes dans les autres : 4 au plus.",
 		storage_room_overlap: "Chevauche une autre pièce.",
+		storage_area_apart: "Doit toucher la pièce le long d’un mur, ou la chevaucher.",
+		storage_areas_many: "Une pièce a 8 rectangles au plus.",
+		storage_bad_areas:
+			"Donnez chaque zone sous la forme col,row,width,depth, séparées par des points-virgules (10,6,6,4; 0,10,4,2).",
 		past_price_not_past: "La date doit être antérieure à aujourd’hui.",
 		past_price_not_older:
 			"Seuls les prix plus anciens que le prix actuel peuvent être ajoutés ; modifiez le prix actuel dans le formulaire de l’article.",
@@ -936,7 +940,7 @@ export const fr: Dict = {
 		help: {
 			suppliers: "Mise à jour ou création par nom.",
 			storage_units:
-				"Le plan de l’atelier, mis à jour ou créé par code (obligatoire sur chaque ligne, pièces et portes comprises). kind vaut rack, cabinet, floor, room, door ou landmark ; col, row, width et depth le placent sur le plan, en carreaux du plan (0,5 m sauf réglage sur la page Emplacements) ; front vaut south, north, west ou east ; levels et positions donnent les cases des rayonnages et des armoires. parent_bin (A-3-3) pose un rayonnage ou une armoire dans une case d’une autre unité au lieu du plan : placez cette unité plus haut dans le fichier. Les colonnes absentes du fichier gardent leur valeur actuelle.",
+				"Le plan de l’atelier, mis à jour ou créé par code (obligatoire sur chaque ligne, pièces et portes comprises). kind vaut rack, cabinet, floor, room, door ou landmark ; col, row, width et depth le placent sur le plan, en carreaux du plan (0,5 m sauf réglage sur la page Emplacements) ; areas donne à une pièce qui n’est pas un rectangle ses autres rectangles, chacun sous la forme col,row,width,depth, séparés par des points-virgules (0,10,6,4; 10,0,6,4) ; front vaut south, north, west ou east ; levels et positions donnent les cases des rayonnages et des armoires. parent_bin (A-3-3) pose un rayonnage ou une armoire dans une case d’une autre unité au lieu du plan : placez cette unité plus haut dans le fichier. Les colonnes absentes du fichier gardent leur valeur actuelle.",
 			parts:
 				"Mise à jour ou création par ref. Les colonnes absentes du fichier gardent leur valeur actuelle. Les fournisseurs sont reconnus par leur nom. location est la case où l’article est rangé (A-2-3, A-2 ou P, parmi les unités de stockage) ; vide, elle reste telle quelle, et sa note est conservée.",
 			part_options:
@@ -1132,6 +1136,12 @@ export const fr: Dict = {
 		row: "Rangée",
 		width: "Largeur",
 		depth: "Profondeur",
+		areas: "Autres zones de la pièce",
+		areasHint:
+			"Une pièce qui n’est pas un rectangle (en L, en T, en U) est son rectangle ci-dessus plus d’autres zones, chacune touchant la pièce le long d’un mur ou la chevauchant. Les murs les entourent toutes.",
+		area: "Zone {n}",
+		addArea: "Ajouter une zone",
+		removeArea: "Retirer la zone {n}",
 		bins: "Cases",
 		levels: "Niveaux",
 		positions: "Positions par niveau",
@@ -1500,6 +1510,7 @@ export const fr: Dict = {
 			part_option_values: "Valeur d’option",
 			build_option_choices: "Valeurs choisies pour une fabrication",
 			storage_units: "Unité de stockage",
+			room_areas: "Zone de pièce",
 			part_locations: "Emplacement",
 		},
 		fields: {
@@ -1574,6 +1585,7 @@ export const fr: Dict = {
 			level: "niveau",
 			unit_id: "unité de stockage",
 			parent_unit_id: "dans l’unité",
+			room_id: "pièce",
 			parent_level: "au niveau",
 			parent_position: "à la position",
 			shipping_cents: "frais de port",

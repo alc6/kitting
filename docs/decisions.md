@@ -1505,8 +1505,8 @@ The plan and the locations could only be drawn and set on the pages: a workshop 
 every location again, and an assistant could not say where a part is. D207 puts them in the CSV files, D208 over MCP.
 
 - **D207. The plan in `storage_units.csv`, locations in a `location` column of `parts.csv`.**
-  - `storage_units.csv` (`code,name,kind,col,row,width,depth,front,levels,positions,parent_bin,notes`) is upserted by
-    code and imported right before `parts.csv` (its locations need the units). Columns left out keep their values, as
+  - `storage_units.csv` (`code,name,kind,col,row,width,depth,front,levels,positions,parent_bin,notes`; `areas` added
+    after `depth` by D211) is upserted by code and imported right before `parts.csv` (its locations need the units). Columns left out keep their values, as
     in the other files; nothing is deleted by an import.
   - *Checked in file order.* Each row passes the editor's rules (`checkUnitIn`, the pure core of `checkUnit`) against
     the plan as the rows before it leave it, so a unit can stand in a bin of a unit created earlier in the file; the
@@ -1607,3 +1607,45 @@ every location again, and an assistant could not say where a part is. D207 puts 
     100 cm, else every second line. A 100 m plan thus has at most a few hundred lines.
   - **New units.** A new rack starts at 2 × 1 m, half a metre from the corner and from its neighbour, converted to
     squares (4 × 2 at 50 cm as before, 20 × 10 at 10 cm, not a 0.4 × 0.2 m speck).
+
+## Rooms that are not rectangles (M19, shapes)
+
+A room was one rectangle (D194): an L-shaped stockroom had to be drawn as two rooms, with a wall between them and two
+names in the locations. D211 lets one room cover several rectangles.
+
+- **D211. A room is its own rectangle plus up to seven areas.** `room_areas` (tracked, migration 0014: a new table, no
+  change to `storage_units`) holds a room's other rectangles, in squares like a unit (`room_id`, `col`, `row`, `width`,
+  `depth`). Considered: a second rectangle on the room's row (four columns, but L and T only, never U) and an outline of
+  corner points (any shape, but new geometry, a corner editor in `app.js`, and coordinates typed into a text box
+  without JavaScript, against D198). Rectangles keep the plain rectangle checks and the form-first editor.
+  - **The room's own rectangle stays what it was** (`col`… of its `storage_units` row), not a box around the shape:
+    existing rooms keep their meaning, the room is still dragged by it, and its name stays in its top left corner.
+    Where the whole shape matters it is worked out: `rectsOf()` (the room's rectangle and its areas), `boundsOf()` for
+    the room page's crop, `planSize()` and the rescale (D209) over every rectangle.
+  - **Areas belong to the room.** Each touches the room's rectangle or another area along a stretch of wall, or overlaps
+    it (`detachedAreas()`; a corner is not enough: that is two rooms). They may overlap each other. Every rectangle of
+    a room stays clear of every rectangle of the other rooms, and inside the plan or its fixed area.
+  - **Which room a unit is in** is the room whose rectangles hold its centre (`insideRects()`): a centre on the line
+    where two rectangles of one room meet is inside, one on the outer walls is not, as before. Checked on the four
+    points a quarter of a square around the centre (centres fall on half squares).
+  - **Walls** are drawn around the rectangles taken together (`outlineOf()`): edges between covered and uncovered cells
+    of the grid made by the rectangles' own edges (not squares: a 5 cm grid would be millions of cells), traced into
+    closed loops. One SVG path, so a room still has one link and one hover. Two separate rooms that touch still show
+    the wall twice, as before. Doors need nothing new.
+  - **Loading.** Units are read with their areas (`loadUnits()`, `listUnits()`, `getUnit()`); the functions that draw
+    the plan or name a unit's room take `ShapedUnit` (a unit with `areas`), so a loader that forgets them does not
+    compile.
+  - **Editor.** "Other areas of the room" lists each area's column, row, width and depth; "Add an area" (below the room,
+    half its width) and the remove buttons post the form and only redraw it, nothing is saved before Save, and a hidden
+    first button keeps Enter for Save. With JavaScript each area is a dashed shape dragged and resized like the room.
+    Saving updates only the areas that changed (matched by order), in the room's change set; a room that becomes
+    another kind loses its areas, and deleting a room deletes its areas first, so an undo restores both. Moving the
+    room's rectangle does not move its areas: each rectangle is placed on its own (a moved L is refused until its areas
+    follow). Area fields are ignored for any other kind, so hidden fields never block a save.
+  - **Areas left on a unit that is not a room.** Undoing a change of kind to room, made in an earlier change set than
+    the areas, leaves the areas on the unit: they are not drawn, not checked and not rescaled with the squares (the
+    rescale only touches rooms' areas), and the unit's next save deletes them.
+  - **CSV.** `storage_units.csv` gets an `areas` column after `depth`: `col,row,width,depth` per area, separated by
+    semicolons (`0,6,4,4; 6,6,4,2`). Empty: none; left out of the file: unchanged. An area's error is reported on that
+    column. The assembly room of `examples/full` is now an L. MCP is unchanged: `get_location` names rooms and their
+    contents, not their shapes.

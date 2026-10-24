@@ -45,6 +45,7 @@ const TABLES = [
 	"part_option_values",
 	"part_options",
 	"part_locations",
+	"room_areas",
 	"storage_units",
 	"parts",
 	"suppliers",

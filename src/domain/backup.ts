@@ -27,6 +27,7 @@ import {
 	poShipments,
 	priceHistory,
 	purchaseOrders,
+	roomAreas,
 	settings,
 	stockMoves,
 	storageUnits,
@@ -61,6 +62,8 @@ const TABLES: SQLiteTable[] = [
 	priceHistory,
 	// The workshop plan and where parts are kept (D194), after the parts.
 	storageUnits,
+	// The other rectangles of rooms that are not one (D211).
+	roomAreas,
 	partLocations,
 	// File rows, not their content: the objects stay in the R2 bucket (D160, docs/administration.md).
 	files,

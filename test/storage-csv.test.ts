@@ -45,7 +45,7 @@ describe("the example plan", () => {
 			.map((l) => l.split(",")[0]);
 		// Tree order: S1 right after A, the unit it stands in.
 		expect(codes).toEqual(["A", "S1", "ASSE", "B", "C", "D", "DOOR", "P", "STOC"]);
-		expect(units).toContain("S1,Screw drawers,cabinet,0,0,1,1,south,3,4,A-3-3,");
+		expect(units).toContain("S1,Screw drawers,cabinet,0,0,1,1,,south,3,4,A-3-3,");
 		const again = await plan("storage_units", units);
 		expect(issues(again)).toEqual([]);
 		expect(new Set(actions(again))).toEqual(new Set(["unchanged"]));

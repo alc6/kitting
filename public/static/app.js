@@ -175,11 +175,12 @@
 
 	// Plan editor (<svg data-plan-editor data-form="…">, D198): the unit being edited ([data-editing]) follows the form's
 	// fields as they change, and dragging it (or its corner handle) moves (or resizes) it in whole squares and fills the
-	// fields. Without JavaScript the fields alone place the unit.
+	// fields. A room's other rectangles (D211) are more [data-editing] shapes whose fields carry their data-prefix
+	// ("area2_col"…). Without JavaScript the fields alone place the unit.
 	for (const svg of document.querySelectorAll("svg[data-plan-editor]")) {
 		const form = document.getElementById(svg.dataset.form ?? "");
-		const unit = svg.querySelector("[data-editing]");
-		if (!(form instanceof HTMLFormElement) || !(unit instanceof SVGElement)) continue;
+		const shapes = [...svg.querySelectorAll("[data-editing]")];
+		if (!(form instanceof HTMLFormElement) || shapes.length === 0) continue;
 		// data-square: SVG units of one square (not always a whole number); data-square-cm: its real size.
 		const sq = Number(svg.dataset.square) || 24;
 		const squareCm = Number(svg.dataset.squareCm) || 50;
@@ -187,11 +188,6 @@
 			maximumFractionDigits: 2,
 			useGrouping: false,
 		});
-		const shape = unit.querySelector("[data-shape]");
-		const front = unit.querySelector("[data-front]");
-		const code = unit.querySelector("[data-code]");
-		const size = unit.querySelector("[data-size]");
-		const handle = unit.querySelector("[data-handle]");
 		const read = (name, min) => {
 			const n = Number.parseInt(fieldValue(form, name), 10);
 			return Number.isFinite(n) ? Math.max(min, n) : min;
@@ -203,32 +199,47 @@
 		const set = (el, attrs) => {
 			for (const [k, v] of Object.entries(attrs)) el?.setAttribute(k, String(v));
 		};
+		const parts = shapes.map((g) => ({
+			group: g,
+			prefix: g.getAttribute("data-prefix") ?? "",
+			shape: g.querySelector("[data-shape]"),
+			front: g.querySelector("[data-front]"),
+			code: g.querySelector("[data-code]"),
+			size: g.querySelector("[data-size]"),
+			handle: g.querySelector("[data-handle]"),
+		}));
 		const draw = () => {
-			const cols = read("width", 1);
-			const rows = read("depth", 1);
-			const x = read("col", 0) * sq;
-			const y = read("row", 0) * sq;
-			const w = cols * sq;
-			const h = rows * sq;
-			set(shape, { x, y, width: w, height: h });
-			set(handle, { x: x + w - 7, y: y + h - 7 });
-			set(code, { x: x + w / 2, y: y + h / 2 + 5 });
-			set(size, { x: x + w / 2, y: y - 7 });
-			if (code) code.textContent = fieldValue(form, "code").toUpperCase() || "?";
-			if (size)
-				size.textContent = `${metres.format((cols * squareCm) / 100)} × ${metres.format((rows * squareCm) / 100)} m`;
-			const side = fieldValue(form, "front");
-			const edge =
-				side === "north"
-					? [x, y, x + w, y]
-					: side === "west"
-						? [x, y, x, y + h]
-						: side === "east"
-							? [x + w, y, x + w, y + h]
-							: [x, y + h, x + w, y + h];
-			set(front, { x1: edge[0], y1: edge[1], x2: edge[2], y2: edge[3] });
 			const kind = fieldValue(form, "kind");
-			set(front, { visibility: kind === "rack" || kind === "cabinet" ? "visible" : "hidden" });
+			for (const p of parts) {
+				const f = (side) => p.prefix + side;
+				// A room's areas only show while the form is for a room.
+				if (p.prefix) p.group.setAttribute("visibility", kind === "room" ? "visible" : "hidden");
+				const cols = read(f("width"), 1);
+				const rows = read(f("depth"), 1);
+				const x = read(f("col"), 0) * sq;
+				const y = read(f("row"), 0) * sq;
+				const w = cols * sq;
+				const h = rows * sq;
+				set(p.shape, { x, y, width: w, height: h });
+				set(p.handle, { x: x + w - 7, y: y + h - 7 });
+				set(p.code, { x: x + w / 2, y: y + h / 2 + 5 });
+				set(p.size, { x: x + w / 2, y: y - 7 });
+				if (p.code && !p.prefix) p.code.textContent = fieldValue(form, "code").toUpperCase() || "?";
+				if (p.size)
+					p.size.textContent = `${metres.format((cols * squareCm) / 100)} × ${metres.format((rows * squareCm) / 100)} m`;
+				if (!p.front) continue;
+				const side = fieldValue(form, "front");
+				const edge =
+					side === "north"
+						? [x, y, x + w, y]
+						: side === "west"
+							? [x, y, x, y + h]
+							: side === "east"
+								? [x + w, y, x + w, y + h]
+								: [x, y + h, x + w, y + h];
+				set(p.front, { x1: edge[0], y1: edge[1], x2: edge[2], y2: edge[3] });
+				set(p.front, { visibility: kind === "rack" || kind === "cabinet" ? "visible" : "hidden" });
+			}
 		};
 		form.addEventListener("input", draw);
 		form.addEventListener("change", draw);
@@ -241,16 +252,29 @@
 		let drag = null;
 		svg.addEventListener("pointerdown", (event) => {
 			if (!(event.target instanceof Element)) return;
-			const mode = event.target.closest("[data-handle]")
-				? "resize"
-				: event.target.closest("[data-shape]")
-					? "move"
-					: null;
+			const group = event.target.closest("[data-editing]");
+			const part = parts.find((p) => p.group === group);
+			const mode = !part
+				? null
+				: event.target.closest("[data-handle]")
+					? "resize"
+					: event.target.closest("[data-shape]")
+						? "move"
+						: null;
 			const at = mode ? squares(event) : null;
-			if (!mode || !at) return;
+			if (!part || !mode || !at) return;
 			event.preventDefault();
 			svg.setPointerCapture(event.pointerId);
-			drag = { mode, at, col: read("col", 0), row: read("row", 0), width: read("width", 1), depth: read("depth", 1) };
+			const f = (side) => part.prefix + side;
+			drag = {
+				f,
+				mode,
+				at,
+				col: read(f("col"), 0),
+				row: read(f("row"), 0),
+				width: read(f("width"), 1),
+				depth: read(f("depth"), 1),
+			};
 		});
 		svg.addEventListener("pointermove", (event) => {
 			const at = drag ? squares(event) : null;
@@ -258,11 +282,11 @@
 			const dx = Math.round(at.x - drag.at.x);
 			const dy = Math.round(at.y - drag.at.y);
 			if (drag.mode === "move") {
-				write("col", Math.max(0, drag.col + dx));
-				write("row", Math.max(0, drag.row + dy));
+				write(drag.f("col"), Math.max(0, drag.col + dx));
+				write(drag.f("row"), Math.max(0, drag.row + dy));
 			} else {
-				write("width", Math.max(1, drag.width + dx));
-				write("depth", Math.max(1, drag.depth + dy));
+				write(drag.f("width"), Math.max(1, drag.width + dx));
+				write(drag.f("depth"), Math.max(1, drag.depth + dy));
 			}
 			draw();
 		});
