@@ -186,6 +186,11 @@ export type PlanEditing = {
 	front: PlanUnit["front"];
 	/** A room's other rectangles (D211), each dragged on its own and kept in step with its fields (area2_col…). */
 	areas: Rect[];
+	/** A room's outline as app.js edits it ("x,y x,y …", D212); empty when the room is not one closed outline. */
+	outline: string;
+	/** How far the room may reach, in squares, and how deep a cut step is (about a metre). */
+	limit: { width: number; depth: number };
+	stepSquares: number;
 };
 
 const r1 = (n: number) => Math.round(n * 10) / 10;
@@ -256,6 +261,10 @@ export function PlanSvg(props: {
 			data-form={editing?.formId}
 			data-square={editing ? px(1) : undefined}
 			data-square-cm={editing ? squareCm : undefined}
+			data-outline={editing?.outline || undefined}
+			data-limit-width={editing ? editing.limit.width : undefined}
+			data-limit-depth={editing ? editing.limit.depth : undefined}
+			data-step={editing ? editing.stepSquares : undefined}
 		>
 			<rect x={0} y={0} width={W} height={H} rx={4} class="fill-muted/60" />
 			{rooms.flatMap(rectsOf).map((r) => (

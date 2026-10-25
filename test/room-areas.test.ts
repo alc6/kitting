@@ -5,12 +5,18 @@ import { type ImportPlan, planImport } from "../src/domain/import";
 import { revertChangeSet } from "../src/domain/revert";
 import {
 	areasCell,
+	type Corner,
 	detachedAreas,
 	insideRects,
 	locationsOf,
+	outlineErrors,
 	outlineOf,
+	outlineToForm,
 	parseAreasCell,
+	parseOutline,
 	type Rect,
+	rectsOfOutline,
+	validOutline,
 	withNewArea,
 	withoutArea,
 } from "../src/domain/storage";
@@ -355,5 +361,81 @@ describe("undoing changes to rooms of several rectangles", () => {
 		const res = await postForm("/locations", { ...rackForm(), area2_col: "2.5", area2_row: "x" });
 		expect(res.status).toBe(303);
 		expect(await rows("SELECT id FROM room_areas")).toEqual([]);
+	});
+});
+
+describe("drawing a room as one outline (D212)", () => {
+	const L = "0,0 10,0 10,6 4,6 4,10 0,10";
+
+	it("reads, checks and splits an outline into the room's rectangle and its areas", () => {
+		expect(parseOutline(L)).toEqual([
+			[0, 0],
+			[10, 0],
+			[10, 6],
+			[4, 6],
+			[4, 10],
+			[0, 10],
+		]);
+		expect(parseOutline("0,0 1,1 2")).toBeNull();
+		expect(parseOutline("0,0 1,0 1,1")).toBeNull();
+		const limit = { width: 200, depth: 200 };
+		expect(validOutline(parseOutline(L) as Corner[], limit)).toBe(true);
+		expect(validOutline(parseOutline("0,0 4,4 0,4 0,2") as Corner[], limit)).toBe(false); // a diagonal
+		expect(validOutline(parseOutline("0,0 4,0 4,4 2,4 0,4 0,2") as Corner[], limit)).toBe(false); // corners in line
+		expect(validOutline(parseOutline("0,0 4,0 4,2 0,2 0,4 2,4 2,0") as Corner[], limit)).toBe(false); // crossing
+		expect(validOutline(parseOutline(L) as Corner[], { width: 8, depth: 200 })).toBe(false); // off the plan
+		expect(rectsOfOutline(parseOutline(L) as Corner[])).toEqual([r(0, 0, 10, 6), r(0, 6, 4, 4)]);
+		// A U: the base band is the largest, the two arms are areas.
+		expect(rectsOfOutline(parseOutline("0,0 2,0 2,4 6,4 6,0 8,0 8,6 0,6") as Corner[])).toEqual([
+			r(0, 4, 8, 2),
+			r(0, 0, 2, 4),
+			r(6, 0, 2, 4),
+		]);
+		const form = outlineToForm(L, { squareCm: 50, area: null });
+		expect(form).toEqual({
+			ok: true,
+			values: {
+				col: "0",
+				row: "0",
+				width: "10",
+				depth: "6",
+				area2_col: "0",
+				area2_row: "6",
+				area2_width: "4",
+				area2_depth: "4",
+			},
+		});
+		expect(outlineToForm("0,0 4,4 0,4 0,2", { squareCm: 50, area: null })).toEqual({
+			ok: false,
+			error: "storage_bad_outline",
+		});
+		expect(outlineErrors({ col: "a", area2_row: "b", code: "c" })).toEqual({ outline: "a", code: "c" });
+	});
+
+	it("saves a drawn outline over the place fields, and refuses a bad one or an overlap on the outline", async () => {
+		const room = await draw({ ...roomForm(), outline: "0,0 12,0 12,4 6,4 6,10 0,10" });
+		expect(await one("SELECT col, row, width, depth FROM storage_units WHERE id = ?", room)).toEqual({
+			col: 0,
+			row: 0,
+			width: 12,
+			depth: 4,
+		});
+		expect(await areas(room)).toEqual([{ col: 0, row: 4, width: 6, depth: 6 }]);
+		// The editor hands the room's outline to app.js; the tools stay hidden without it.
+		const editor = await (await request(`/locations/${room}/edit`)).text();
+		expect(editor).toContain('data-outline="0,0 12,0 12,4 6,4 6,10 0,10"');
+		expect(editor).toContain("data-room-tools");
+		expect(editor).toMatch(/<div data-room-tools="true" hidden=""/);
+		const bad = await postForm("/locations", { ...roomForm({ name: "Office" }), outline: "20,0 24,4 20,4 20,2" });
+		expect(bad.status).toBe(422);
+		expect(await bad.text()).toContain("The walls must follow the grid");
+		const overlap = await postForm("/locations", { ...roomForm({ name: "Office" }), outline: "10,0 20,0 20,6 10,6" });
+		expect(overlap.status).toBe(422);
+		const page = await overlap.text();
+		expect(page).toContain("Overlaps another room.");
+		expect(page).toContain('data-outline="10,0 20,0 20,6 10,6"');
+		// Another kind ignores an outline.
+		const rack = await draw({ ...rackForm({ code: "R", col: "30" }), outline: "0,0 2,0 2,2 0,2" });
+		expect(await one("SELECT col, width FROM storage_units WHERE id = ?", rack)).toEqual({ col: 30, width: 2 });
 	});
 });

@@ -246,6 +246,139 @@ export function outlineOf(rects: Rect[]): [number, number][][] {
 	return loops;
 }
 
+// The room's outline, as the editor draws it (D212): corners in squares, "x,y x,y …", walls along the grid.
+
+export type Corner = [number, number];
+
+export const outlineText = (corners: Corner[]) => corners.map(([x, y]) => `${x},${y}`).join(" ");
+
+/** Reads "x,y x,y …": null when it is not a list of at least 4 whole-number corners. */
+export function parseOutline(text: string): Corner[] | null {
+	const groups = text.trim().split(/\s+/);
+	if (groups.length < 4 || groups.length > 200) return null;
+	const out: Corner[] = [];
+	for (const g of groups) {
+		const m = /^(\d{1,6}),(\d{1,6})$/.exec(g);
+		if (!m) return null;
+		out.push([Number(m[1]), Number(m[2])]);
+	}
+	return out;
+}
+
+/**
+ * Whether corners make one room: walls along the grid, each corner turning, the walls never crossing or touching each
+ * other but at their ends, and every corner within `limit` (squares).
+ */
+export function validOutline(corners: Corner[], limit: { width: number; depth: number }): boolean {
+	const n = corners.length;
+	if (n < 4 || n % 2 !== 0) return false;
+	const walls: [number, number, number, number][] = [];
+	for (let i = 0; i < n; i++) {
+		const [ax, ay] = corners[i] as Corner;
+		const [bx, by] = corners[(i + 1) % n] as Corner;
+		const [px] = corners[(i + n - 1) % n] as Corner;
+		if ((ax !== bx) === (ay !== by)) return false; // diagonal, or no length
+		if ((px === ax) === (ax === bx)) return false; // no turn at this corner
+		if (ax > limit.width || ay > limit.depth) return false;
+		walls.push([Math.min(ax, bx), Math.min(ay, by), Math.max(ax, bx), Math.max(ay, by)]);
+	}
+	for (let i = 0; i < n; i++)
+		for (let j = i + 2; j < n; j++) {
+			if (i === 0 && j === n - 1) continue;
+			const a = walls[i] as number[];
+			const b = walls[j] as number[];
+			if (
+				(a[0] as number) <= (b[2] as number) &&
+				(b[0] as number) <= (a[2] as number) &&
+				(a[1] as number) <= (b[3] as number) &&
+				(b[1] as number) <= (a[3] as number)
+			)
+				return false;
+		}
+	return true;
+}
+
+/**
+ * The rectangles that make up an outline, to store it as a room and its areas (D211): cut into horizontal bands at
+ * every corner, bands of the same span merged, the largest first (it becomes the room's own rectangle).
+ */
+export function rectsOfOutline(corners: Corner[]): Rect[] {
+	const ys = [...new Set(corners.map((c) => c[1]))].sort((a, b) => a - b);
+	const out: Rect[] = [];
+	let open = new Map<string, Rect>();
+	for (let k = 0; k < ys.length - 1; k++) {
+		const top = ys[k] as number;
+		const bottom = ys[k + 1] as number;
+		const mid = (top + bottom) / 2;
+		const xs: number[] = [];
+		corners.forEach((a, i) => {
+			const b = corners[(i + 1) % corners.length] as Corner;
+			if (a[0] === b[0] && Math.min(a[1], b[1]) < mid && Math.max(a[1], b[1]) > mid) xs.push(a[0]);
+		});
+		xs.sort((a, b) => a - b);
+		const next = new Map<string, Rect>();
+		for (let i = 0; i + 1 < xs.length; i += 2) {
+			const x1 = xs[i] as number;
+			const x2 = xs[i + 1] as number;
+			const key = `${x1},${x2}`;
+			const band = open.get(key);
+			next.set(
+				key,
+				band ? { ...band, depth: bottom - band.row } : { col: x1, row: top, width: x2 - x1, depth: bottom - top },
+			);
+		}
+		for (const [key, r] of open) if (!next.has(key)) out.push(r);
+		open = next;
+	}
+	out.push(...open.values());
+	return out.sort((a, b) => b.width * b.depth - a.width * a.depth || a.row - b.row || a.col - b.col);
+}
+
+/** The squares a room may reach: the fixed main area, else the plan's limit. */
+export const planLimit = (plan: PlanSettings) => {
+	const max = planMaxSquares(plan.squareCm);
+	return plan.area ?? { width: max, depth: max };
+};
+
+/**
+ * The form's place fields (col… and area2_col…) for a posted outline, or the error key: what a room's editor sends when
+ * its shape was drawn with JavaScript (D212).
+ */
+export function outlineToForm(
+	text: string,
+	plan: PlanSettings,
+): { ok: true; values: Record<string, string> } | { ok: false; error: string } {
+	const corners = parseOutline(text);
+	if (!corners || !validOutline(corners, planLimit(plan))) return { ok: false, error: "storage_bad_outline" };
+	const [main, ...areas] = rectsOfOutline(corners);
+	if (!main) return { ok: false, error: "storage_bad_outline" };
+	if (areas.length > MAX_AREAS) return { ok: false, error: "storage_areas_many" };
+	return {
+		ok: true,
+		values: {
+			col: String(main.col),
+			row: String(main.row),
+			width: String(main.width),
+			depth: String(main.depth),
+			...areasToForm(areas),
+		},
+	};
+}
+
+/** The form without its area fields. */
+export const withoutAreaFields = (body: Record<string, string>) =>
+	Object.fromEntries(Object.entries(body).filter(([k]) => !/^area\d+_/.test(k)));
+
+/** Errors of the place fields folded into one on the outline, the only place field a drawn room shows. */
+export function outlineErrors(errors: FieldErrors): FieldErrors {
+	const out: FieldErrors = {};
+	for (const [k, v] of Object.entries(errors)) {
+		if (/^(col|row|width|depth|areas|area\d+_\w+)$/.test(k)) out.outline ??= v;
+		else out[k] = v;
+	}
+	return out;
+}
+
 /** Areas as one cell of storage_units.csv: "col,row,width,depth" each, separated by semicolons. */
 export const areasCell = (areas: Rect[]) => areas.map((a) => `${a.col},${a.row},${a.width},${a.depth}`).join("; ");
 

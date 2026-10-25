@@ -36,11 +36,17 @@ import {
 	MAX_AREAS,
 	nestable,
 	nestedIn,
+	outlineErrors,
+	outlineOf,
+	outlineText,
+	outlineToForm,
 	type PlanSearch,
 	type PlanSettings,
 	parseBin,
+	parseOutline,
 	partByRef,
 	partsInUnits,
+	planLimit,
 	planSettingsInput,
 	planSettingsStatements,
 	planSize,
@@ -64,6 +70,7 @@ import {
 	withNested,
 	withNewArea,
 	withoutArea,
+	withoutAreaFields,
 } from "../domain/storage";
 import { errorText, fmt } from "../i18n";
 import { cn } from "../lib/cn";
@@ -419,6 +426,21 @@ function UnitForm(props: {
 		width: Math.max(1, int(areaField(n, "width"), 1)),
 		depth: Math.max(1, int(areaField(n, "depth"), 1)),
 	}));
+	// The outline app.js edits (D212): as posted, else around the room's rectangles when they make one closed shape.
+	const posted = parseOutline(v.outline ?? "");
+	const loops =
+		v.kind === "room"
+			? outlineOf([
+					{
+						col: int("col", 1),
+						row: int("row", 1),
+						width: Math.max(1, int("width", 4)),
+						depth: Math.max(1, int("depth", 2)),
+					},
+					...areas,
+				])
+			: [];
+	const outline = posted ? outlineText(posted) : loops.length === 1 && loops[0] ? outlineText(loops[0]) : "";
 	const editing: PlanEditing = {
 		formId: "unit-form",
 		unitId: props.unitId,
@@ -429,6 +451,9 @@ function UnitForm(props: {
 		depth: Math.max(1, int("depth", 2)),
 		front,
 		areas: v.kind === "room" ? areas : [],
+		outline,
+		limit: planLimit(props.plan),
+		stepSquares: Math.max(1, Math.round(100 / props.plan.squareCm)),
 	};
 	const idx = indexUnits(props.units);
 	// A unit cannot stand in itself or in a unit standing in it.
@@ -440,7 +465,7 @@ function UnitForm(props: {
 			<CardContent>
 				<form id="unit-form" method="post" action={props.action} class="flex flex-col gap-8">
 					{/* The default button: Enter in a field saves, and never adds or removes an area. */}
-					<button type="submit" class="sr-only" tabindex={-1} aria-hidden="true" />
+					<button type="submit" class="sr-only" tabindex={-1} aria-label={props.submit} />
 					<ErrorBanner show={Object.keys(props.errors).length > 0} />
 					<FieldSet legend={t.locations.sectionUnit}>
 						<ChoiceCards
@@ -472,6 +497,37 @@ function UnitForm(props: {
 							/>
 						</div>
 						<div data-show-if="placement:plan|kind:floor,room,door,landmark" class="flex flex-col gap-4">
+							{/* A room's shape tools (D212): shown by app.js, which then hides the place fields below. */}
+							<div data-room-tools hidden class="flex flex-col gap-2">
+								<input type="hidden" name="outline" value="" />
+								<div class="flex flex-wrap items-center gap-2">
+									<span class="text-sm text-muted-foreground">{t.locations.shape}</span>
+									{(["rect", "L", "T", "U"] as const).map((s) => (
+										<Button type="button" variant="outline" size="sm" data-shape-preset={s}>
+											{t.locations.shapes[s]}
+										</Button>
+									))}
+									<span class="flex-1" />
+									<Button type="button" variant="outline" size="sm" data-cut-step>
+										{t.locations.cutStep}
+									</Button>
+									<Button type="button" variant="ghost" size="sm" icon={icons.undo} data-shape-undo>
+										{t.history.undo}
+									</Button>
+								</div>
+								<p
+									data-shape-hint
+									data-hint={t.locations.shapeHint}
+									data-selected={t.locations.wallSelected}
+									data-short={t.locations.wallShort}
+									data-pick={t.locations.pickWall}
+									data-cut={t.locations.stepCut}
+									class="m-0 text-sm text-muted-foreground"
+								>
+									{t.locations.shapeHint}
+								</p>
+								{props.errors.outline ? <p class="m-0 text-sm text-destructive">{props.errors.outline}</p> : null}
+							</div>
 							<div class="overflow-x-auto rounded-lg border bg-background touch-none">
 								<PlanSvg
 									units={props.units}
@@ -481,49 +537,51 @@ function UnitForm(props: {
 									links="edit"
 								/>
 							</div>
-							<p class="-mt-2 text-sm text-muted-foreground">
-								{fmt(t.locations.placeHint, { size: formatMetres(props.plan.squareCm, locale) })}
-							</p>
-							<div class="grid grid-cols-2 gap-4 sm:grid-cols-4">
-								<TextField name="col" label={t.locations.col} inputmode="numeric" {...p} />
-								<TextField name="row" label={t.locations.row} inputmode="numeric" {...p} />
-								<TextField name="width" label={t.locations.width} inputmode="numeric" {...p} />
-								<TextField name="depth" label={t.locations.depth} inputmode="numeric" {...p} />
-							</div>
-							<div data-show-if="kind:room" class="flex flex-col gap-4">
-								<div class="flex flex-col gap-1">
-									<p class="m-0 text-sm font-medium">{t.locations.areas}</p>
-									<p class="m-0 text-sm text-muted-foreground">{t.locations.areasHint}</p>
+							<div data-room-fields class="flex flex-col gap-4">
+								<p class="m-0 text-sm text-muted-foreground">
+									{fmt(t.locations.placeHint, { size: formatMetres(props.plan.squareCm, locale) })}
+								</p>
+								<div class="grid grid-cols-2 gap-4 sm:grid-cols-4">
+									<TextField name="col" label={t.locations.col} inputmode="numeric" {...p} />
+									<TextField name="row" label={t.locations.row} inputmode="numeric" {...p} />
+									<TextField name="width" label={t.locations.width} inputmode="numeric" {...p} />
+									<TextField name="depth" label={t.locations.depth} inputmode="numeric" {...p} />
 								</div>
-								{areaNumbers.map((n) => (
-									<div class="flex flex-col gap-2 rounded-lg border p-3">
-										<div class="flex items-center justify-between gap-2">
-											<p class="m-0 text-sm font-medium">{fmt(t.locations.area, { n })}</p>
-											<Button
-												name="area_remove"
-												value={String(n)}
-												variant="ghost"
-												size="icon"
-												icon={icons.trash}
-												title={fmt(t.locations.removeArea, { n })}
-												aria-label={fmt(t.locations.removeArea, { n })}
-											/>
-										</div>
-										<div class="grid grid-cols-2 gap-4 sm:grid-cols-4">
-											<TextField name={areaField(n, "col")} label={t.locations.col} inputmode="numeric" {...p} />
-											<TextField name={areaField(n, "row")} label={t.locations.row} inputmode="numeric" {...p} />
-											<TextField name={areaField(n, "width")} label={t.locations.width} inputmode="numeric" {...p} />
-											<TextField name={areaField(n, "depth")} label={t.locations.depth} inputmode="numeric" {...p} />
-										</div>
+								<div data-show-if="kind:room" class="flex flex-col gap-4">
+									<div class="flex flex-col gap-1">
+										<p class="m-0 text-sm font-medium">{t.locations.areas}</p>
+										<p class="m-0 text-sm text-muted-foreground">{t.locations.areasHint}</p>
 									</div>
-								))}
-								{areaNumbers.length < MAX_AREAS ? (
-									<div>
-										<Button name="area_add" value="1" variant="outline" icon={icons.plus}>
-											{t.locations.addArea}
-										</Button>
-									</div>
-								) : null}
+									{areaNumbers.map((n) => (
+										<div class="flex flex-col gap-2 rounded-lg border p-3">
+											<div class="flex items-center justify-between gap-2">
+												<p class="m-0 text-sm font-medium">{fmt(t.locations.area, { n })}</p>
+												<Button
+													name="area_remove"
+													value={String(n)}
+													variant="ghost"
+													size="icon"
+													icon={icons.trash}
+													title={fmt(t.locations.removeArea, { n })}
+													aria-label={fmt(t.locations.removeArea, { n })}
+												/>
+											</div>
+											<div class="grid grid-cols-2 gap-4 sm:grid-cols-4">
+												<TextField name={areaField(n, "col")} label={t.locations.col} inputmode="numeric" {...p} />
+												<TextField name={areaField(n, "row")} label={t.locations.row} inputmode="numeric" {...p} />
+												<TextField name={areaField(n, "width")} label={t.locations.width} inputmode="numeric" {...p} />
+												<TextField name={areaField(n, "depth")} label={t.locations.depth} inputmode="numeric" {...p} />
+											</div>
+										</div>
+									))}
+									{areaNumbers.length < MAX_AREAS ? (
+										<div>
+											<Button name="area_add" value="1" variant="outline" icon={icons.plus}>
+												{t.locations.addArea}
+											</Button>
+										</div>
+									) : null}
+								</div>
 							</div>
 							<div data-show-if="kind:rack,cabinet,door">
 								<SegmentedField
@@ -684,15 +742,24 @@ async function saveUnit(c: Context<AppEnv>, unit: ShapedUnit | null) {
 	// Adding or removing an area only redraws the form: nothing is saved until Save (D211).
 	if (body.area_add) return renderUnitForm(c, unit, withNewArea(body), {});
 	if (body.area_remove) return renderUnitForm(c, unit, withoutArea(body, Number(body.area_remove)), {});
-	const v = validate(storageUnitInput, body);
+	// A room drawn with JavaScript posts its outline (D212): it replaces the place fields, hidden then.
+	let fields = body;
+	const drawn = body.kind === "room" && (body.outline ?? "").trim() !== "";
+	if (drawn) {
+		const split = outlineToForm(body.outline ?? "", await loadPlanSettings(db));
+		if (!split.ok) return renderUnitForm(c, unit, body, { outline: split.error }, 422);
+		fields = { ...withoutAreaFields(body), ...split.values };
+	}
+	const failed = (errors: FieldErrors, vars?: Record<string, number>) =>
+		renderUnitForm(c, unit, body, drawn ? outlineErrors(errors) : errors, 422, vars);
+	const v = validate(storageUnitInput, fields);
 	// Area fields only count for a room: hidden for the other kinds, they must not block saving.
-	const read = body.kind === "room" ? readAreaFields(body) : { ok: true as const, areas: [] as Rect[] };
-	if (!v.ok || !read.ok)
-		return renderUnitForm(c, unit, body, { ...(v.ok ? {} : v.errors), ...(read.ok ? {} : read.errors) }, 422);
+	const read = fields.kind === "room" ? readAreaFields(fields) : { ok: true as const, areas: [] as Rect[] };
+	if (!v.ok || !read.ok) return failed({ ...(v.ok ? {} : v.errors), ...(read.ok ? {} : read.errors) });
 	// Only racks and drawer cabinets can stand in a bin; the others are always on the plan.
 	const data = nestable(v.data.kind) ? v.data : { ...v.data, placement: "plan" as const };
 	const checked = await checkUnit(db, data, read.areas, unit?.id);
-	if (!checked.ok) return renderUnitForm(c, unit, body, checked.errors, 422, checked.vars);
+	if (!checked.ok) return failed(checked.errors, checked.vars);
 	const code = checked.values.code;
 	const now = nowIso();
 	if (!unit) {

@@ -1649,3 +1649,18 @@ names in the locations. D211 lets one room cover several rectangles.
     semicolons (`0,6,4,4; 6,6,4,2`). Empty: none; left out of the file: unchanged. An area's error is reported on that
     column. The assembly room of `examples/full` is now an L. MCP is unchanged: `get_location` names rooms and their
     contents, not their shapes.
+- **D212. With JavaScript, a room is drawn as one outline.** Adding areas one at a time (D211) took several posts and
+  rectangles to line up; the room is one shape to the people drawing it. A prototype was tried before building it.
+  - **Editing.** The room's editor shows its outline with a handle in the middle of each wall and one on each corner.
+    Dragging a wall pushes it (its neighbours stretch), dragging a corner moves the two walls that meet there; a move
+    that would make walls cross or leave the plan stops. Tapping a wall only selects it (it shows its length): "Cut a
+    step" then moves the second half of that wall about a metre into the room, ready to be dragged, so an L or a U
+    needs no "add area". Presets (rectangle, L, T, U) reshape the room's current box in one click; Undo steps back. A
+    unit turned into a room starts at 6 × 4 m at least.
+  - **Storage is unchanged.** `app.js` posts the outline (`outline`, "x,y x,y …" in squares) once it was changed; the
+    server checks it (`validOutline`: walls along the grid, a turn at every corner, no crossing, on the plan), cuts it
+    into horizontal bands merged by span (`rectsOfOutline`), and saves the largest as the room's rectangle and the
+    others as its areas, through the same checks as the form (D211). Errors of the place fields are shown on the
+    outline (`outlineErrors`), the only place field then on screen, and the posted outline is drawn again to fix it.
+  - **Without JavaScript** the place fields and the area fields of D211 stay, as before; the tools are `hidden` until
+    `app.js` shows them. A room whose rectangles enclose a hole (two outlines) keeps the fields too.

@@ -138,6 +138,8 @@ export const fr: Dict = {
 		storage_room_overlap: "Chevauche une autre pièce.",
 		storage_area_apart: "Doit toucher la pièce le long d’un mur, ou la chevaucher.",
 		storage_areas_many: "Une pièce a 8 rectangles au plus.",
+		storage_bad_outline:
+			"Les murs doivent suivre la grille, tourner à chaque coin, ne jamais se croiser et rester sur le plan.",
 		storage_bad_areas:
 			"Donnez chaque zone sous la forme col,row,width,depth, séparées par des points-virgules (10,6,6,4; 0,10,4,2).",
 		past_price_not_past: "La date doit être antérieure à aujourd’hui.",
@@ -1142,6 +1144,15 @@ export const fr: Dict = {
 		area: "Zone {n}",
 		addArea: "Ajouter une zone",
 		removeArea: "Retirer la zone {n}",
+		shape: "Forme",
+		shapes: { rect: "Rectangle", L: "L", T: "T", U: "U" },
+		cutStep: "Créer un décrochement",
+		shapeHint:
+			"Faites glisser un mur pour le pousser, ou un coin pour déplacer deux murs. Touchez un mur pour le sélectionner, puis Créer un décrochement.",
+		wallSelected: "Mur sélectionné : faites-le glisser, ou Créer un décrochement pour le couper en deux.",
+		wallShort: "Ce mur est trop court pour y créer un décrochement.",
+		pickWall: "Touchez d’abord un mur, puis Créer un décrochement.",
+		stepCut: "Décrochement créé : faites glisser le nouveau mur pour former la pièce.",
 		bins: "Cases",
 		levels: "Niveaux",
 		positions: "Positions par niveau",
