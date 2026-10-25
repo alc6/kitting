@@ -621,6 +621,27 @@ export const storageUnits = sqliteTable(
 	],
 );
 
+// The other rectangles of a room that is not one (D211): an L, a T or a U is the room's own rectangle (its row in
+// `storage_units`) plus these, each touching or overlapping the rest. Squares of the plan, as for a unit.
+export const roomAreas = sqliteTable(
+	"room_areas",
+	{
+		id: integer("id").primaryKey({ autoIncrement: true }),
+		roomId: integer("room_id")
+			.notNull()
+			.references(() => storageUnits.id),
+		col: integer("col").notNull(),
+		row: integer("row").notNull(),
+		width: integer("width").notNull(),
+		depth: integer("depth").notNull(),
+		...audit(),
+	},
+	(t) => [
+		index("room_areas_room_idx").on(t.roomId),
+		check("room_areas_size_check", sql`${t.col} >= 0 AND ${t.row} >= 0 AND ${t.width} >= 1 AND ${t.depth} >= 1`),
+	],
+);
+
 // Where a part is kept (D195): its home location, one per part. Level and position are NULL when the part is anywhere in
 // the unit (always for a floor area). A hint for people, not a ledger: stock is still counted per part, not per bin.
 export const partLocations = sqliteTable(
@@ -766,6 +787,7 @@ export const HISTORY_TABLES: SQLiteTable[] = [
 	partOptionValues,
 	buildOptionChoices,
 	storageUnits,
+	roomAreas,
 	partLocations,
 ];
 
@@ -808,4 +830,5 @@ export type PartOption = typeof partOptions.$inferSelect;
 export type PartOptionValue = typeof partOptionValues.$inferSelect;
 export type BuildOptionChoice = typeof buildOptionChoices.$inferSelect;
 export type StorageUnit = typeof storageUnits.$inferSelect;
+export type RoomArea = typeof roomAreas.$inferSelect;
 export type PartLocation = typeof partLocations.$inferSelect;

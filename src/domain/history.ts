@@ -363,6 +363,7 @@ export const REFERENCE_COLUMNS: Record<string, string> = {
 	build_id: "builds",
 	unit_id: "storage_units",
 	parent_unit_id: "storage_units",
+	room_id: "storage_units",
 };
 
 /** Columns holding option keys (D184): value ids, or option ids for the options chosen per build. */
@@ -427,6 +428,8 @@ export function rowName(table: string, row: Snapshot | null, labels: Labels): st
 			return `${labelOf(labels, "parts", row.part_id)} (${labelOf(labels, "builds", row.build_id)})`;
 		case "storage_units":
 			return s("code");
+		case "room_areas":
+			return `${labelOf(labels, "storage_units", row.room_id)} ${s("col")},${s("row")}`;
 		case "part_locations":
 			return labelOf(labels, "parts", row.part_id);
 		case "files":

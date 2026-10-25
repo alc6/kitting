@@ -249,6 +249,9 @@ Where each part is kept, drawn on a plan of the workshop, shown wherever someone
       `get_part`, set by `update_part`; no location on other tools, no tool to draw the plan (D208)
 - [x] README and the Kitting skill ("Where is it?", "Put it away", two eval cases)
 - [x] The square's size and a fixed main area, set on the Locations page; units keep their real size (D209)
+- [x] Rooms that are not rectangles: a room's own rectangle plus up to seven areas, one outline (migration 0014:
+      `room_areas`, tracked), in the editor and `storage_units.csv` (D211)
+- [x] Rooms drawn as one outline: presets, walls and corners to drag, cut a step (D212)
 
 ## M20: PO charges and landed cost ✅
 

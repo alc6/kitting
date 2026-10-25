@@ -6,13 +6,17 @@ import { STORAGE_FRONTS, type StorageUnit } from "../db/schema";
 import { getPart, partOptions } from "../domain/parts";
 import { can } from "../domain/permissions";
 import {
+	areaCount,
+	areaField,
+	areasOf,
 	binCode,
 	binCodes,
+	boundsOf,
 	chainOf,
 	checkPlanSettings,
 	checkUnit,
 	createUnitStatement,
-	deleteUnitStatement,
+	deleteUnitStatements,
 	drawnOnly,
 	findOnPlan,
 	fullCode,
@@ -29,18 +33,30 @@ import {
 	locationInput,
 	locationOf,
 	locationSortKey,
+	MAX_AREAS,
 	nestable,
 	nestedIn,
+	outlineErrors,
+	outlineOf,
+	outlineText,
+	outlineToForm,
 	type PlanSearch,
 	type PlanSettings,
 	parseBin,
+	parseOutline,
 	partByRef,
 	partsInUnits,
+	planLimit,
 	planSettingsInput,
 	planSettingsStatements,
 	planSize,
 	planUnchanged,
+	type Rect,
+	readAreaFields,
+	rectsOf,
 	resolveBin,
+	roomAreaStatements,
+	type ShapedUnit,
 	type StoredPart,
 	setLocationStatements,
 	storageUnitInput,
@@ -52,6 +68,9 @@ import {
 	unlocatedParts,
 	updateUnitStatement,
 	withNested,
+	withNewArea,
+	withoutArea,
+	withoutAreaFields,
 } from "../domain/storage";
 import { errorText, fmt } from "../i18n";
 import { cn } from "../lib/cn";
@@ -383,7 +402,7 @@ function UnitForm(props: {
 	action: string;
 	values: FormValues;
 	errors: FormErrors;
-	units: StorageUnit[];
+	units: ShapedUnit[];
 	plan: PlanSettings;
 	unitId: number | null;
 	cancel: string;
@@ -399,6 +418,29 @@ function UnitForm(props: {
 	const front = (STORAGE_FRONTS as readonly string[]).includes(v.front ?? "")
 		? (v.front as PlanEditing["front"])
 		: "south";
+	// A room's other rectangles, from their fields (D211); drawn only while the form is for a room.
+	const areaNumbers = Array.from({ length: areaCount(v) }, (_, i) => i + 2);
+	const areas: Rect[] = areaNumbers.map((n) => ({
+		col: int(areaField(n, "col"), 0),
+		row: int(areaField(n, "row"), 0),
+		width: Math.max(1, int(areaField(n, "width"), 1)),
+		depth: Math.max(1, int(areaField(n, "depth"), 1)),
+	}));
+	// The outline app.js edits (D212): as posted, else around the room's rectangles when they make one closed shape.
+	const posted = parseOutline(v.outline ?? "");
+	const loops =
+		v.kind === "room"
+			? outlineOf([
+					{
+						col: int("col", 1),
+						row: int("row", 1),
+						width: Math.max(1, int("width", 4)),
+						depth: Math.max(1, int("depth", 2)),
+					},
+					...areas,
+				])
+			: [];
+	const outline = posted ? outlineText(posted) : loops.length === 1 && loops[0] ? outlineText(loops[0]) : "";
 	const editing: PlanEditing = {
 		formId: "unit-form",
 		unitId: props.unitId,
@@ -408,6 +450,10 @@ function UnitForm(props: {
 		width: Math.max(1, int("width", 4)),
 		depth: Math.max(1, int("depth", 2)),
 		front,
+		areas: v.kind === "room" ? areas : [],
+		outline,
+		limit: planLimit(props.plan),
+		stepSquares: Math.max(1, Math.round(100 / props.plan.squareCm)),
 	};
 	const idx = indexUnits(props.units);
 	// A unit cannot stand in itself or in a unit standing in it.
@@ -418,6 +464,8 @@ function UnitForm(props: {
 		<Card>
 			<CardContent>
 				<form id="unit-form" method="post" action={props.action} class="flex flex-col gap-8">
+					{/* The default button: Enter in a field saves, and never adds or removes an area. */}
+					<button type="submit" class="sr-only" tabindex={-1} aria-label={props.submit} />
 					<ErrorBanner show={Object.keys(props.errors).length > 0} />
 					<FieldSet legend={t.locations.sectionUnit}>
 						<ChoiceCards
@@ -449,6 +497,37 @@ function UnitForm(props: {
 							/>
 						</div>
 						<div data-show-if="placement:plan|kind:floor,room,door,landmark" class="flex flex-col gap-4">
+							{/* A room's shape tools (D212): shown by app.js, which then hides the place fields below. */}
+							<div data-room-tools hidden class="flex flex-col gap-2">
+								<input type="hidden" name="outline" value="" />
+								<div class="flex flex-wrap items-center gap-2">
+									<span class="text-sm text-muted-foreground">{t.locations.shape}</span>
+									{(["rect", "L", "T", "U"] as const).map((s) => (
+										<Button type="button" variant="outline" size="sm" data-shape-preset={s}>
+											{t.locations.shapes[s]}
+										</Button>
+									))}
+									<span class="flex-1" />
+									<Button type="button" variant="outline" size="sm" data-cut-step>
+										{t.locations.cutStep}
+									</Button>
+									<Button type="button" variant="ghost" size="sm" icon={icons.undo} data-shape-undo>
+										{t.history.undo}
+									</Button>
+								</div>
+								<p
+									data-shape-hint
+									data-hint={t.locations.shapeHint}
+									data-selected={t.locations.wallSelected}
+									data-short={t.locations.wallShort}
+									data-pick={t.locations.pickWall}
+									data-cut={t.locations.stepCut}
+									class="m-0 text-sm text-muted-foreground"
+								>
+									{t.locations.shapeHint}
+								</p>
+								{props.errors.outline ? <p class="m-0 text-sm text-destructive">{props.errors.outline}</p> : null}
+							</div>
 							<div class="overflow-x-auto rounded-lg border bg-background touch-none">
 								<PlanSvg
 									units={props.units}
@@ -458,14 +537,51 @@ function UnitForm(props: {
 									links="edit"
 								/>
 							</div>
-							<p class="-mt-2 text-sm text-muted-foreground">
-								{fmt(t.locations.placeHint, { size: formatMetres(props.plan.squareCm, locale) })}
-							</p>
-							<div class="grid grid-cols-2 gap-4 sm:grid-cols-4">
-								<TextField name="col" label={t.locations.col} inputmode="numeric" {...p} />
-								<TextField name="row" label={t.locations.row} inputmode="numeric" {...p} />
-								<TextField name="width" label={t.locations.width} inputmode="numeric" {...p} />
-								<TextField name="depth" label={t.locations.depth} inputmode="numeric" {...p} />
+							<div data-room-fields class="flex flex-col gap-4">
+								<p class="m-0 text-sm text-muted-foreground">
+									{fmt(t.locations.placeHint, { size: formatMetres(props.plan.squareCm, locale) })}
+								</p>
+								<div class="grid grid-cols-2 gap-4 sm:grid-cols-4">
+									<TextField name="col" label={t.locations.col} inputmode="numeric" {...p} />
+									<TextField name="row" label={t.locations.row} inputmode="numeric" {...p} />
+									<TextField name="width" label={t.locations.width} inputmode="numeric" {...p} />
+									<TextField name="depth" label={t.locations.depth} inputmode="numeric" {...p} />
+								</div>
+								<div data-show-if="kind:room" class="flex flex-col gap-4">
+									<div class="flex flex-col gap-1">
+										<p class="m-0 text-sm font-medium">{t.locations.areas}</p>
+										<p class="m-0 text-sm text-muted-foreground">{t.locations.areasHint}</p>
+									</div>
+									{areaNumbers.map((n) => (
+										<div class="flex flex-col gap-2 rounded-lg border p-3">
+											<div class="flex items-center justify-between gap-2">
+												<p class="m-0 text-sm font-medium">{fmt(t.locations.area, { n })}</p>
+												<Button
+													name="area_remove"
+													value={String(n)}
+													variant="ghost"
+													size="icon"
+													icon={icons.trash}
+													title={fmt(t.locations.removeArea, { n })}
+													aria-label={fmt(t.locations.removeArea, { n })}
+												/>
+											</div>
+											<div class="grid grid-cols-2 gap-4 sm:grid-cols-4">
+												<TextField name={areaField(n, "col")} label={t.locations.col} inputmode="numeric" {...p} />
+												<TextField name={areaField(n, "row")} label={t.locations.row} inputmode="numeric" {...p} />
+												<TextField name={areaField(n, "width")} label={t.locations.width} inputmode="numeric" {...p} />
+												<TextField name={areaField(n, "depth")} label={t.locations.depth} inputmode="numeric" {...p} />
+											</div>
+										</div>
+									))}
+									{areaNumbers.length < MAX_AREAS ? (
+										<div>
+											<Button name="area_add" value="1" variant="outline" icon={icons.plus}>
+												{t.locations.addArea}
+											</Button>
+										</div>
+									) : null}
+								</div>
 							</div>
 							<div data-show-if="kind:rack,cabinet,door">
 								<SegmentedField
@@ -566,7 +682,7 @@ const editorOnly = (kind: StorageUnit["kind"]) => kind === "door" || kind === "l
 
 async function renderUnitForm(
 	c: Context<AppEnv>,
-	unit: StorageUnit | null,
+	unit: ShapedUnit | null,
 	values: FormValues,
 	errors: FieldErrors,
 	status: 200 | 422 = 200,
@@ -619,24 +735,43 @@ locationRoutes.get("/new", requirePermission("storage.plan"), async (c) => {
 	return renderUnitForm(c, null, newUnitValues(units, c.req.query("in"), plan.squareCm), {});
 });
 
-async function saveUnit(c: Context<AppEnv>, unit: StorageUnit | null) {
+async function saveUnit(c: Context<AppEnv>, unit: ShapedUnit | null) {
 	const t = c.var.t;
+	const db = c.var.db;
 	const body = (await c.req.parseBody()) as FormValues;
-	const v = validate(storageUnitInput, body);
-	if (!v.ok) return renderUnitForm(c, unit, body, v.errors, 422);
+	// Adding or removing an area only redraws the form: nothing is saved until Save (D211).
+	if (body.area_add) return renderUnitForm(c, unit, withNewArea(body), {});
+	if (body.area_remove) return renderUnitForm(c, unit, withoutArea(body, Number(body.area_remove)), {});
+	// A room drawn with JavaScript posts its outline (D212): it replaces the place fields, hidden then.
+	let fields = body;
+	const drawn = body.kind === "room" && (body.outline ?? "").trim() !== "";
+	if (drawn) {
+		const split = outlineToForm(body.outline ?? "", await loadPlanSettings(db));
+		if (!split.ok) return renderUnitForm(c, unit, body, { outline: split.error }, 422);
+		fields = { ...withoutAreaFields(body), ...split.values };
+	}
+	const failed = (errors: FieldErrors, vars?: Record<string, number>) =>
+		renderUnitForm(c, unit, body, drawn ? outlineErrors(errors) : errors, 422, vars);
+	const v = validate(storageUnitInput, fields);
+	// Area fields only count for a room: hidden for the other kinds, they must not block saving.
+	const read = fields.kind === "room" ? readAreaFields(fields) : { ok: true as const, areas: [] as Rect[] };
+	if (!v.ok || !read.ok) return failed({ ...(v.ok ? {} : v.errors), ...(read.ok ? {} : read.errors) });
 	// Only racks and drawer cabinets can stand in a bin; the others are always on the plan.
 	const data = nestable(v.data.kind) ? v.data : { ...v.data, placement: "plan" as const };
-	const checked = await checkUnit(c.var.db, data, unit?.id);
-	if (!checked.ok) return renderUnitForm(c, unit, body, checked.errors, 422, checked.vars);
+	const checked = await checkUnit(db, data, read.areas, unit?.id);
+	if (!checked.ok) return failed(checked.errors, checked.vars);
 	const code = checked.values.code;
+	const now = nowIso();
 	if (!unit) {
 		const { results } = await saveChanges(c, fmt(t.history.summaries.storageUnitCreate, { code }), [
-			createUnitStatement(c.var.db, checked.values, c.var.user, nowIso()),
+			createUnitStatement(db, checked.values, c.var.user, now),
+			...roomAreaStatements(db, { code }, [], checked.areas, c.var.user, now),
 		]);
 		return redirectOk(c, `/locations/${results[0][0]?.id}`);
 	}
 	await saveChanges(c, fmt(t.history.summaries.storageUnitEdit, { code }), [
-		updateUnitStatement(c.var.db, unit.id, checked.values, c.var.user, nowIso()),
+		updateUnitStatement(db, unit.id, checked.values, c.var.user, now),
+		...roomAreaStatements(db, { id: unit.id }, await areasOf(db, unit.id), checked.areas, c.var.user, now),
 	]);
 	return redirectOk(c, `/locations/${unit.id}`);
 }
@@ -1176,7 +1311,7 @@ locationRoutes.get("/:id", async (c) => {
 });
 
 /** A room: its part of the plan, the units in it, and every part kept there in walking order. */
-async function renderRoom(c: Context<AppEnv>, room: StorageUnit) {
+async function renderRoom(c: Context<AppEnv>, room: ShapedUnit) {
 	const t = c.var.t;
 	const [units, plan] = await Promise.all([allUnits(c), loadPlanSettings(c.var.db)]);
 	const idx = indexUnits(units);
@@ -1245,7 +1380,7 @@ async function renderRoom(c: Context<AppEnv>, room: StorageUnit) {
 								squareCm={plan.squareCm}
 								links="view"
 								editDrawn={canPlan}
-								crop={room}
+								crop={boundsOf(rectsOf(room))}
 							/>
 						</div>
 					</CardContent>
@@ -1350,8 +1485,10 @@ locationRoutes.post("/:id/delete", requirePermission("storage.delete"), async (c
 	const unit = id ? await getUnit(c.var.db, id) : undefined;
 	if (!unit) return notFound(c);
 	if (await unitInUse(c.var.db, unit.id)) return c.redirect(`/locations/${unit.id}?err=storage_unit_in_use`, 303);
-	await saveChanges(c, fmt(c.var.t.history.summaries.storageUnitDelete, { code: unit.code }), [
-		deleteUnitStatement(c.var.db, unit.id),
-	]);
+	await saveChanges(
+		c,
+		fmt(c.var.t.history.summaries.storageUnitDelete, { code: unit.code }),
+		deleteUnitStatements(c.var.db, unit.id),
+	);
 	return redirectOk(c, "/locations", "deleted");
 });

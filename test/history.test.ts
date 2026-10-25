@@ -239,6 +239,14 @@ const CASES: Record<string, { insert: (f: Fixtures) => D1PreparedStatement; upda
 			),
 		update: "UPDATE storage_units SET col = 3, levels = 5 WHERE id = ?",
 	},
+	room_areas: {
+		insert: (f) =>
+			stmt(
+				"INSERT INTO room_areas (room_id, col, row, width, depth, created_by, updated_by) VALUES (?, 4, 0, 2, 3, 'u', 'u') RETURNING id",
+				f.unit,
+			),
+		update: "UPDATE room_areas SET width = 5 WHERE id = ?",
+	},
 	part_locations: {
 		insert: (f) =>
 			stmt(

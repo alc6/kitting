@@ -13,9 +13,13 @@ import {
 	type Location,
 	locationCode,
 	onPlan,
+	outlineOf,
 	type PlanUnit,
 	positionRect,
+	type Rect,
+	rectsOf,
 	rootBin,
+	type ShapedUnit,
 	type StoredPart,
 } from "../domain/storage";
 import { type Dict, fmt } from "../i18n";
@@ -180,6 +184,13 @@ export type PlanEditing = {
 	width: number;
 	depth: number;
 	front: PlanUnit["front"];
+	/** A room's other rectangles (D211), each dragged on its own and kept in step with its fields (area2_col…). */
+	areas: Rect[];
+	/** A room's outline as app.js edits it ("x,y x,y …", D212); empty when the room is not one closed outline. */
+	outline: string;
+	/** How far the room may reach, in squares, and how deep a cut step is (about a metre). */
+	limit: { width: number; depth: number };
+	stepSquares: number;
 };
 
 const r1 = (n: number) => Math.round(n * 10) / 10;
@@ -188,7 +199,7 @@ const CROP_MARGIN = PX_PER_M / 2;
 const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, Math.max(1, n - 1))}…` : s);
 
 export function PlanSvg(props: {
-	units: StorageUnit[];
+	units: ShapedUnit[];
 	size: { width: number; depth: number };
 	/** The size of a square in centimetres (`plan.squareCm`). */
 	squareCm: number;
@@ -201,7 +212,7 @@ export function PlanSvg(props: {
 	/** Doors and landmarks have no page: in "view" mode they open their editor when this is set, else nothing. */
 	editDrawn?: boolean;
 	/** Draw only this area (a room), half a metre of margin around it. */
-	crop?: { col: number; row: number; width: number; depth: number } | undefined;
+	crop?: Rect | undefined;
 }) {
 	const { t } = useApp();
 	const { size, editing, squareCm } = props;
@@ -250,9 +261,13 @@ export function PlanSvg(props: {
 			data-form={editing?.formId}
 			data-square={editing ? px(1) : undefined}
 			data-square-cm={editing ? squareCm : undefined}
+			data-outline={editing?.outline || undefined}
+			data-limit-width={editing ? editing.limit.width : undefined}
+			data-limit-depth={editing ? editing.limit.depth : undefined}
+			data-step={editing ? editing.stepSquares : undefined}
 		>
 			<rect x={0} y={0} width={W} height={H} rx={4} class="fill-muted/60" />
-			{rooms.map((r) => (
+			{rooms.flatMap(rectsOf).map((r) => (
 				<rect x={px(r.col)} y={px(r.row)} width={px(r.width)} height={px(r.depth)} class="fill-background" />
 			))}
 			<g stroke-width="1">{lines}</g>
@@ -276,6 +291,9 @@ export function PlanSvg(props: {
 					compact={props.compact ?? false}
 					href={link(u)}
 				/>
+			))}
+			{editing?.areas.map((a, i) => (
+				<AreaShape area={a} n={i + 2} px={px} squareCm={squareCm} />
 			))}
 			{editing ? <EditingShape editing={editing} px={px} squareCm={squareCm} /> : null}
 			{props.highlight ? <HighlightTag px={px} units={storing} highlight={props.highlight} /> : null}
@@ -302,17 +320,17 @@ function Linked(props: { href: string | null; children?: Child }) {
 	);
 }
 
-/** A room: its walls and its name in the top left corner. */
-function Room(props: { room: StorageUnit; px: Px; compact: boolean; href: string | null }) {
+/** A room: the walls around all its rectangles (D211), its name in the top left corner of its own one. */
+function Room(props: { room: ShapedUnit; px: Px; compact: boolean; href: string | null }) {
 	const px = props.px;
 	const r = props.room;
+	const walls = outlineOf(rectsOf(r))
+		.map((loop) => `M${loop.map(([x, y]) => `${px(x)} ${px(y)}`).join(" L")} Z`)
+		.join(" ");
 	return (
 		<Linked href={props.href}>
-			<rect
-				x={px(r.col)}
-				y={px(r.row)}
-				width={px(r.width)}
-				height={px(r.depth)}
+			<path
+				d={walls}
 				stroke-width="5"
 				stroke-linejoin="round"
 				class="fill-none stroke-foreground group-hover:stroke-ring"
@@ -542,6 +560,63 @@ function HighlightTag(props: { px: Px; units: StorageUnit[]; highlight: PlanHigh
 			>
 				{hl.label}
 			</text>
+		</g>
+	);
+}
+
+/**
+ * Another rectangle of the room being edited (D211): moved and resized like the room's own one, its fields named
+ * `area<n>_col`… (`data-prefix`). Dashed, so that the room's own rectangle stands out.
+ */
+function AreaShape(props: { area: Rect; n: number; px: Px; squareCm: number }) {
+	const { locale } = useApp();
+	const px = props.px;
+	const a = props.area;
+	const x = px(a.col);
+	const y = px(a.row);
+	const w = px(Math.max(1, a.width));
+	const h = px(Math.max(1, a.depth));
+	return (
+		<g data-editing data-prefix={`area${props.n}_`}>
+			<rect
+				data-shape
+				x={x}
+				y={y}
+				width={w}
+				height={h}
+				rx={2}
+				stroke-width="2"
+				stroke-dasharray="6 4"
+				class="cursor-move fill-primary/10 stroke-primary"
+			/>
+			<text
+				data-code
+				x={x + w / 2}
+				y={y + h / 2 + 5}
+				text-anchor="middle"
+				class="pointer-events-none fill-primary text-[13px] font-semibold"
+			>
+				{String(props.n)}
+			</text>
+			<text
+				data-size
+				x={x + w / 2}
+				y={y - 7}
+				text-anchor="middle"
+				class="pointer-events-none fill-muted-foreground text-[10px] tabular-nums"
+			>
+				{`${formatMetres(Math.max(1, a.width) * props.squareCm, locale)} × ${formatMetres(Math.max(1, a.depth) * props.squareCm, locale)} m`}
+			</text>
+			<rect
+				data-handle
+				x={x + w - 7}
+				y={y + h - 7}
+				width={14}
+				height={14}
+				rx={3}
+				stroke-width="1.6"
+				class="cursor-nwse-resize fill-background stroke-primary"
+			/>
 		</g>
 	);
 }

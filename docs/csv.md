@@ -19,7 +19,7 @@ Suppliers are matched by name: an existing supplier is updated, a new one is cre
 
 ## storage_units.csv
 
-`code,name,kind,col,row,width,depth,front,levels,positions,parent_bin,notes`
+`code,name,kind,col,row,width,depth,areas,front,levels,positions,parent_bin,notes`
 
 The workshop plan (the Locations page): rooms, doors, landmarks and the units that hold parts. Units are matched by
 `code`, required on every row, rooms and doors included (the form makes up a code when left empty, a file would add the
@@ -29,6 +29,9 @@ same door again on every import). Columns you leave out keep their current value
 - `col`, `row`, `width` and `depth` place the unit on the plan, in squares of the plan (0.5 m unless changed on the
   Locations page) from the top left. Units that hold parts may not overlap, nor may rooms; a unit belongs to the room
   around its centre. A plan with a fixed main area refuses units outside it.
+- `areas` gives a room that is not a rectangle (an L, a T, a U) its other rectangles, up to seven:
+  `col,row,width,depth` each, separated by semicolons (`0,6,4,4; 6,6,4,2`). Each must touch the room along a wall or
+  overlap it. Empty means none; leaving the column out keeps them as they are (D211).
 - `front` is the side people pick from: `south`, `north`, `west` or `east`.
 - `levels` and `positions` give the bins of racks and cabinets: `A-2-3` is level 2 from the floor, position 3 from the
   left when facing the front. Other kinds have one place.

@@ -1,10 +1,10 @@
-code,name,kind,col,row,width,depth,front,levels,positions,parent_bin,notes
-STOC,Stockroom,room,0,0,14,12,south,,,,
-ASSE,Assembly,room,14,0,12,12,south,,,,
-DOOR,,door,13,5,2,2,east,,,,Between the stockroom and assembly
-A,Rack A,rack,1,1,6,1,south,4,3,,"Heavy parts on level 1, spools on level 4"
-S1,Screw drawers,cabinet,0,0,1,1,south,3,4,A-3-3,Small parts drawers on shelf A-3-3
-B,Rack B,rack,8,1,5,1,south,3,3,,"Electronics on level 3, in antistatic bags"
-C,Drawer cabinet C,cabinet,1,5,1,2,east,6,4,,
-P,Pallet area,floor,8,7,4,4,north,,,,Flat-packed shipping boxes
-D,Rack D,rack,16,1,6,1,south,3,3,,"Sub-assemblies and finished products, by the bench"
+code,name,kind,col,row,width,depth,areas,front,levels,positions,parent_bin,notes
+STOC,Stockroom,room,0,0,14,12,,south,,,,
+ASSE,Assembly,room,14,0,12,12,"14,12,6,4",south,,,,
+DOOR,,door,13,5,2,2,,east,,,,Between the stockroom and assembly
+A,Rack A,rack,1,1,6,1,,south,4,3,,"Heavy parts on level 1, spools on level 4"
+S1,Screw drawers,cabinet,0,0,1,1,,south,3,4,A-3-3,Small parts drawers on shelf A-3-3
+B,Rack B,rack,8,1,5,1,,south,3,3,,"Electronics on level 3, in antistatic bags"
+C,Drawer cabinet C,cabinet,1,5,1,2,,east,6,4,,
+P,Pallet area,floor,8,7,4,4,,north,,,,Flat-packed shipping boxes
+D,Rack D,rack,16,1,6,1,,south,3,3,,"Sub-assemblies and finished products, by the bench"

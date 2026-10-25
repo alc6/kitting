@@ -175,11 +175,12 @@
 
 	// Plan editor (<svg data-plan-editor data-form="…">, D198): the unit being edited ([data-editing]) follows the form's
 	// fields as they change, and dragging it (or its corner handle) moves (or resizes) it in whole squares and fills the
-	// fields. Without JavaScript the fields alone place the unit.
+	// fields. A room's other rectangles (D211) are more [data-editing] shapes whose fields carry their data-prefix
+	// ("area2_col"…). Without JavaScript the fields alone place the unit.
 	for (const svg of document.querySelectorAll("svg[data-plan-editor]")) {
 		const form = document.getElementById(svg.dataset.form ?? "");
-		const unit = svg.querySelector("[data-editing]");
-		if (!(form instanceof HTMLFormElement) || !(unit instanceof SVGElement)) continue;
+		const shapes = [...svg.querySelectorAll("[data-editing]")];
+		if (!(form instanceof HTMLFormElement) || shapes.length === 0) continue;
 		// data-square: SVG units of one square (not always a whole number); data-square-cm: its real size.
 		const sq = Number(svg.dataset.square) || 24;
 		const squareCm = Number(svg.dataset.squareCm) || 50;
@@ -187,11 +188,6 @@
 			maximumFractionDigits: 2,
 			useGrouping: false,
 		});
-		const shape = unit.querySelector("[data-shape]");
-		const front = unit.querySelector("[data-front]");
-		const code = unit.querySelector("[data-code]");
-		const size = unit.querySelector("[data-size]");
-		const handle = unit.querySelector("[data-handle]");
 		const read = (name, min) => {
 			const n = Number.parseInt(fieldValue(form, name), 10);
 			return Number.isFinite(n) ? Math.max(min, n) : min;
@@ -203,32 +199,47 @@
 		const set = (el, attrs) => {
 			for (const [k, v] of Object.entries(attrs)) el?.setAttribute(k, String(v));
 		};
+		const parts = shapes.map((g) => ({
+			group: g,
+			prefix: g.getAttribute("data-prefix") ?? "",
+			shape: g.querySelector("[data-shape]"),
+			front: g.querySelector("[data-front]"),
+			code: g.querySelector("[data-code]"),
+			size: g.querySelector("[data-size]"),
+			handle: g.querySelector("[data-handle]"),
+		}));
 		const draw = () => {
-			const cols = read("width", 1);
-			const rows = read("depth", 1);
-			const x = read("col", 0) * sq;
-			const y = read("row", 0) * sq;
-			const w = cols * sq;
-			const h = rows * sq;
-			set(shape, { x, y, width: w, height: h });
-			set(handle, { x: x + w - 7, y: y + h - 7 });
-			set(code, { x: x + w / 2, y: y + h / 2 + 5 });
-			set(size, { x: x + w / 2, y: y - 7 });
-			if (code) code.textContent = fieldValue(form, "code").toUpperCase() || "?";
-			if (size)
-				size.textContent = `${metres.format((cols * squareCm) / 100)} × ${metres.format((rows * squareCm) / 100)} m`;
-			const side = fieldValue(form, "front");
-			const edge =
-				side === "north"
-					? [x, y, x + w, y]
-					: side === "west"
-						? [x, y, x, y + h]
-						: side === "east"
-							? [x + w, y, x + w, y + h]
-							: [x, y + h, x + w, y + h];
-			set(front, { x1: edge[0], y1: edge[1], x2: edge[2], y2: edge[3] });
 			const kind = fieldValue(form, "kind");
-			set(front, { visibility: kind === "rack" || kind === "cabinet" ? "visible" : "hidden" });
+			for (const p of parts) {
+				const f = (side) => p.prefix + side;
+				// A room's areas only show while the form is for a room.
+				if (p.prefix) p.group.setAttribute("visibility", kind === "room" ? "visible" : "hidden");
+				const cols = read(f("width"), 1);
+				const rows = read(f("depth"), 1);
+				const x = read(f("col"), 0) * sq;
+				const y = read(f("row"), 0) * sq;
+				const w = cols * sq;
+				const h = rows * sq;
+				set(p.shape, { x, y, width: w, height: h });
+				set(p.handle, { x: x + w - 7, y: y + h - 7 });
+				set(p.code, { x: x + w / 2, y: y + h / 2 + 5 });
+				set(p.size, { x: x + w / 2, y: y - 7 });
+				if (p.code && !p.prefix) p.code.textContent = fieldValue(form, "code").toUpperCase() || "?";
+				if (p.size)
+					p.size.textContent = `${metres.format((cols * squareCm) / 100)} × ${metres.format((rows * squareCm) / 100)} m`;
+				if (!p.front) continue;
+				const side = fieldValue(form, "front");
+				const edge =
+					side === "north"
+						? [x, y, x + w, y]
+						: side === "west"
+							? [x, y, x, y + h]
+							: side === "east"
+								? [x + w, y, x + w, y + h]
+								: [x, y + h, x + w, y + h];
+				set(p.front, { x1: edge[0], y1: edge[1], x2: edge[2], y2: edge[3] });
+				set(p.front, { visibility: kind === "rack" || kind === "cabinet" ? "visible" : "hidden" });
+			}
 		};
 		form.addEventListener("input", draw);
 		form.addEventListener("change", draw);
@@ -241,16 +252,29 @@
 		let drag = null;
 		svg.addEventListener("pointerdown", (event) => {
 			if (!(event.target instanceof Element)) return;
-			const mode = event.target.closest("[data-handle]")
-				? "resize"
-				: event.target.closest("[data-shape]")
-					? "move"
-					: null;
+			const group = event.target.closest("[data-editing]");
+			const part = parts.find((p) => p.group === group);
+			const mode = !part
+				? null
+				: event.target.closest("[data-handle]")
+					? "resize"
+					: event.target.closest("[data-shape]")
+						? "move"
+						: null;
 			const at = mode ? squares(event) : null;
-			if (!mode || !at) return;
+			if (!part || !mode || !at) return;
 			event.preventDefault();
 			svg.setPointerCapture(event.pointerId);
-			drag = { mode, at, col: read("col", 0), row: read("row", 0), width: read("width", 1), depth: read("depth", 1) };
+			const f = (side) => part.prefix + side;
+			drag = {
+				f,
+				mode,
+				at,
+				col: read(f("col"), 0),
+				row: read(f("row"), 0),
+				width: read(f("width"), 1),
+				depth: read(f("depth"), 1),
+			};
 		});
 		svg.addEventListener("pointermove", (event) => {
 			const at = drag ? squares(event) : null;
@@ -258,11 +282,11 @@
 			const dx = Math.round(at.x - drag.at.x);
 			const dy = Math.round(at.y - drag.at.y);
 			if (drag.mode === "move") {
-				write("col", Math.max(0, drag.col + dx));
-				write("row", Math.max(0, drag.row + dy));
+				write(drag.f("col"), Math.max(0, drag.col + dx));
+				write(drag.f("row"), Math.max(0, drag.row + dy));
 			} else {
-				write("width", Math.max(1, drag.width + dx));
-				write("depth", Math.max(1, drag.depth + dy));
+				write(drag.f("width"), Math.max(1, drag.width + dx));
+				write(drag.f("depth"), Math.max(1, drag.depth + dy));
 			}
 			draw();
 		});
@@ -271,6 +295,421 @@
 		};
 		svg.addEventListener("pointerup", end);
 		svg.addEventListener("pointercancel", end);
+		draw();
+	}
+
+	// Room shape editor (D212): with JavaScript a room is edited as one outline on the plan editor ([data-outline] on the
+	// svg, "x,y x,y …" in squares): presets, walls and corners to drag, a selected wall to cut a step into, undo. Each
+	// change writes the outline into the form's hidden `outline` field, which the server splits into the room's
+	// rectangle and its areas; until then the place fields (hidden while the editor shows) still hold the room.
+	for (const svg of document.querySelectorAll("svg[data-plan-editor]")) {
+		const form = document.getElementById(svg.dataset.form ?? "");
+		const tools = form?.querySelector("[data-room-tools]");
+		const fields = form?.querySelector("[data-room-fields]");
+		if (!(form instanceof HTMLFormElement) || !(tools instanceof HTMLElement)) continue;
+		const NS = "http://www.w3.org/2000/svg";
+		const sq = Number(svg.dataset.square) || 24;
+		const squareCm = Number(svg.dataset.squareCm) || 50;
+		const limit = { w: Number(svg.dataset.limitWidth) || 200, h: Number(svg.dataset.limitDepth) || 200 };
+		const stepDepth = Number(svg.dataset.step) || 2;
+		const hint = tools.querySelector("[data-shape-hint]");
+		const hidden = form.elements.namedItem("outline");
+		const metres = new Intl.NumberFormat(document.documentElement.lang || undefined, { maximumFractionDigits: 2 });
+		const parse = (text) => {
+			const pts = (text ?? "")
+				.trim()
+				.split(/\s+/)
+				.map((g) => g.split(",").map(Number));
+			return pts.length >= 4 && pts.every((p) => p.length === 2 && p.every(Number.isInteger)) ? pts : null;
+		};
+		const area = (p) =>
+			p.reduce((s, a, i) => s + a[0] * p[(i + 1) % p.length][1] - p[(i + 1) % p.length][0] * a[1], 0) / 2;
+		// Drops repeated and in-line corners, and turns the outline clockwise on screen (the room on the right).
+		const norm = (pts) => {
+			const p = pts.map((q) => [q[0], q[1]]);
+			for (let again = true; again && p.length >= 4; ) {
+				again = false;
+				for (let i = 0; i < p.length; i++) {
+					const a = p[(i + p.length - 1) % p.length];
+					const b = p[i];
+					const c = p[(i + 1) % p.length];
+					if (
+						(b[0] === c[0] && b[1] === c[1]) ||
+						(a[0] === b[0] && b[0] === c[0]) ||
+						(a[1] === b[1] && b[1] === c[1])
+					) {
+						p.splice(i, 1);
+						again = true;
+						break;
+					}
+				}
+			}
+			if (area(p) < 0) p.reverse();
+			return p;
+		};
+		// Walls along the grid that never cross or touch but at their ends, on the plan.
+		const valid = (p) => {
+			const n = p.length;
+			if (n < 4 || area(p) <= 0) return false;
+			const walls = [];
+			for (let i = 0; i < n; i++) {
+				const a = p[i];
+				const b = p[(i + 1) % n];
+				if ((a[0] !== b[0]) === (a[1] !== b[1])) return false;
+				if (a[0] < 0 || a[1] < 0 || a[0] > limit.w || a[1] > limit.h) return false;
+				walls.push([Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[0], b[0]), Math.max(a[1], b[1])]);
+			}
+			for (let i = 0; i < n; i++)
+				for (let j = i + 2; j < n; j++) {
+					if (i === 0 && j === n - 1) continue;
+					const e = walls[i];
+					const f = walls[j];
+					if (e[0] <= f[2] && f[0] <= e[2] && e[1] <= f[3] && f[1] <= e[3]) return false;
+				}
+			return true;
+		};
+		const box = (p) => {
+			const xs = p.map((q) => q[0]);
+			const ys = p.map((q) => q[1]);
+			const x = Math.min(...xs);
+			const y = Math.min(...ys);
+			return { x, y, w: Math.max(...xs) - x, h: Math.max(...ys) - y };
+		};
+		// Presets fill the room's current box: an L keeps the top and the left, a T a bar and a stem, a U two arms.
+		const presets = {
+			rect: ({ x, y, w, h }) => [
+				[x, y],
+				[x + w, y],
+				[x + w, y + h],
+				[x, y + h],
+			],
+			L: ({ x, y, w, h }) => {
+				const a = Math.ceil(h / 2);
+				const b = Math.ceil(w / 2);
+				return [
+					[x, y],
+					[x + w, y],
+					[x + w, y + a],
+					[x + b, y + a],
+					[x + b, y + h],
+					[x, y + h],
+				];
+			},
+			T: ({ x, y, w, h }) => {
+				const a = Math.ceil(h / 2);
+				const s = Math.max(1, Math.round(w / 3));
+				const sx = x + Math.floor((w - s) / 2);
+				return [
+					[x, y],
+					[x + w, y],
+					[x + w, y + a],
+					[sx + s, y + a],
+					[sx + s, y + h],
+					[sx, y + h],
+					[sx, y + a],
+					[x, y + a],
+				];
+			},
+			U: ({ x, y, w, h }) => {
+				const c = Math.max(1, Math.round(w / 3));
+				const g = Math.ceil(h / 2);
+				return [
+					[x, y],
+					[x + c, y],
+					[x + c, y + g],
+					[x + w - c, y + g],
+					[x + w - c, y],
+					[x + w, y],
+					[x + w, y + h],
+					[x, y + h],
+				];
+			},
+		};
+		const fromFields = () => {
+			const n = (name, d) => {
+				const v = Number.parseInt(fieldValue(form, name), 10);
+				return Number.isFinite(v) && v >= 0 ? v : d;
+			};
+			// A unit turned into a room starts at 6 × 4 m at least: a rack's size is too small to shape.
+			const w = Math.max(n("width", 1), Math.round(600 / squareCm));
+			const h = Math.max(n("depth", 1), Math.round(400 / squareCm));
+			const x = Math.max(0, Math.min(n("col", 0), limit.w - w));
+			const y = Math.max(0, Math.min(n("row", 0), limit.h - h));
+			return presets.rect({ x, y, w, h });
+		};
+		const start = parse(svg.dataset.outline);
+		let poly = start ? norm(start) : null;
+		const history = [];
+		let selected = -1;
+		let drag = null;
+		const say = (key) => {
+			if (hint instanceof HTMLElement) hint.textContent = hint.dataset[key] ?? "";
+		};
+		// The outline is posted only once it was changed: until then the place fields stand.
+		const commit = (next, before) => {
+			history.push(before);
+			poly = next;
+			if (hidden instanceof HTMLInputElement) hidden.value = poly.map((q) => q.join(",")).join(" ");
+		};
+		const layer = document.createElementNS(NS, "g");
+		svg.appendChild(layer);
+		const add = (tag, attrs, parent = layer) => {
+			const el = document.createElementNS(NS, tag);
+			for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, String(v));
+			parent.appendChild(el);
+			return el;
+		};
+		const active = () => fieldValue(form, "kind") === "room";
+		const draw = () => {
+			const on = active();
+			tools.hidden = !on;
+			if (fields instanceof HTMLElement) fields.hidden = on;
+			// The unit and area shapes of the plain editor give way to the outline (areas show only for a room anyway).
+			for (const g of svg.querySelectorAll("[data-editing]"))
+				if (on) g.setAttribute("visibility", "hidden");
+				else if (!g.getAttribute("data-prefix")) g.removeAttribute("visibility");
+			if (on && !poly) {
+				// Drawn from the fields, and larger than them: post it, so that what is saved is what is shown.
+				poly = norm(fromFields());
+				if (hidden instanceof HTMLInputElement) hidden.value = poly.map((q) => q.join(",")).join(" ");
+			}
+			layer.replaceChildren();
+			if (!on || !poly) return;
+			const n = poly.length;
+			const points = poly.map((q) => `${q[0] * sq},${q[1] * sq}`).join(" ");
+			add("polygon", { points, class: "pointer-events-none fill-primary/10" });
+			add("polygon", {
+				points,
+				"stroke-width": 4,
+				"stroke-linejoin": "round",
+				class: "pointer-events-none fill-none stroke-foreground",
+			});
+			for (let i = 0; i < n; i++) {
+				const a = poly[i];
+				const b = poly[(i + 1) % n];
+				const flat = a[1] === b[1];
+				const mx = ((a[0] + b[0]) / 2) * sq;
+				const my = ((a[1] + b[1]) / 2) * sq;
+				const g = add("g", { "data-wall": i, class: flat ? "cursor-ns-resize" : "cursor-ew-resize" });
+				if (i === selected)
+					add(
+						"line",
+						{
+							x1: a[0] * sq,
+							y1: a[1] * sq,
+							x2: b[0] * sq,
+							y2: b[1] * sq,
+							"stroke-width": 7,
+							"stroke-linecap": "round",
+							class: "stroke-primary",
+						},
+						g,
+					);
+				add(
+					"line",
+					{
+						x1: a[0] * sq,
+						y1: a[1] * sq,
+						x2: b[0] * sq,
+						y2: b[1] * sq,
+						"stroke-width": 18,
+						class: "stroke-transparent",
+					},
+					g,
+				);
+				add(
+					"rect",
+					{
+						x: mx - (flat ? 11 : 4),
+						y: my - (flat ? 4 : 11),
+						width: flat ? 22 : 8,
+						height: flat ? 8 : 22,
+						rx: 4,
+						"stroke-width": 2,
+						class: i === selected ? "fill-primary stroke-primary" : "fill-background stroke-primary",
+					},
+					g,
+				);
+				const moving =
+					drag?.moved &&
+					(drag.wall === i || (drag.corner !== undefined && (drag.corner === i || (drag.corner + n - 1) % n === i)));
+				if (i === selected || moving) {
+					const len = Math.abs(flat ? b[0] - a[0] : b[1] - a[1]);
+					const label = add("text", {
+						x: mx + (flat ? 0 : 14),
+						y: my + (flat ? -12 : 4),
+						"text-anchor": flat ? "middle" : "start",
+						class: "pointer-events-none fill-primary text-[11px] font-medium tabular-nums",
+					});
+					label.textContent = `${metres.format((len * squareCm) / 100)} m`;
+				}
+			}
+			for (let i = 0; i < n; i++) {
+				const g = add("g", { "data-corner": i, class: "cursor-move" });
+				add("circle", { cx: poly[i][0] * sq, cy: poly[i][1] * sq, r: 14, class: "fill-transparent" }, g);
+				add(
+					"circle",
+					{
+						cx: poly[i][0] * sq,
+						cy: poly[i][1] * sq,
+						r: 6,
+						"stroke-width": 2,
+						class: "fill-primary stroke-background",
+					},
+					g,
+				);
+			}
+		};
+		const squares = (event) => {
+			const m = svg.getScreenCTM();
+			if (!m) return null;
+			const p = new DOMPoint(event.clientX, event.clientY).matrixTransform(m.inverse());
+			return [p.x / sq, p.y / sq];
+		};
+		svg.addEventListener("pointerdown", (event) => {
+			if (!active() || !poly || !(event.target instanceof Element)) return;
+			const wall = event.target.closest("[data-wall]");
+			const corner = event.target.closest("[data-corner]");
+			const at = squares(event);
+			if ((!wall && !corner) || !at) {
+				if (selected >= 0) {
+					selected = -1;
+					say("hint");
+					draw();
+				}
+				return;
+			}
+			event.preventDefault();
+			svg.setPointerCapture(event.pointerId);
+			drag = {
+				at,
+				from: poly.map((q) => q.slice()),
+				moved: false,
+				wall: wall ? Number(wall.getAttribute("data-wall")) : undefined,
+				corner: corner ? Number(corner.getAttribute("data-corner")) : undefined,
+			};
+		});
+		svg.addEventListener("pointermove", (event) => {
+			const at = drag ? squares(event) : null;
+			if (!drag || !at) return;
+			const dx = Math.round(at[0] - drag.at[0]);
+			const dy = Math.round(at[1] - drag.at[1]);
+			if (!dx && !dy && !drag.moved) return;
+			drag.moved = true;
+			selected = -1;
+			const q = drag.from.map((v) => v.slice());
+			const n = q.length;
+			if (drag.wall !== undefined) {
+				const a = q[drag.wall];
+				const b = q[(drag.wall + 1) % n];
+				if (a[1] === b[1]) {
+					a[1] += dy;
+					b[1] += dy;
+				} else {
+					a[0] += dx;
+					b[0] += dx;
+				}
+			} else {
+				// A corner drags the two walls that meet there: its neighbours follow on their own wall's line.
+				const v = q[drag.corner];
+				const prev = q[(drag.corner + n - 1) % n];
+				const next = q[(drag.corner + 1) % n];
+				const oy = v[1];
+				v[0] += dx;
+				v[1] += dy;
+				if (prev[1] === oy) prev[1] = v[1];
+				else prev[0] = v[0];
+				if (next[1] === oy) next[1] = v[1];
+				else next[0] = v[0];
+			}
+			const r = norm(q);
+			if (valid(r)) poly = r;
+			draw();
+		});
+		const end = () => {
+			if (!drag) return;
+			if (!drag.moved && drag.wall !== undefined) {
+				selected = drag.wall;
+				say("selected");
+			} else if (drag.moved && JSON.stringify(poly) !== JSON.stringify(drag.from)) {
+				const next = poly;
+				poly = drag.from;
+				commit(next, drag.from);
+				say("hint");
+			}
+			drag = null;
+			draw();
+		};
+		svg.addEventListener("pointerup", end);
+		svg.addEventListener("pointercancel", end);
+		// A step: the second half of the selected wall moves into the room by about a metre (less when it would not fit).
+		const cut = () => {
+			if (selected < 0 || !poly) return say("pick");
+			const n = poly.length;
+			const a = poly[selected];
+			const b = poly[(selected + 1) % n];
+			const flat = a[1] === b[1];
+			const len = Math.abs(flat ? b[0] - a[0] : b[1] - a[1]);
+			const sx = Math.sign(b[0] - a[0]);
+			const sy = Math.sign(b[1] - a[1]);
+			const m = flat ? [a[0] + sx * Math.floor(len / 2), a[1]] : [a[0], a[1] + sy * Math.floor(len / 2)];
+			for (let d = stepDepth; len >= 2 && d >= 1; d--) {
+				const inward = [-sy * d, sx * d];
+				const q = [
+					...poly.slice(0, selected + 1),
+					m,
+					[m[0] + inward[0], m[1] + inward[1]],
+					[b[0] + inward[0], b[1] + inward[1]],
+					...poly.slice(selected + 1),
+				];
+				const r = norm(q);
+				if (valid(r)) {
+					commit(r, poly);
+					selected = -1;
+					say("cut");
+					return draw();
+				}
+			}
+			say("short");
+		};
+		for (const button of tools.querySelectorAll("[data-shape-preset]"))
+			button.addEventListener("click", () => {
+				if (!poly) return;
+				const b = box(poly);
+				const r = norm(
+					presets[button.getAttribute("data-shape-preset")]({ ...b, w: Math.max(3, b.w), h: Math.max(3, b.h) }),
+				);
+				if (!valid(r)) return;
+				commit(r, poly);
+				selected = -1;
+				say("hint");
+				draw();
+			});
+		tools.querySelector("[data-cut-step]")?.addEventListener("click", cut);
+		tools.querySelector("[data-shape-undo]")?.addEventListener("click", () => {
+			const before = history.pop();
+			if (!before) return;
+			poly = before;
+			// Back to the saved outline: nothing to post, the place fields hold it.
+			const text = poly.map((q) => q.join(",")).join(" ");
+			const saved = start
+				? norm(start)
+						.map((q) => q.join(","))
+						.join(" ")
+				: null;
+			if (hidden instanceof HTMLInputElement) hidden.value = text === saved ? "" : text;
+			selected = -1;
+			say("hint");
+			draw();
+		});
+		form.addEventListener("change", (event) => {
+			// Until the outline is changed, switching to a room starts from the saved outline or the place fields.
+			if (event.target instanceof HTMLInputElement && event.target.name === "kind" && !history.length)
+				poly = start ? norm(start) : null;
+			draw();
+		});
+		// The plain editor redraws its shapes as fields change: keep them hidden behind the outline.
+		form.addEventListener("input", draw);
 		draw();
 	}
 
