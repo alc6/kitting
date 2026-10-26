@@ -5,6 +5,7 @@ import { Hono } from "hono";
 import { STORAGE_FRONTS, type StorageUnit } from "../db/schema";
 import { getPart, partOptions } from "../domain/parts";
 import { can } from "../domain/permissions";
+import { checkPlanForm, planEditCodes, planEditStatements } from "../domain/plan-editor";
 import {
 	areaCount,
 	areaField,
@@ -81,6 +82,7 @@ import type { AppEnv } from "../types";
 import { useApp } from "../views/context";
 import { Icon, icons } from "../views/icons";
 import { PartPicker, PartPickerDialog } from "../views/part-picker";
+import { editorItems, itemValues, PlanEditor, postedNewItems } from "../views/plan-editor";
 import { idParam, notFound, nowIso, page, redirectOk, saveChanges, translateErrors } from "../views/render";
 import {
 	BinsPreview,
@@ -275,8 +277,8 @@ locationRoutes.get("/", async (c) => {
 								{t.locations.planSettings}
 							</Button>
 							{units.length > 0 ? (
-								<Button href="/locations/new" icon={icons.plus}>
-									{t.locations.addUnit}
+								<Button href="/locations/plan" icon={icons.draftingCompass}>
+									{t.locations.editPlan}
 								</Button>
 							) : null}
 						</>
@@ -287,8 +289,8 @@ locationRoutes.get("/", async (c) => {
 			{units.length === 0 ? (
 				<EmptyState icon={icons.map} title={t.locations.empty} description={t.locations.emptyHint}>
 					{canPlan ? (
-						<Button href="/locations/new" icon={icons.plus}>
-							{t.locations.addUnit}
+						<Button href="/locations/plan" icon={icons.draftingCompass}>
+							{t.locations.editPlan}
 						</Button>
 					) : null}
 				</EmptyState>
@@ -779,6 +781,53 @@ async function saveUnit(c: Context<AppEnv>, unit: ShapedUnit | null) {
 locationRoutes.post("/", requirePermission("storage.plan"), (c) => saveUnit(c, null));
 
 // ---------------------------------------------------------------------------
+// The plan editor (D214): the whole plan on one page, saved at once
+
+async function renderPlanEditor(
+	c: Context<AppEnv>,
+	posted: FormValues | null,
+	errors: FieldErrors,
+	status: 200 | 422 = 200,
+	vars: Record<string, number> = {},
+) {
+	const t = c.var.t;
+	const [units, plan] = await Promise.all([allUnits(c), loadPlanSettings(c.var.db)]);
+	const items = editorItems(units, posted ? postedNewItems(posted) : []);
+	const idx = indexUnits(units);
+	// The units as they are, under what a refused save posted (a form without JavaScript posts every field anyway).
+	const values: FormValues = {};
+	for (const i of items) {
+		const u = i.id === null ? undefined : idx.get(i.id);
+		if (u) Object.assign(values, itemValues(i.prefix, u));
+	}
+	Object.assign(values, posted ?? {});
+	return page(
+		c,
+		t.locations.editPlan,
+		<>
+			<PageHeader title={t.locations.editPlan} subtitle={t.locations.plan} />
+			<PlanEditor units={units} items={items} plan={plan} values={values} errors={translateErrors(c, errors, vars)} />
+		</>,
+		status,
+	);
+}
+
+locationRoutes.get("/plan", requirePermission("storage.plan"), (c) => renderPlanEditor(c, null, {}));
+
+locationRoutes.post("/plan", requirePermission("storage.plan"), async (c) => {
+	const body = (await c.req.parseBody()) as FormValues;
+	const checked = await checkPlanForm(c.var.db, body);
+	if (!checked.ok) return renderPlanEditor(c, body, checked.errors, 422, checked.vars);
+	if (checked.ops.length)
+		await saveChanges(
+			c,
+			fmt(c.var.t.history.summaries.planEdit, { codes: planEditCodes(checked.ops) }),
+			planEditStatements(c.var.db, checked.ops, c.var.user, nowIso()),
+		);
+	return redirectOk(c, "/locations");
+});
+
+// ---------------------------------------------------------------------------
 // The plan's settings (D209): the size of a square, and a fixed main area
 
 function planSettingsValues(plan: PlanSettings, locale: "en" | "fr"): FormValues {
@@ -1056,6 +1105,11 @@ async function renderUnit(
 				}
 				actions={
 					<>
+						{canPlan && unit.parentUnitId === null ? (
+							<Button href={`/locations/plan?select=u${unit.id}_`} variant="outline" icon={icons.draftingCompass}>
+								{t.locations.editOnPlan}
+							</Button>
+						) : null}
 						{canPlan ? (
 							<Button href={`/locations/${unit.id}/edit`} variant="outline" icon={icons.pencil}>
 								{t.common.edit}
@@ -1348,6 +1402,11 @@ async function renderRoom(c: Context<AppEnv>, room: ShapedUnit) {
 						{can(c.var, "stock.count") && stored.length > 0 ? (
 							<Button href={`/stock/count?unit=${room.id}`} variant="outline" icon={icons.clipboardCheck}>
 								{t.locations.countRoom}
+							</Button>
+						) : null}
+						{canPlan ? (
+							<Button href={`/locations/plan?select=u${room.id}_`} variant="outline" icon={icons.draftingCompass}>
+								{t.locations.editOnPlan}
 							</Button>
 						) : null}
 						{canPlan ? (

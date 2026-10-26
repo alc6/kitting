@@ -1664,3 +1664,47 @@ names in the locations. D211 lets one room cover several rectangles.
     outline (`outlineErrors`), the only place field then on screen, and the posted outline is drawn again to fix it.
   - **Without JavaScript** the place fields and the area fields of D211 stay, as before; the tools are `hidden` until
     `app.js` shows them. A room whose rectangles enclose a hole (two outlines) keeps the fields too.
+
+## The plan, drawn and edited in one place (M19, editor)
+
+The plan read as a cartoon: walls 5 units wide that grew with the drawing (a 12 × 7 m plan on a wide screen doubled
+them), white walls and a white "being edited" colour in the dark theme, rooms darker than the ground around them. And
+arranging a workshop meant one long form per rack, room or door (type, code, the whole plan for one unit, four numbers,
+bins, notes), saved one at a time; another unit on that form's plan was a link that left the page without saving.
+
+- **D213. The plan is drawn with thin lines in its own colours.** Every stroke of the plan has
+  `vector-effect: non-scaling-stroke` (one class on the `<svg>`), so line widths are screen pixels whatever the scale:
+  walls 2.5 (1.25 on the small plan of a part), units 1, their front 3, the grid 1. A plan shown for reading is not
+  blown up past 1.6 times its size (a `width` attribute and `max-w-full`), so its text does not grow either. Colours are
+  five tokens beside `--location` (D197), in both themes: `--plan-ground` around the rooms, `--plan-floor` inside them
+  (raised, lighter than the ground in the dark theme), `--plan-wall` (a dark or light grey, not the text colour),
+  `--plan-unit` for racks and cabinets, and `--plan-accent`, a blue for what is selected or edited, where `primary` was
+  near-white in the dark theme. While reading the plan the grid shows the metres only, faintly; editing it, every
+  line. Room handles are sized in screen pixels too (`app.js` divides by the drawing's scale). A square door now runs
+  across its front (east or west: in a wall from north to south), where it was always drawn in a wall running east to
+  west; the door of `examples/full`, square and facing east, stood across the wall it was meant to open.
+- **D214. One page edits the whole plan; the unit form keeps the details.** Locations › Edit plan
+  (`/locations/plan`, `storage.plan`) shows the plan as a board, the tools to add a rack, drawer cabinet, floor area,
+  room, door or landmark, and the units as a list. Select a unit (on the board or in the list) to see its code, name,
+  front, levels and positions; drag it to move it, its corner to resize it, Rotate to turn it a quarter (its front
+  turns with it); a selected room shows its walls and corners (D212) and moves as a whole, its areas included. Arrow
+  keys nudge the selected unit (Shift: about a metre), Undo steps back, a unit added on the page can be removed again.
+  New units land at a free place in view, clear of their own sort and not across a wall, with the next free letter as
+  code; a new door goes across the nearest wall. Nothing is saved until Save, and leaving with changes asks first.
+  - **Still a form (D198).** Each unit is a section of one form, its fields named `u<id>_col`… (`n<k>_kind`… for a unit
+    added on the page, up to 40 per save, cloned by `app.js` from a `<template>` per kind). The board is drawn from
+    those fields and dragging writes them; a room posts its outline (D212) once it differs from the saved one. Without
+    JavaScript every section is open with its place in squares under a drawing of the plan, and new units go through
+    the unit form.
+  - **Checked against the plan as the edit leaves it.** `checkPlanEdit` reads each posted unit as the unit form would
+    (its current values, the posted fields over them), applies every change, then checks each changed or new unit with
+    `checkUnitIn` against that final plan: two racks can trade places in one save, which checking in order (as the
+    import does) would refuse. A code must also be free before the save: the unique index would refuse a swap of
+    codes inside the batch. Codes made up for rooms and doors are taken in order (`DOOR2`, `DOOR3`). Refusals come back
+    on the unit (its section, open and in red, and the board), the units added on the page with them.
+  - **One change set** ("Edit the workshop plan: A, B"), updates before inserts so that a new room's areas find it by
+    its code, unchanged units left alone; one undo puts the whole arrangement back.
+  - **Left to the unit form:** the kind, a unit standing in a bin (D199), notes, delete. The unit and room pages link to
+    the editor with that unit selected (`?select=u12_`). The unit form keeps its own drawing for now.
+  - The geometry of room outlines (`parseOutline`, `normOutline`, `validOutline`, `dragOutline`, `cutOutline`, the
+    presets and the wall handles) is shared in `app.js` by the room editor of the unit form and the board.

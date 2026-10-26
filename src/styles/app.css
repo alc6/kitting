@@ -64,6 +64,12 @@
 	--location: oklch(0.88 0.165 95);
 	--location-foreground: oklch(0.2 0.03 85);
 	--location-border: oklch(0.62 0.13 80);
+	/* The workshop plan: the ground around the rooms, a room's floor, walls, storage units and what is selected. */
+	--plan-ground: oklch(0.965 0 0);
+	--plan-floor: oklch(1 0 0);
+	--plan-wall: oklch(0.3 0 0);
+	--plan-unit: oklch(0.93 0.004 250);
+	--plan-accent: oklch(0.55 0.2 260);
 	/* Layout. */
 	--sidebar-width: 16rem;
 	--sidebar-width-icon: 3.5rem;
@@ -117,6 +123,11 @@
 	--location: oklch(0.86 0.16 92);
 	--location-foreground: oklch(0.18 0.02 85);
 	--location-border: oklch(0.86 0.16 92);
+	--plan-ground: oklch(0.165 0 0);
+	--plan-floor: oklch(0.225 0 0);
+	--plan-wall: oklch(0.8 0 0);
+	--plan-unit: oklch(0.31 0.006 250);
+	--plan-accent: oklch(0.72 0.15 250);
 }
 
 /* Same values as .dark, for "system" when the OS is dark. Keep both blocks in sync. */
@@ -160,6 +171,11 @@
 		--location: oklch(0.86 0.16 92);
 		--location-foreground: oklch(0.18 0.02 85);
 		--location-border: oklch(0.86 0.16 92);
+		--plan-ground: oklch(0.165 0 0);
+		--plan-floor: oklch(0.225 0 0);
+		--plan-wall: oklch(0.8 0 0);
+		--plan-unit: oklch(0.31 0.006 250);
+		--plan-accent: oklch(0.72 0.15 250);
 	}
 }
 
@@ -201,6 +217,11 @@
 	--color-location: var(--location);
 	--color-location-foreground: var(--location-foreground);
 	--color-location-border: var(--location-border);
+	--color-plan-ground: var(--plan-ground);
+	--color-plan-floor: var(--plan-floor);
+	--color-plan-wall: var(--plan-wall);
+	--color-plan-unit: var(--plan-unit);
+	--color-plan-accent: var(--plan-accent);
 	--radius-sm: calc(var(--radius) - 4px);
 	--radius-md: calc(var(--radius) - 2px);
 	--radius-lg: var(--radius);
