@@ -252,6 +252,8 @@ Where each part is kept, drawn on a plan of the workshop, shown wherever someone
 - [x] Rooms that are not rectangles: a room's own rectangle plus up to seven areas, one outline (migration 0014:
       `room_areas`, tracked), in the editor and `storage_units.csv` (D211)
 - [x] Rooms drawn as one outline: presets, walls and corners to drag, cut a step (D212)
+- [x] The plan drawn with thin lines in its own colours (D213); the whole plan edited on one page and saved at once
+      (D214)
 
 ## M20: PO charges and landed cost ✅
 

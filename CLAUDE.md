@@ -62,13 +62,15 @@ was built with; `npx skills update` refreshes it.
   `history.ts` (`runChangeSet()`, history queries, field diffs, row names), `revert.ts` (undo, conflicts,
   `TABLE_ACTIONS`), `mcp-scopes.ts` (MCP scopes and their permission actions), `machines.ts` (machine types and their
   rate history, machines, dated rates), `storage.ts` (the workshop plan: storage units, rooms and doors, bins, units
-  standing in other units' bins, part locations read through that chain, D194–D200).
+  standing in other units' bins, part locations read through that chain, D194–D200), `plan-editor.ts` (the whole plan
+  edited on one page: posted `u<id>_`/`n<k>_` fields checked against the plan as the edit leaves it, D214).
   `src/db/history-sql.ts` generates the history triggers (`scripts/history-triggers.mjs` prints them).
   `src/domain/import/`: one importer per CSV type, all implementing `Importer`.
 - `src/routes/*.tsx`: one Hono router per area, with its page components.
 - `src/views/`: layout (sidebar, header), shadcn-style components (`ui.tsx`), icons (`icons.tsx`),
   assembly diagram (`assembly-diagram.tsx`), time charts (`chart.tsx`), machine time tables (`machines.tsx`), the Files cards (`files.tsx`), the
-  workshop plan, front views and shelf labels (`storage.tsx`), render helpers, view context (`useApp()`: locale, theme, sidebar…).
+  workshop plan, front views and shelf labels (`storage.tsx`), the plan editor's page (`plan-editor.tsx`), render
+  helpers, view context (`useApp()`: locale, theme, sidebar…).
 - Part picker (D138): `PartPicker`/`PartPickerDialog` in `src/views/part-picker.tsx` (dialog after the form, scoped by
   `kinds`/`exclude` to what the form accepts), results from `GET /parts/pick` (`src/routes/part-picker.tsx`, `src/domain/part-picker.ts`).
 - `src/styles/app.css`: Tailwind source: shadcn tokens (light/dark), base layer, legacy classes.
@@ -83,7 +85,8 @@ was built with; `npx skills update` refreshes it.
   `infra/terraform/`: the Terraform module for the Cloudflare resources (provider pinned `~> 5.27.0`) and
   `examples/basic` (a consumer, with the CI job for a private repository).
 - `public/static/`: built CSS, `app.js` (confirm, theme/sidebar toggles, search shortcut, diagram zoom,
-  photo shrinking before upload, plan editor dragging and bins preview, `data-show-if` fields),
+  photo shrinking before upload, the plan editor board and the unit form's dragging and bins preview, `data-show-if`
+  fields),
   vendored `htmx.min.js` (`npm run vendor:htmx` to update).
 
 ## Data rules
@@ -163,7 +166,8 @@ was built with; `npx skills update` refreshes it.
   only keeps a few value-keyed hooks (`.num`, `.kind-*`, `.status-*`); everything else is utilities.
 - Strict CSP: no inline `<script>`, no `style=` attributes, no `<style>`, never
   `dangerouslySetInnerHTML` or `raw()` (Biome errors on it). Behaviour goes in `public/static/app.js`
-  via `data-*` attributes. Diagrams are inline SVG styled with classes (`fill-*`, `stroke-*`).
+  via `data-*` attributes. Diagrams are inline SVG styled with classes (`fill-*`, `stroke-*`); the workshop plan uses the
+  `--plan-*` tokens and keeps its line widths in screen pixels (D213).
 - Theme (light/dark/system) and the collapsed sidebar are cookies set by plain links
   (`/theme/:mode`, `/sidebar/:state`), rendered server-side on `<html>`: no flash, no inline script.
 - htmx is progressive enhancement only: every feature must work as a plain form.
