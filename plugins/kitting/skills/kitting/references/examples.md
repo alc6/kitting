@@ -76,7 +76,7 @@ No write is made without that confirmation.
 **User (an operator):** Raise the felt pad price to 0.06.
 
 `set_standard_cost` is not offered: it needs the `prices:write` scope and a planner. Claude says so, does not try
-`update_part` or `upsert_supplier_offer` instead, and suggests asking a planner or an admin (Users page), or
+`update_part` or `upsert_supplier_offer` instead, and suggests asking a planner or an admin (Users and roles page), or
 reconnecting the app with the scope ticked if the role allows it.
 
 ## 5. How many printer hours this week?

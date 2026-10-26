@@ -1708,3 +1708,31 @@ bins, notes), saved one at a time; another unit on that form's plan was a link t
     the editor with that unit selected (`?select=u12_`). The unit form keeps its own drawing for now.
   - The geometry of room outlines (`parseOutline`, `normOutline`, `validOutline`, `dragOutline`, `cutOutline`, the
     presets and the wall handles) is shared in `app.js` by the room editor of the unit form and the board.
+
+## The Users and roles page
+
+The Users page had grown into four things: the people listed, a form to give a role, the option letting viewers and
+operators see costs, and the table of what each role can do (D139). It read as one long form: the form came before
+the list, changing a role meant Edit, a jump back to that form and the email typed again (where a changed email added
+a second person), the cost option was a lone card beside the form, the `ADMIN_EMAILS` rows put a sentence in the
+Actions column, and the roles were explained only in tooltips that a tablet never shows.
+
+- **D215. "Users and roles": the list first, roles changed in place, the cost option on the table it changes.**
+  - **Name.** The sidebar item and the page are **Users and roles** (French **Utilisateurs et rôles**): the page
+    gives people roles and says what each role may do. Not "Access", which the page itself contrasts with Cloudflare
+    Access. The URL (`/users`), the permission action (`users.manage`) and the dictionary keys stay.
+  - **The list.** Each person has an avatar letter (the shadcn Avatar, its fallback only: `Avatar` in `ui.tsx`), their
+    email and "You"; the `ADMIN_EMAILS` come first with a lock and a line saying where they are set; a last row says
+    that everyone else who signs in is a viewer and cannot connect an AI assistant (that was a sentence of the intro).
+  - **Changing a role** is a small form per row: the email as a hidden field, the role select, Save, posted to the
+    same upsert as before (`POST /users`). With JavaScript the Save button shows only once another role is picked
+    (`form[data-save-when-changed]` in `app.js`), so the list is not a column of buttons; without it the button is
+    always there. Changing a role does not submit on its own: a wrong pick in a list of admins would take effect at
+    once. The `?edit=` link and its prefilled form are gone.
+  - **Adding someone** is an `InlineEdit` above the list ("Add a user"), open when it comes back refused, so its
+    errors stay next to its fields (not a Dialog, see `ui.tsx`).
+  - **Roles beside the list.** A card names the four roles with their one-line description (`t.roles.help`, until
+    now only column tooltips) and how many people have each (`ADMIN_EMAILS` counted with the administrators). It sits
+    to the right of the list on wide screens, under it on a tablet.
+  - **The cost option heads the table of what each role can do**, since ticking it changes that table's costs row;
+    the row's hint no longer says "above".

@@ -151,10 +151,34 @@ describe("users page", () => {
 		expect((await postForm("/users", { email: "op@example.com", role: "planner" })).status).toBe(303);
 		const user = await one<{ id: number; role: string }>("SELECT id, role FROM users");
 		expect(user.role).toBe("planner");
-		expect(await (await request(`/users?edit=${user.id}`)).text()).toContain('value="op@example.com"');
+		// Each listed user's role is changed in place, by the same upsert as the add form.
+		const list = await (await request("/users")).text();
+		expect(list).toContain('aria-label="Role of op@example.com"');
+		expect(list).toMatch(
+			/name="email" value="op@example.com"\/?>\s*<select[^>]*>(?:(?!<\/select>).)*<option value="planner" selected/s,
+		);
 
 		expect((await postForm(`/users/${user.id}/delete`, {})).status).toBe(303);
 		expect(await rows("SELECT id FROM users")).toEqual([]);
+	});
+
+	it("lists the ADMIN_EMAILS once, then everyone else as viewers, and counts people per role", async () => {
+		await setRole("operator", "op@example.com");
+		// A row for an ADMIN_EMAILS address is ignored (resolveAccess): it is not listed a second time.
+		await setRole("viewer", TESTER);
+		const page = await (await request("/users")).text();
+		const list = page.slice(page.indexOf('id="users"'), page.indexOf('id="role-matrix"'));
+		expect(list.split(`>${TESTER}<`)).toHaveLength(2);
+		expect(page).toContain("ADMIN_EMAILS");
+		expect(page).toContain(en.users.everyoneElse);
+		const count = (role: Role) =>
+			page.match(new RegExp(`${en.roles.names[role]}[^<]*<span[^>]*data-slot="badge"[^>]*>(\\d+)`))?.[1];
+		expect([count("viewer"), count("operator"), count("planner"), count("admin")]).toEqual(["0", "1", "0", "1"]);
+		for (const role of ROLES) expect(page).toContain(en.roles.help[role]);
+		// The add form opens only when it was refused.
+		expect(page).not.toMatch(/<details open[^>]*data-slot="inline-edit"/);
+		const refused = await (await postForm("/users", { email: "not-an-email", role: "operator" })).text();
+		expect(refused).toMatch(/<details open[^>]*data-slot="inline-edit"/);
 	});
 
 	it("validates the form and refuses to change an ADMIN_EMAILS user", async () => {

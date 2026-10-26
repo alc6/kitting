@@ -171,6 +171,31 @@ export function Badge(props: { variant?: BadgeVariant; class?: string; title?: s
 	);
 }
 
+/**
+ * shadcn Avatar, reduced to its fallback: the first letter of a name or an email (no pictures of people are stored),
+ * or an icon for a group of people. Decorative: the name itself is always written beside it.
+ */
+export function Avatar(props: { name?: string; icon?: IconNode; size?: "sm" | "default" | "lg"; class?: string }) {
+	return (
+		<span
+			data-slot="avatar"
+			data-size={props.size ?? "default"}
+			aria-hidden="true"
+			class={cn(
+				"group/avatar relative flex size-8 shrink-0 overflow-hidden rounded-full select-none data-[size=lg]:size-10 data-[size=sm]:size-6",
+				props.class,
+			)}
+		>
+			<span
+				data-slot="avatar-fallback"
+				class="flex size-full items-center justify-center rounded-full bg-muted text-sm text-muted-foreground uppercase group-data-[size=sm]/avatar:text-xs"
+			>
+				{props.icon ? <Icon icon={props.icon} class="size-4" /> : props.name?.slice(0, 1)}
+			</span>
+		</span>
+	);
+}
+
 // ---------------------------------------------------------------------------
 // Card
 

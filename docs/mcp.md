@@ -69,7 +69,7 @@ The full description of each tool is in
 
 ## How access is controlled
 
-- Only people listed on the Users page, or in `ADMIN_EMAILS`, can connect an assistant. The consent page is
+- Only people listed on the Users and roles page, or in `ADMIN_EMAILS`, can connect an assistant. The consent page is
   behind Access like the rest of the app, and the assistant receives its own OAuth tokens, never your Access
   session.
 - Every call checks the person again: still listed, current role. A demotion applies from the next call. Costs
@@ -83,8 +83,8 @@ The full description of each tool is in
   registering gives an app nothing until someone signs in and allows it.
 
 Because the MCP paths bypass Access, removing someone from the Access policy doesn't disconnect their assistant
-on its own. To offboard someone, remove them from the Access policy **and** from the Users page. Removing them
-from Users revokes all their connections at once.
+on its own. To offboard someone, remove them from the Access policy **and** from the Users and roles page.
+Removing them there revokes all their connections at once.
 
 ## Using Kitting from Claude
 
