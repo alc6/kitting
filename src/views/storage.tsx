@@ -383,8 +383,8 @@ function Room(props: { room: ShapedUnit; px: Px; compact: boolean; href: string 
 }
 
 /**
- * A door: a rectangle straddling a wall. The wall runs along its longer side through its middle; the door cuts it and
- * swings towards its front.
+ * A door: a rectangle straddling a wall. The wall runs along its longer side through its middle (a square door's wall
+ * runs across its front: east or west, a wall from north to south); the door cuts it and swings towards its front.
  */
 function Door(props: { door: StorageUnit; px: Px; href: string | null }) {
 	const px = props.px;
@@ -396,7 +396,7 @@ function Door(props: { door: StorageUnit; px: Px; href: string | null }) {
 	let cut: [number, number, number, number];
 	let leaf: string;
 	let arc: string;
-	if (d.width >= d.depth) {
+	if (d.width > d.depth || (d.width === d.depth && d.front !== "east" && d.front !== "west")) {
 		const wy = y + h / 2;
 		const down = d.front !== "north";
 		cut = [x, wy, x + w, wy];

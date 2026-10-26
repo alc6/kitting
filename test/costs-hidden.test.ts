@@ -243,6 +243,7 @@ function pages(s: Awaited<ReturnType<typeof seed>>): string[] {
 		// Storage locations (D197): quantities only, listed so a future amount is caught.
 		"/locations",
 		"/locations?q=BOX-LAMP",
+		"/locations/plan",
 		`/locations/parts/${s.box}`,
 		"/stock/count?unit=none",
 	];
