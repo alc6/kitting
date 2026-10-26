@@ -62,7 +62,7 @@ variable "allowed_emails" {
 }
 
 module "kitting" {
-  source = "github.com/alc6/kitting//infra/terraform?ref=v0.6.2"
+  source = "github.com/alc6/kitting//infra/terraform?ref=v0.7.0"
 
   account_id            = var.account_id
   hostname              = var.hostname

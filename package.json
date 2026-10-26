@@ -1,6 +1,6 @@
 {
 	"name": "kitting",
-	"version": "0.6.2",
+	"version": "0.7.0",
 	"private": true,
 	"description": "Lightweight mini-MRP for small hardware makers, on Cloudflare Workers + D1 + Access.",
 	"license": "MIT",
