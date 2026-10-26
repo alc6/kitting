@@ -7,7 +7,7 @@ scope or role it needs (below) instead of working around it.
 Roles, lowest to highest: viewer, operator, planner, admin. Permission minimums: `builds.plan`, `builds.complete`,
 `stock.adjust`, `stock.count`, `purchasing.receive` need operator; `parts.edit`, `suppliers.edit`, `assemblies.edit`,
 `prices.edit`, `purchasing.order` need planner; `parts.archive`, `assemblies.archive` need admin. Reading is open to every
-listed user, but costs need planner (or the cost option set on the Users page).
+listed user, but costs need planner (or the cost option set on the Users and roles page).
 
 ## Conventions
 

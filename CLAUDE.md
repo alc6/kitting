@@ -185,7 +185,7 @@ was built with; `npx skills update` refreshes it.
     write route has none. Pages that only some roles may open (forms, cost pages) declare one too.
   - A new kind of action goes in the table, then in the `CALLS` of `test/permissions.test.ts` (it fails
     until it is there), in a group of `PERMISSION_GROUPS` with a label in `t.roles.actions` (both dictionaries):
-    the matrix on the Users page is generated from them (D139).
+    the matrix on the Users and roles page is generated from them (D139).
 - Costs, prices, valuations and margins are shown only when `seeCosts` (the cached `can(access,
   "costs.view")`): drop the column or card, never print an amount outside `Money`/`CostView`.
   `csvResponse` strips money columns (`MONEY_COLUMNS`) from every CSV; outside HTTP use `redactCosts()`.
@@ -201,8 +201,8 @@ was built with; `npx skills update` refreshes it.
   `stock-tools.ts`, `build-tools.ts`, `purchasing-tools.ts`, `location-tools.ts`; `tools.ts` lists them all); `src/domain/mcp-scopes.ts`
   maps scopes to permission actions; `src/routes/connect.tsx` is the consent page and the connected apps page.
   Everything is off (404) without the `OAUTH_KV` binding. Only `/mcp`, `/token`, `/register` and
-  `/.well-known/oauth-*` skip Access (`isOAuthPath`, exact paths): never widen it. Only listed users (Users page or
-  `ADMIN_EMAILS`) may connect and call `/mcp`; removing a user revokes their connections (D130).
+  `/.well-known/oauth-*` skip Access (`isOAuthPath`, exact paths): never widen it. Only listed users (Users and roles
+  page or `ADMIN_EMAILS`) may connect and call `/mcp`; removing a user revokes their connections (D130).
 - **Adding an MCP tool = scope + permission action + change set summary + redaction + test.** Give it a `rule`
   (`{ scope, action }`: a scope from `MCP_SCOPES`, plus for anything that changes data one of that scope's
   `PERMISSIONS` actions) and, for a write, `annotations: writes({ destructive, idempotent })`. A write builds the

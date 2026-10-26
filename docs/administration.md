@@ -11,12 +11,14 @@ Cloudflare Access decides who can sign in. Kitting decides what each person can 
 | Planner | Office work as well: edit parts, assemblies, files, suppliers, machines, offers, prices and purchase orders, export data and preview imports. |
 | Administrator | Everything: confirm imports, delete and archive, restore backups, manage users. |
 
-The people listed in `ADMIN_EMAILS` are always administrators. They give everyone else a role on the **Users**
-page, and the full table of who can do what is shown there too. Anyone who signs in without being listed is a
-viewer and can't connect an AI assistant. A role change applies on the person's next page load.
+The people listed in `ADMIN_EMAILS` are always administrators. They give everyone else a role on the **Users and
+roles** page (Administration, in the sidebar): *Add a user* above the list, or pick another role in a person's row and
+save. The four roles are described beside the list, and the full table of who can do what is below it. Anyone who
+signs in without being listed is a viewer and can't connect an AI assistant. A role change applies on the person's
+next page load.
 
 Costs, prices, valuations and margins are hidden from viewers and operators, unless an administrator turns on
-*Viewers and operators see costs* on the Users page. They show "Hidden" instead of amounts, and CSV exports
+*Viewers and operators see costs* on the Users and roles page, at the top of that table. They show "Hidden" instead of amounts, and CSV exports
 leave the amount columns out.
 
 Every permission is checked on the server. Hiding a button is only a convenience: a request the role doesn't

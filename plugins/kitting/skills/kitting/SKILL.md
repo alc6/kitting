@@ -89,7 +89,7 @@ worked conversations in [references/examples.md](references/examples.md).
 6. **A refusal is information.** `Refused, nothing was changed...` lists every problem; fix them and ask again,
    or tell the user. A missing tool, `Refused: your role (...)` or `This connection was not granted <scope>`:
    explain which scope or role is needed (see the table in [references/tools.md](references/tools.md)) and who
-   can grant it (an admin on the Users page; the user reconnects the app and ticks the scope). Do not work around
+   can grant it (an admin on the Users and roles page; the user reconnects the app and ticks the scope). Do not work around
    it by another tool or by asking the user to paste data.
 7. **Hidden costs stay hidden.** Do not compute margins or totals from guesses when `costs_hidden` is true.
 8. **Quantities are exact.** Echo quantities and units back in confirmations; never round a number the user gave.
