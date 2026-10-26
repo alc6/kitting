@@ -22,20 +22,21 @@ import { useApp } from "../views/context";
 import { Icon, icons } from "../views/icons";
 import { idParam, nowIso, page, redirectOk, saveChanges, translateErrors } from "../views/render";
 import {
+	Avatar,
 	Badge,
 	Button,
 	Card,
 	CardContent,
-	CardDescription,
+	CardFooter,
 	CardHeader,
 	CardTitle,
 	CheckboxField,
-	EmptyState,
 	ErrorBanner,
 	FieldGroup,
 	Flash,
 	type FormErrors,
 	type FormValues,
+	InlineEdit,
 	PageHeader,
 	PostButton,
 	SelectField,
@@ -62,134 +63,166 @@ function UsersPage(props: {
 	errors: FormErrors;
 	ok?: string | undefined;
 }) {
-	const { t, user } = useApp();
-	const p = { values: props.values, errors: props.errors };
-	const you = (email: string) =>
-		email === user ? (
-			<Badge variant="secondary" class="ml-2">
-				{t.users.you}
-			</Badge>
-		) : null;
+	const { t } = useApp();
+	// ADMIN_EMAILS win over the table (resolveAccess), so a row for one of them is not shown twice.
+	const listed = props.rows.filter((u) => !props.configAdmins.includes(u.email));
+	const counts = Object.fromEntries(ROLES.map((r) => [r, listed.filter((u) => u.role === r).length])) as Record<
+		Role,
+		number
+	>;
+	counts.admin += props.configAdmins.length;
 	return (
 		<>
 			<PageHeader title={t.users.title} subtitle={t.users.intro} />
 			<Flash ok={props.ok} />
 			<ErrorBanner show={Object.keys(props.errors).length > 0} />
-			<div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_24rem]">
-				<div class="flex min-w-0 flex-col gap-6">
-					<Card id="give-role">
-						<CardHeader>
-							<CardTitle tag="h2">{t.users.add}</CardTitle>
-							<CardDescription>{t.users.addHint}</CardDescription>
-						</CardHeader>
-						<CardContent>
-							<form method="post" action="/users" class="flex flex-col gap-6">
-								<FieldGroup>
-									<div class="grid gap-4 md:grid-cols-[minmax(0,1fr)_14rem]">
-										<TextField name="email" label={t.users.email} type="email" required {...p} />
-										<SelectField
-											name="role"
-											label={t.users.role}
-											required
-											options={ROLES.map((r) => ({ value: r, label: t.roles.names[r] }))}
-											{...p}
-										/>
-									</div>
-								</FieldGroup>
-								<div>
-									<Button icon={icons.save}>{t.users.save}</Button>
-								</div>
-							</form>
-						</CardContent>
-					</Card>
-					<TableCard title={t.users.listed}>
-						{props.rows.length === 0 && props.configAdmins.length === 0 ? (
-							<EmptyState icon={icons.users} title={t.users.empty} class="m-4 border-0" />
-						) : (
-							<Table>
-								<TableHeader>
-									<TableRow>
-										<TableHead>{t.users.email}</TableHead>
-										<TableHead>{t.users.role}</TableHead>
-										<TableHead class="text-right">{t.common.actions}</TableHead>
-									</TableRow>
-								</TableHeader>
-								<TableBody>
-									{props.configAdmins.map((email) => (
-										<TableRow>
-											<TableCell class="font-medium">
-												{email}
-												{you(email)}
-											</TableCell>
-											<TableCell>
-												{t.roles.names.admin}{" "}
-												<Badge variant="outline" title={t.users.fromConfigHint}>
-													{t.users.fromConfig}
-												</Badge>
-											</TableCell>
-											<TableCell class="text-right text-sm text-muted-foreground">{t.users.fromConfigHint}</TableCell>
-										</TableRow>
-									))}
-									{props.rows
-										.filter((u) => !props.configAdmins.includes(u.email))
-										.map((u) => (
-											<TableRow>
-												<TableCell class="font-medium">
-													{u.email}
-													{you(u.email)}
-												</TableCell>
-												<TableCell>{t.roles.names[u.role]}</TableCell>
-												<TableCell class="text-right">
-													<div class="flex flex-wrap justify-end gap-2">
-														<Button
-															href={`/users?edit=${u.id}#give-role`}
-															variant="outline"
-															size="sm"
-															icon={icons.pencil}
-														>
-															{t.common.edit}
-														</Button>
-														<PostButton
-															action={`/users/${u.id}/delete`}
-															label={t.users.remove}
-															confirm={t.users.confirmRemove}
-															variant="outline"
-															size="sm"
-															icon={icons.trash}
-														/>
-													</div>
-												</TableCell>
-											</TableRow>
-										))}
-								</TableBody>
-							</Table>
-						)}
-					</TableCard>
-				</div>
-				<div class="flex min-w-0 flex-col gap-6">
-					<Card>
-						<CardHeader>
-							<CardTitle tag="h2">{t.users.costsTitle}</CardTitle>
-						</CardHeader>
-						<CardContent>
-							<form method="post" action="/users/settings" class="flex flex-col gap-4">
-								<CheckboxField
-									name="lower_roles_see_costs"
-									label={t.users.costsLabel}
-									hint={t.users.costsHint}
-									values={{ lower_roles_see_costs: props.seeCosts ? "on" : "" }}
-									errors={{}}
-								/>
-								<div>
-									<Button variant="outline">{t.users.costsSave}</Button>
-								</div>
-							</form>
-						</CardContent>
-					</Card>
-				</div>
+			<div class="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_22rem]">
+				<UserList configAdmins={props.configAdmins} listed={listed} values={props.values} errors={props.errors} />
+				<RoleSummary counts={counts} />
 			</div>
 			<RoleMatrix lowerRolesSeeCosts={props.seeCosts} />
 		</>
+	);
+}
+
+/**
+ * Everyone with a role: the ADMIN_EMAILS (fixed), the listed users (their role changed in place), then everyone else,
+ * who is a viewer. Adding someone is a form folded above the list.
+ */
+function UserList(props: { configAdmins: string[]; listed: UserRow[]; values: FormValues; errors: FormErrors }) {
+	const { t, user } = useApp();
+	const p = { values: props.values, errors: props.errors };
+	const roleOptions = ROLES.map((r) => ({ value: r, label: t.roles.names[r] }));
+	const who = (email: string) => (
+		<div class="flex items-center gap-3">
+			<Avatar name={email} />
+			<span class="font-medium whitespace-nowrap">{email}</span>
+			{email === user ? <Badge variant="secondary">{t.users.you}</Badge> : null}
+		</div>
+	);
+	return (
+		<TableCard id="users" title={t.users.list}>
+			<InlineEdit
+				class="border-b px-4 py-3"
+				label={t.users.add}
+				icon={icons.userPlus}
+				open={Object.keys(props.errors).length > 0}
+				summary={<span class="text-sm text-muted-foreground">{t.users.addSummary}</span>}
+			>
+				<form method="post" action="/users" class="flex flex-col gap-4">
+					<FieldGroup>
+						<div class="grid gap-4 md:grid-cols-[minmax(0,1fr)_12rem]">
+							<TextField name="email" label={t.users.email} type="email" hint={t.users.addHint} required {...p} />
+							<SelectField name="role" label={t.users.role} required options={roleOptions} {...p} />
+						</div>
+					</FieldGroup>
+					<div>
+						<Button icon={icons.userPlus}>{t.users.addSave}</Button>
+					</div>
+				</form>
+			</InlineEdit>
+			<Table>
+				<TableHeader>
+					<TableRow>
+						<TableHead>{t.users.email}</TableHead>
+						<TableHead>{t.users.role}</TableHead>
+						<TableHead>
+							<span class="sr-only">{t.common.actions}</span>
+						</TableHead>
+					</TableRow>
+				</TableHeader>
+				<TableBody>
+					{props.configAdmins.map((email) => (
+						<TableRow>
+							<TableCell>{who(email)}</TableCell>
+							<TableCell colspan={2}>
+								<div class="flex items-center gap-2">
+									<Icon icon={icons.lock} class="size-4 text-muted-foreground" />
+									{t.roles.names.admin}
+								</div>
+								<div class="text-xs text-muted-foreground">{t.users.fromConfig}</div>
+							</TableCell>
+						</TableRow>
+					))}
+					{props.listed.map((u) => (
+						<TableRow>
+							<TableCell>{who(u.email)}</TableCell>
+							<TableCell>
+								{/* The same upsert as the add form; app.js shows Save once another role is picked. */}
+								<form method="post" action="/users" data-save-when-changed="" class="flex items-center gap-2">
+									<input type="hidden" name="email" value={u.email} />
+									<select name="role" aria-label={fmt(t.users.roleOf, { email: u.email })} class="w-40">
+										{ROLES.map((r) => (
+											<option value={r} selected={r === u.role}>
+												{t.roles.names[r]}
+											</option>
+										))}
+									</select>
+									<Button size="sm" icon={icons.check}>
+										{t.common.save}
+									</Button>
+								</form>
+							</TableCell>
+							<TableCell class="text-right">
+								<PostButton
+									action={`/users/${u.id}/delete`}
+									label={t.users.remove}
+									confirm={fmt(t.users.confirmRemove, { email: u.email })}
+									variant="ghost"
+									size="sm"
+									icon={icons.trash}
+								/>
+							</TableCell>
+						</TableRow>
+					))}
+					<TableRow class="hover:bg-transparent">
+						<TableCell>
+							<div class="flex items-center gap-3 text-muted-foreground">
+								<Avatar icon={icons.users} />
+								{t.users.everyoneElse}
+							</div>
+						</TableCell>
+						<TableCell colspan={2}>
+							<div>{t.roles.names.viewer}</div>
+							<div class="text-xs text-muted-foreground">{t.users.everyoneElseHint}</div>
+						</TableCell>
+					</TableRow>
+				</TableBody>
+			</Table>
+		</TableCard>
+	);
+}
+
+/** The four roles in a word each, and how many people have them: what to pick in the list beside it. */
+function RoleSummary(props: { counts: Record<Role, number> }) {
+	const { t } = useApp();
+	return (
+		<Card>
+			<CardHeader>
+				<CardTitle tag="h2">{t.users.roles}</CardTitle>
+			</CardHeader>
+			<CardContent>
+				<dl class="m-0 flex flex-col gap-4">
+					{ROLES.map((role) => (
+						<div class="flex flex-col gap-1">
+							<dt class="flex items-center justify-between gap-2 text-sm font-medium">
+								{t.roles.names[role]}
+								<Badge variant="secondary" title={t.users.roleCount}>
+									{props.counts[role]}
+									<span class="sr-only"> {t.users.roleCount}</span>
+								</Badge>
+							</dt>
+							<dd class="m-0 text-sm text-muted-foreground">{t.roles.help[role]}</dd>
+						</div>
+					))}
+				</dl>
+			</CardContent>
+			<CardFooter>
+				<Button href="#role-matrix" variant="outline" size="sm" icon={icons.arrowDown}>
+					{t.users.rolesTitle}
+				</Button>
+			</CardFooter>
+		</Card>
 	);
 }
 
@@ -215,6 +248,24 @@ function RoleMatrix(props: { lowerRolesSeeCosts: boolean }) {
 	);
 	return (
 		<TableCard id="role-matrix" title={t.users.rolesTitle} class="mt-6">
+			<form
+				method="post"
+				action="/users/settings"
+				class="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 border-b px-4 py-3"
+			>
+				<div class="min-w-0 flex-1">
+					<CheckboxField
+						name="lower_roles_see_costs"
+						label={t.users.costsLabel}
+						hint={t.users.costsHint}
+						values={{ lower_roles_see_costs: props.lowerRolesSeeCosts ? "on" : "" }}
+						errors={{}}
+					/>
+				</div>
+				<Button variant="outline" size="sm">
+					{t.users.costsSave}
+				</Button>
+			</form>
 			<Table>
 				<TableHeader>
 					<TableRow>
@@ -270,11 +321,7 @@ async function renderUsers(c: Context<AppEnv>, values: FormValues, errors: Field
 	);
 }
 
-userRoutes.get("/", async (c) => {
-	const edit = c.req.query("edit");
-	const editing = edit && /^\d+$/.test(edit) ? await getUser(c.var.db, Number(edit)) : undefined;
-	return renderUsers(c, editing ? { email: editing.email, role: editing.role } : { role: "viewer" });
-});
+userRoutes.get("/", (c) => renderUsers(c, { role: "viewer" }));
 
 userRoutes.post("/", async (c) => {
 	const form = await c.req.parseBody();

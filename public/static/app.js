@@ -1842,6 +1842,27 @@
 		for (const button of document.querySelectorAll("[data-live-submit]")) button.hidden = true;
 	}
 
+	// <form data-save-when-changed>: a small form inside a list (a user's role) shows its Save button only once a field
+	// differs from the saved value, so the list is not a column of buttons. Without JavaScript the button is always there.
+	const differs = (el) =>
+		el instanceof HTMLSelectElement
+			? [...el.options].some((o) => o.selected !== o.defaultSelected)
+			: (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) &&
+				el.type !== "hidden" &&
+				el.value !== el.defaultValue;
+	for (const form of document.querySelectorAll("form[data-save-when-changed]")) {
+		if (!(form instanceof HTMLFormElement)) continue;
+		const update = () => {
+			const changed = [...form.elements].some(differs);
+			for (const button of form.querySelectorAll("button")) button.hidden = !changed;
+		};
+		form.addEventListener("input", update);
+		form.addEventListener("change", update);
+		// Back from the next page (bfcache), the select may still hold the role picked before leaving.
+		window.addEventListener("pageshow", update);
+		update();
+	}
+
 	// <form data-upload-form data-busy="Uploading…">: a large file takes a while on the workshop's Wi-Fi, so the
 	// button says so and cannot send it twice.
 	const busyButtons = [];

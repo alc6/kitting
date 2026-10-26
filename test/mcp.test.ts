@@ -329,7 +329,7 @@ describe("offboarding (D130)", () => {
 		const consent = await openConsent(path, OP);
 		expect(consent.res.status).toBe(403);
 		expect(consent.handle).toBe("");
-		expect(consent.html).toContain("op@example.com must be listed on the Users page");
+		expect(consent.html).toContain("op@example.com must be listed on the Users and roles page");
 		const forged = await submitConsent(path, { handle: "x", cookie: "" }, "approve", ["catalog:read"], OP);
 		expect(forged.status).toBe(403);
 		expect(forged.headers.get("Location")).toBeNull();
