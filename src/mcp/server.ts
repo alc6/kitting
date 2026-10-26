@@ -17,7 +17,7 @@ import { toWire } from "./wire";
 
 export const MCP_PATH = "/mcp";
 
-export const SERVER_INFO = { name: "kitting", title: "Kitting", version: "0.7.0" };
+export const SERVER_INFO = { name: "kitting", title: "Kitting", version: "0.8.0" };
 
 /** Returned at initialize (and server/discover): what the server is and how to read its numbers. */
 export const INSTRUCTIONS = [
