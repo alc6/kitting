@@ -226,21 +226,6 @@ export function PlanSvg(props: {
 	const doors = drawn.filter((u) => u.kind === "door");
 	const landmarks = drawn.filter((u) => u.kind === "landmark");
 	const storing = drawn.filter((u) => holdsParts(u.kind));
-	const lines = [];
-	if (!props.compact) {
-		// Lines every `step` squares; the strong ones (editor) are the metres, else every second line.
-		const step = gridStep(squareCm);
-		const strong = (i: number) =>
-			editing !== undefined && (100 % squareCm === 0 ? (i * squareCm) % 100 === 0 : (i / step) % 2 === 0);
-		for (let i = step; i < size.width; i += step)
-			lines.push(
-				<line x1={px(i)} y1={0} x2={px(i)} y2={H} class={strong(i) ? "stroke-foreground/15" : "stroke-foreground/7"} />,
-			);
-		for (let j = step; j < size.depth; j += step)
-			lines.push(
-				<line x1={0} y1={px(j)} x2={W} y2={px(j)} class={strong(j) ? "stroke-foreground/15" : "stroke-foreground/7"} />,
-			);
-	}
 	const link = (u: StorageUnit) => {
 		if (props.links === "edit") return `/locations/${u.id}/edit`;
 		if (props.links !== "view") return null;
@@ -248,13 +233,22 @@ export function PlanSvg(props: {
 		return `/locations/${u.id}`;
 	};
 	const crop = props.crop;
+	const vbWidth = crop ? px(crop.width) + 2 * CROP_MARGIN : W + pad * 2;
 	const viewBox = crop
-		? `${px(crop.col) - CROP_MARGIN} ${px(crop.row) - CROP_MARGIN} ${px(crop.width) + 2 * CROP_MARGIN} ${px(crop.depth) + 2 * CROP_MARGIN}`
-		: `${-pad} ${-pad} ${W + pad * 2} ${H + pad + foot}`;
+		? `${px(crop.col) - CROP_MARGIN} ${px(crop.row) - CROP_MARGIN} ${vbWidth} ${px(crop.depth) + 2 * CROP_MARGIN}`
+		: `${-pad} ${-pad} ${vbWidth} ${H + pad + foot}`;
+	// Lines keep their width on screen whatever the drawing's scale (D213); a plan shown for reading is not blown up
+	// past 1.6 times its size, so that its text does not either.
+	const fixed = editing !== undefined || props.compact;
 	return (
 		<svg
 			viewBox={viewBox}
-			class={cn("block h-auto w-full font-sans select-none", props.compact ? "min-w-0" : "min-w-[34rem]")}
+			width={fixed ? undefined : Math.round(vbWidth * 1.6)}
+			class={cn(
+				"mx-auto block h-auto font-sans select-none [&_*]:[vector-effect:non-scaling-stroke]",
+				fixed ? "w-full" : "max-w-full",
+				props.compact ? "min-w-0" : "min-w-[34rem]",
+			)}
 			role="img"
 			aria-label={t.locations.plan}
 			data-plan-editor={editing ? "" : undefined}
@@ -266,14 +260,19 @@ export function PlanSvg(props: {
 			data-limit-depth={editing ? editing.limit.depth : undefined}
 			data-step={editing ? editing.stepSquares : undefined}
 		>
-			<rect x={0} y={0} width={W} height={H} rx={4} class="fill-muted/60" />
+			<rect
+				x={0}
+				y={0}
+				width={W}
+				height={H}
+				rx={3}
+				class={rooms.length ? "fill-plan-ground" : "fill-plan-floor stroke-plan-wall"}
+				stroke-width={rooms.length ? undefined : props.compact ? 1.25 : 2}
+			/>
 			{rooms.flatMap(rectsOf).map((r) => (
-				<rect x={px(r.col)} y={px(r.row)} width={px(r.width)} height={px(r.depth)} class="fill-background" />
+				<rect x={px(r.col)} y={px(r.row)} width={px(r.width)} height={px(r.depth)} class="fill-plan-floor" />
 			))}
-			<g stroke-width="1">{lines}</g>
-			{rooms.length ? null : (
-				<rect x={0} y={0} width={W} height={H} class="fill-none stroke-foreground" stroke-width="4" />
-			)}
+			{props.compact ? null : <PlanGrid size={size} squareCm={squareCm} px={px} editing={editing !== undefined} />}
 			{rooms.map((r) => (
 				<Room room={r} px={px} compact={props.compact ?? false} href={link(r)} />
 			))}
@@ -299,13 +298,47 @@ export function PlanSvg(props: {
 			{props.highlight ? <HighlightTag px={px} units={storing} highlight={props.highlight} /> : null}
 			{props.compact || crop ? null : (
 				<g class="fill-muted-foreground text-[10.5px]">
-					<path d={`M0 ${H + 14} V${H + 18} H${PX_PER_M} V${H + 14}`} class="fill-none stroke-muted-foreground" />
+					<path
+						d={`M0 ${H + 14} V${H + 18} H${PX_PER_M} V${H + 14}`}
+						stroke-width="1"
+						class="fill-none stroke-muted-foreground"
+					/>
 					<text x={PX_PER_M + 6} y={H + 21}>
 						1 m
 					</text>
 				</g>
 			)}
 		</svg>
+	);
+}
+
+/**
+ * The squares, as hairlines: every `gridStep()` squares. Reading the plan, only the metres (or every second line when
+ * a square does not divide a metre); editing it, every line, the metres stronger.
+ */
+function PlanGrid(props: { size: { width: number; depth: number }; squareCm: number; px: Px; editing: boolean }) {
+	const { size, squareCm, px } = props;
+	const W = px(size.width);
+	const H = px(size.depth);
+	const step = gridStep(squareCm);
+	const metre = (i: number) => (100 % squareCm === 0 ? (i * squareCm) % 100 === 0 : (i / step) % 2 === 0);
+	const minor = [];
+	const major = [];
+	for (let i = step; i < size.width; i += step) {
+		const line = <line x1={px(i)} y1={0} x2={px(i)} y2={H} />;
+		if (metre(i)) major.push(line);
+		else if (props.editing) minor.push(line);
+	}
+	for (let j = step; j < size.depth; j += step) {
+		const line = <line x1={0} y1={px(j)} x2={W} y2={px(j)} />;
+		if (metre(j)) major.push(line);
+		else if (props.editing) minor.push(line);
+	}
+	return (
+		<g class="pointer-events-none" stroke-width="1">
+			<g class="stroke-foreground/5">{minor}</g>
+			<g class={props.editing ? "stroke-foreground/12" : "stroke-foreground/7"}>{major}</g>
+		</g>
 	);
 }
 
@@ -331,17 +364,17 @@ function Room(props: { room: ShapedUnit; px: Px; compact: boolean; href: string 
 		<Linked href={props.href}>
 			<path
 				d={walls}
-				stroke-width="5"
-				stroke-linejoin="round"
-				class="fill-none stroke-foreground group-hover:stroke-ring"
+				stroke-width={props.compact ? 1.25 : 2.5}
+				stroke-linejoin="miter"
+				class="fill-none stroke-plan-wall group-hover:stroke-plan-accent"
 			/>
 			{props.compact ? null : (
 				<text
-					x={px(r.col) + 10}
-					y={px(r.row) + 19}
-					class="fill-muted-foreground text-[10.5px] font-semibold tracking-wider uppercase"
+					x={px(r.col) + 9}
+					y={px(r.row) + 17}
+					class="fill-muted-foreground text-[9.5px] font-semibold tracking-wider uppercase group-hover:fill-plan-accent"
 				>
-					{clip(r.name || r.code, Math.floor((px(r.width) - 16) / 7.5))}
+					{clip(r.name || r.code, Math.floor((px(r.width) - 16) / 7))}
 				</text>
 			)}
 			<title>{r.name || r.code}</title>
@@ -378,9 +411,9 @@ function Door(props: { door: StorageUnit; px: Px; href: string | null }) {
 	}
 	return (
 		<Linked href={props.href}>
-			<line x1={cut[0]} y1={cut[1]} x2={cut[2]} y2={cut[3]} stroke-width="7" class="stroke-background" />
-			<path d={arc} stroke-width="1.2" stroke-dasharray="3 3" class="fill-none stroke-muted-foreground" />
-			<path d={leaf} stroke-width="2" class="fill-none stroke-foreground group-hover:stroke-ring" />
+			<line x1={cut[0]} y1={cut[1]} x2={cut[2]} y2={cut[3]} stroke-width="6" class="stroke-plan-floor" />
+			<path d={arc} stroke-width="1" stroke-dasharray="2 3" class="fill-none stroke-muted-foreground/70" />
+			<path d={leaf} stroke-width="1.5" class="fill-none stroke-plan-wall group-hover:stroke-plan-accent" />
 			<title>{d.name || d.code}</title>
 		</Linked>
 	);
@@ -398,15 +431,15 @@ function Landmark(props: { unit: StorageUnit; px: Px; href: string | null }) {
 				width={w}
 				height={px(u.depth)}
 				rx={3}
-				stroke-width="1.2"
-				stroke-dasharray="4 4"
-				class="fill-muted stroke-muted-foreground/60 group-hover:stroke-ring"
+				stroke-width="1"
+				stroke-dasharray="3 3"
+				class="fill-muted/60 stroke-muted-foreground/60 group-hover:stroke-plan-accent"
 			/>
 			<text
 				x={px(u.col) + w / 2}
 				y={px(u.row + u.depth / 2) + 4}
 				text-anchor="middle"
-				class="fill-muted-foreground text-[11px] font-medium italic"
+				class="fill-muted-foreground text-[10.5px] italic"
 			>
 				{clip(u.name || u.code, Math.max(3, Math.floor(w / 6.5)))}
 			</text>
@@ -438,11 +471,7 @@ function UnitShape(props: {
 		for (let i = 1; i < u.positions; i++) {
 			const d = along ? x + (i * w) / u.positions : y + (i * h) / u.positions;
 			dividers.push(
-				along ? (
-					<line x1={r1(d)} y1={y + 3} x2={r1(d)} y2={y + h - 3} />
-				) : (
-					<line x1={x + 3} y1={r1(d)} x2={x + w - 3} y2={r1(d)} />
-				),
+				along ? <line x1={r1(d)} y1={y} x2={r1(d)} y2={y + h} /> : <line x1={x} y1={r1(d)} x2={x + w} y2={r1(d)} />,
 			);
 		}
 	}
@@ -455,16 +484,16 @@ function UnitShape(props: {
 				y={y}
 				width={w}
 				height={h}
-				rx={2}
-				stroke-width={hl ? 2.4 : 1.4}
-				stroke-dasharray={u.kind === "floor" ? "7 4" : undefined}
+				rx={1.5}
+				stroke-width={hl ? 1.75 : 1}
+				stroke-dasharray={u.kind === "floor" ? "4 3" : undefined}
 				class={cn(
 					hl
-						? "fill-location/35 stroke-location-border"
+						? "fill-location/40 stroke-location-border"
 						: u.kind === "floor"
-							? "fill-muted stroke-foreground"
-							: "fill-card stroke-foreground",
-					"group-hover:stroke-ring",
+							? "fill-plan-unit/50 stroke-foreground/40"
+							: "fill-plan-unit stroke-foreground/40",
+					"group-hover:fill-plan-accent/15 group-hover:stroke-plan-accent",
 				)}
 			/>
 			{seg ? (
@@ -473,11 +502,11 @@ function UnitShape(props: {
 					y={r1(px(seg.y) + 2)}
 					width={r1(px(seg.w) - 4)}
 					height={r1(px(seg.h) - 4)}
-					rx={2}
+					rx={1.5}
 					class="fill-location"
 				/>
 			) : null}
-			<g class="stroke-muted-foreground/40" stroke-width="1">
+			<g class="stroke-foreground/15" stroke-width="1">
 				{dividers}
 			</g>
 			{u.kind === "floor" ? null : (
@@ -486,27 +515,29 @@ function UnitShape(props: {
 					y1={px(fy1)}
 					x2={px(fx2)}
 					y2={px(fy2)}
-					stroke-width="3.4"
-					stroke-linecap="round"
-					class={hl ? "stroke-location-border" : "stroke-foreground"}
+					stroke-width={props.compact ? 2 : 3}
+					class={cn(hl ? "stroke-location-border" : "stroke-foreground/70", "group-hover:stroke-plan-accent")}
 				/>
 			)}
 			<text
 				x={cx}
-				y={cy + (showName ? 0 : 5)}
+				y={cy + (showName ? 0 : 4.5)}
 				text-anchor="middle"
-				class={cn("text-[15px] font-bold", hl ? "fill-location-foreground" : "fill-foreground")}
+				class={cn(
+					"text-[13px] font-semibold",
+					hl ? "fill-location-foreground" : "fill-foreground/85 group-hover:fill-plan-accent",
+				)}
 			>
 				{u.code}
 			</text>
 			{showName ? (
 				<text
 					x={cx}
-					y={cy + 14}
+					y={cy + 13}
 					text-anchor="middle"
-					class={cn("text-[10.5px]", hl ? "fill-location-foreground" : "fill-muted-foreground")}
+					class={cn("text-[9.5px]", hl ? "fill-location-foreground" : "fill-muted-foreground")}
 				>
-					{clip(u.name, Math.floor(w / 6))}
+					{clip(u.name, Math.floor(w / 5.5))}
 				</text>
 			) : null}
 			<title>
@@ -548,7 +579,7 @@ function HighlightTag(props: { px: Px; units: StorageUnit[]; highlight: PlanHigh
 		ptr = `M${cx - tw / 2 + 0.5} ${cy - 5} L${cx - tw / 2 - 6} ${cy} L${cx - tw / 2 + 0.5} ${cy + 5}`;
 	}
 	return (
-		<g class="fill-location stroke-location-border" stroke-width="1.2">
+		<g class="pointer-events-none fill-location stroke-location-border" stroke-width="1">
 			<rect x={r1(cx - tw / 2)} y={r1(cy - th / 2)} width={r1(tw)} height={th} rx={4} />
 			<path d={ptr} />
 			<text
@@ -584,17 +615,17 @@ function AreaShape(props: { area: Rect; n: number; px: Px; squareCm: number }) {
 				y={y}
 				width={w}
 				height={h}
-				rx={2}
-				stroke-width="2"
-				stroke-dasharray="6 4"
-				class="cursor-move fill-primary/10 stroke-primary"
+				rx={1.5}
+				stroke-width="1.5"
+				stroke-dasharray="5 3"
+				class="cursor-move fill-plan-accent/10 stroke-plan-accent"
 			/>
 			<text
 				data-code
 				x={x + w / 2}
 				y={y + h / 2 + 5}
 				text-anchor="middle"
-				class="pointer-events-none fill-primary text-[13px] font-semibold"
+				class="pointer-events-none fill-plan-accent text-[13px] font-semibold"
 			>
 				{String(props.n)}
 			</text>
@@ -603,19 +634,19 @@ function AreaShape(props: { area: Rect; n: number; px: Px; squareCm: number }) {
 				x={x + w / 2}
 				y={y - 7}
 				text-anchor="middle"
-				class="pointer-events-none fill-muted-foreground text-[10px] tabular-nums"
+				class="pointer-events-none fill-plan-accent text-[10px] tabular-nums"
 			>
 				{`${formatMetres(Math.max(1, a.width) * props.squareCm, locale)} × ${formatMetres(Math.max(1, a.depth) * props.squareCm, locale)} m`}
 			</text>
 			<rect
 				data-handle
-				x={x + w - 7}
-				y={y + h - 7}
-				width={14}
-				height={14}
-				rx={3}
-				stroke-width="1.6"
-				class="cursor-nwse-resize fill-background stroke-primary"
+				x={x + w - 6}
+				y={y + h - 6}
+				width={12}
+				height={12}
+				rx={2.5}
+				stroke-width="1.5"
+				class="cursor-nwse-resize fill-background stroke-plan-accent"
 			/>
 		</g>
 	);
@@ -639,9 +670,9 @@ function EditingShape(props: { editing: PlanEditing; px: Px; squareCm: number })
 				y={y}
 				width={w}
 				height={h}
-				rx={2}
-				stroke-width="2"
-				class="cursor-move fill-primary/10 stroke-primary"
+				rx={1.5}
+				stroke-width="1.5"
+				class="cursor-move fill-plan-accent/15 stroke-plan-accent"
 			/>
 			<line
 				data-front
@@ -649,16 +680,15 @@ function EditingShape(props: { editing: PlanEditing; px: Px; squareCm: number })
 				y1={px(fy1)}
 				x2={px(fx2)}
 				y2={px(fy2)}
-				stroke-width="4"
-				stroke-linecap="round"
-				class="pointer-events-none stroke-primary"
+				stroke-width="3"
+				class="pointer-events-none stroke-plan-accent"
 			/>
 			<text
 				data-code
 				x={x + w / 2}
-				y={y + h / 2 + 5}
+				y={y + h / 2 + 4.5}
 				text-anchor="middle"
-				class="pointer-events-none fill-primary text-[15px] font-bold"
+				class="pointer-events-none fill-plan-accent text-[13px] font-semibold"
 			>
 				{e.code || "?"}
 			</text>
@@ -667,19 +697,19 @@ function EditingShape(props: { editing: PlanEditing; px: Px; squareCm: number })
 				x={x + w / 2}
 				y={y - 7}
 				text-anchor="middle"
-				class="pointer-events-none fill-muted-foreground text-[10px] tabular-nums"
+				class="pointer-events-none fill-plan-accent text-[10px] tabular-nums"
 			>
 				{`${formatMetres(Math.max(1, e.width) * props.squareCm, locale)} × ${formatMetres(Math.max(1, e.depth) * props.squareCm, locale)} m`}
 			</text>
 			<rect
 				data-handle
-				x={x + w - 7}
-				y={y + h - 7}
-				width={14}
-				height={14}
-				rx={3}
-				stroke-width="1.6"
-				class="cursor-nwse-resize fill-background stroke-primary"
+				x={x + w - 6}
+				y={y + h - 6}
+				width={12}
+				height={12}
+				rx={2.5}
+				stroke-width="1.5"
+				class="cursor-nwse-resize fill-background stroke-plan-accent"
 			/>
 		</g>
 	);
@@ -828,18 +858,18 @@ export function FrontSvg(props: {
 			) : null}
 			{cells}
 			{cabinet ? null : (
-				<g class="stroke-foreground">
+				<g class="stroke-foreground/70">
 					{Array.from({ length: L }, (_, i) => (
 						<line
 							x1={left - 4}
 							y1={top + (i + 1) * ch - 2}
 							x2={left + N * cw + 4}
 							y2={top + (i + 1) * ch - 2}
-							stroke-width="3"
+							stroke-width="2"
 						/>
 					))}
-					<line x1={left - 4} y1={top - 6} x2={left - 4} y2={top + L * ch + 8} stroke-width="3.5" />
-					<line x1={left + N * cw + 4} y1={top - 6} x2={left + N * cw + 4} y2={top + L * ch + 8} stroke-width="3.5" />
+					<line x1={left - 4} y1={top - 6} x2={left - 4} y2={top + L * ch + 8} stroke-width="2.5" />
+					<line x1={left + N * cw + 4} y1={top - 6} x2={left + N * cw + 4} y2={top + L * ch + 8} stroke-width="2.5" />
 				</g>
 			)}
 			<line

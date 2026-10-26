@@ -221,7 +221,7 @@
 				const w = cols * sq;
 				const h = rows * sq;
 				set(p.shape, { x, y, width: w, height: h });
-				set(p.handle, { x: x + w - 7, y: y + h - 7 });
+				set(p.handle, { x: x + w - 6, y: y + h - 6 });
 				set(p.code, { x: x + w / 2, y: y + h / 2 + 5 });
 				set(p.size, { x: x + w / 2, y: y - 7 });
 				if (p.code && !p.prefix) p.code.textContent = fieldValue(form, "code").toUpperCase() || "?";
@@ -476,13 +476,17 @@
 			layer.replaceChildren();
 			if (!on || !poly) return;
 			const n = poly.length;
+			// Handles keep their size on screen: k is the drawing's units per screen pixel.
+			const m = svg.getScreenCTM();
+			const k = m && m.a > 0 ? 1 / m.a : 1;
+			const coarse = window.matchMedia("(pointer: coarse)").matches;
 			const points = poly.map((q) => `${q[0] * sq},${q[1] * sq}`).join(" ");
-			add("polygon", { points, class: "pointer-events-none fill-primary/10" });
+			add("polygon", { points, class: "pointer-events-none fill-plan-accent/10" });
 			add("polygon", {
 				points,
-				"stroke-width": 4,
-				"stroke-linejoin": "round",
-				class: "pointer-events-none fill-none stroke-foreground",
+				"stroke-width": 2.5,
+				"stroke-linejoin": "miter",
+				class: "pointer-events-none fill-none stroke-plan-wall",
 			});
 			for (let i = 0; i < n; i++) {
 				const a = poly[i];
@@ -499,9 +503,8 @@
 							y1: a[1] * sq,
 							x2: b[0] * sq,
 							y2: b[1] * sq,
-							"stroke-width": 7,
-							"stroke-linecap": "round",
-							class: "stroke-primary",
+							"stroke-width": 4,
+							class: "stroke-plan-accent",
 						},
 						g,
 					);
@@ -512,21 +515,23 @@
 						y1: a[1] * sq,
 						x2: b[0] * sq,
 						y2: b[1] * sq,
-						"stroke-width": 18,
+						"stroke-width": coarse ? 32 : 16,
 						class: "stroke-transparent",
 					},
 					g,
 				);
+				const long = 18 * k;
+				const thin = 6 * k;
 				add(
 					"rect",
 					{
-						x: mx - (flat ? 11 : 4),
-						y: my - (flat ? 4 : 11),
-						width: flat ? 22 : 8,
-						height: flat ? 8 : 22,
-						rx: 4,
-						"stroke-width": 2,
-						class: i === selected ? "fill-primary stroke-primary" : "fill-background stroke-primary",
+						x: mx - (flat ? long : thin) / 2,
+						y: my - (flat ? thin : long) / 2,
+						width: flat ? long : thin,
+						height: flat ? thin : long,
+						rx: thin / 2,
+						"stroke-width": 1.5,
+						class: i === selected ? "fill-plan-accent stroke-plan-accent" : "fill-background stroke-plan-accent",
 					},
 					g,
 				);
@@ -536,25 +541,29 @@
 				if (i === selected || moving) {
 					const len = Math.abs(flat ? b[0] - a[0] : b[1] - a[1]);
 					const label = add("text", {
-						x: mx + (flat ? 0 : 14),
-						y: my + (flat ? -12 : 4),
+						x: mx + (flat ? 0 : 14 * k),
+						y: my + (flat ? -12 * k : 4 * k),
 						"text-anchor": flat ? "middle" : "start",
-						class: "pointer-events-none fill-primary text-[11px] font-medium tabular-nums",
+						class: "pointer-events-none fill-plan-accent text-[11px] font-medium tabular-nums",
 					});
 					label.textContent = `${metres.format((len * squareCm) / 100)} m`;
 				}
 			}
 			for (let i = 0; i < n; i++) {
 				const g = add("g", { "data-corner": i, class: "cursor-move" });
-				add("circle", { cx: poly[i][0] * sq, cy: poly[i][1] * sq, r: 14, class: "fill-transparent" }, g);
+				add(
+					"circle",
+					{ cx: poly[i][0] * sq, cy: poly[i][1] * sq, r: (coarse ? 24 : 12) * k, class: "fill-transparent" },
+					g,
+				);
 				add(
 					"circle",
 					{
 						cx: poly[i][0] * sq,
 						cy: poly[i][1] * sq,
-						r: 6,
-						"stroke-width": 2,
-						class: "fill-primary stroke-background",
+						r: 5 * k,
+						"stroke-width": 1.5,
+						class: "fill-background stroke-plan-accent",
 					},
 					g,
 				);
@@ -710,6 +719,8 @@
 		});
 		// The plain editor redraws its shapes as fields change: keep them hidden behind the outline.
 		form.addEventListener("input", draw);
+		// Handles are sized in screen pixels: a resized window changes the drawing's scale.
+		window.addEventListener("resize", draw);
 		draw();
 	}
 

@@ -717,14 +717,20 @@ describe("the plan's square size and main area (D209)", () => {
 	});
 
 	it("draws the plan to scale: 48 units per metre, a grid thinned to round distances", async () => {
-		const lines = (html: string) => [...html.matchAll(/<line [^>]*class="stroke-foreground\/(7|15)"/g)];
+		// The grid's hairlines: the squares (editor only) and the metres, in two groups.
+		const lines = (html: string) => {
+			const count = (re: RegExp) => (re.exec(html)?.[1]?.match(/<line /g) ?? []).length;
+			return {
+				minor: count(/<g class="stroke-foreground\/5">(.*?)<\/g>/s),
+				major: count(/<g class="stroke-foreground\/12">(.*?)<\/g>/s),
+			};
+		};
 		const at50 = await (await request("/locations/new")).text();
 		expect(at50).toContain('data-square="24"');
 		expect(at50).toContain("M0 350 V354 H48 V350");
 		expect(at50).toContain('viewBox="-16 -16 608 382"');
 		// 24 x 14 squares: 23 + 13 lines, the strong ones (editor) every second line, i.e. every metre.
-		expect(lines(at50)).toHaveLength(36);
-		expect(lines(at50).filter((m) => m[1] === "15")).toHaveLength(17);
+		expect(lines(at50)).toEqual({ minor: 19, major: 17 });
 		expect(at50).toContain('<line x1="24" y1="0" x2="24" y2="336"');
 		expect(at50).toContain('<line x1="552" y1="0" x2="552" y2="336"');
 
@@ -736,13 +742,12 @@ describe("the plan's square size and main area (D209)", () => {
 		expect(at10).toContain('viewBox="-16 -16 608 382"');
 		expect(at10).toContain("M0 350 V354 H48 V350");
 		// Lines every 50 cm (5 squares, 24 units apart), the strong ones every metre.
-		expect(lines(at10)).toHaveLength(36);
-		expect(lines(at10).filter((m) => m[1] === "15")).toHaveLength(17);
+		expect(lines(at10)).toEqual({ minor: 19, major: 17 });
 		expect(at10).toContain('<line x1="24" y1="0" x2="24" y2="336"');
 		expect(at10).not.toContain('<line x1="4.8"');
-		// A bigger plan stays bounded: 40 x 25 m has 79 + 49 lines, not 399 + 249.
+		// A bigger plan stays bounded: 40 x 25 m has 79 + 49 lines (39 + 24 metres), not 399 + 249.
 		await save({ square_cm: "10", width_m: "40", depth_m: "25" });
-		expect(lines(await (await request("/locations/new")).text())).toHaveLength(79 + 49);
+		expect(lines(await (await request("/locations/new")).text())).toEqual({ minor: 65, major: 63 });
 	});
 
 	it("starts a new rack at 2 x 1 m, half a metre from the corner, whatever the squares", async () => {
@@ -757,7 +762,7 @@ describe("the plan's square size and main area (D209)", () => {
 	it("draws a unit of a given real size the same whatever the squares", async () => {
 		const id = await drawUnit({ code: "A", col: "2", row: "2", width: "10", depth: "2" });
 		const rect = (html: string) =>
-			/<rect x="([\d.]+)" y="([\d.]+)" width="([\d.]+)" height="([\d.]+)" rx="2"/.exec(html);
+			/<rect x="([\d.]+)" y="([\d.]+)" width="([\d.]+)" height="([\d.]+)" rx="1.5"/.exec(html);
 		const at50 = rect(await (await request("/locations")).text());
 		await save({ square_cm: "10" });
 		const at10 = rect(await (await request("/locations")).text());
