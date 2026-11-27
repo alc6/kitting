@@ -21,7 +21,8 @@ export const MCP_SCOPES = {
 	"prices:write": { kind: "write", actions: ["prices.edit"] },
 	"catalog:archive": { kind: "write", actions: ["parts.archive", "assemblies.archive"] },
 	"stock:read": { kind: "read", actions: [] },
-	"stock:write": { kind: "write", actions: ["stock.adjust", "stock.count"] },
+	// Deliveries are stock leaving for a customer: a connection that writes stock may ship (D216).
+	"stock:write": { kind: "write", actions: ["stock.adjust", "stock.count", "deliveries.ship", "deliveries.cancel"] },
 	"builds:read": { kind: "read", actions: [] },
 	"builds:write": { kind: "write", actions: ["builds.plan", "builds.complete"] },
 	"purchasing:read": { kind: "read", actions: [] },

@@ -1,6 +1,6 @@
 ---
 name: kitting
-description: Work with a Kitting mini-MRP through its MCP tools - parts and references, assemblies (bills of materials, BoMs, nomenclatures, kits, variants, revisions), part options (colour, size: couleur, taille), stock, inventory counts and where parts are kept (locations, bins, emplacements), builds (production, fabrication, serial numbers and traceability), shortages (manquants) and what to order, purchase orders (commandes fournisseur), supplier offers, costs, prices and margins. Use whenever the user talks about making, buying or counting parts, planning or completing a build, changing an assembly, a BoM or a nomenclature, receiving a delivery, finding or putting away a part, or tracing a serial, in English or French (fabrication, stock, achats, commande, prix de revient, marge).
+description: Work with a Kitting mini-MRP through its MCP tools - parts and references, assemblies (bills of materials, BoMs, nomenclatures, kits, variants, revisions), part options (colour, size: couleur, taille), stock, inventory counts and where parts are kept (locations, bins, emplacements), builds (production, fabrication, serial numbers and traceability), shortages (manquants) and what to order, purchase orders (commandes fournisseur), customer deliveries (sorties client, livraisons, expéditions), supplier offers, costs, prices and margins. Use whenever the user talks about making, buying or counting parts, planning or completing a build, changing an assembly, a BoM or a nomenclature, receiving a delivery, shipping to a customer, finding or putting away a part, or tracing a serial, in English or French (fabrication, stock, achats, commande, prix de revient, marge).
 ---
 
 # Kitting
@@ -44,7 +44,7 @@ worked conversations in [references/examples.md](references/examples.md).
   are in service, under maintenance or retired. Machine time is costed like a component, and `machine_time` in
   results is in minutes: say it as hours and minutes.
 - **Stock** is a ledger: on hand is the sum of signed moves (receipts, build consumption and output,
-  adjustments, counts). Nothing edits a move; mistakes are corrected with new moves. Stock can go negative; that
+  adjustments, counts, customer deliveries). Nothing edits a move; mistakes are corrected with new moves. Stock can go negative; that
   is a signal (`stock_on_hand` with `below_zero`).
 - **Locations**: the workshop plan (drawn in the app) has rooms and storage units: racks and drawer cabinets with
   bins, floor areas. Each stocked part has at most one home location, a **bin code**: `A-2-3` is unit A, level 2 from
@@ -54,7 +54,11 @@ worked conversations in [references/examples.md](references/examples.md).
 - **Builds** consume components and add the product. Number `B-0001`. Statuses: planned, in progress, done,
   cancelled. A done build keeps an **as-built record** with the serial and frozen unit cost of every component.
 - **Serials**: parts with `track_serial` carry one serial per unit, from the receipt (or adjustment) through the
-  build that consumes it to the finished product. That chain is the traceability.
+  build that consumes it to the finished product, and on to the customer it was delivered to. That chain is the
+  traceability.
+- **Customer deliveries** `D-0001`: what left for a customer (free-text name, their order number, date, tracking),
+  shipped or cancelled. Its lines are stock moves: a serial-tracked product leaves by serial, which must be in stock.
+  Kitting has no customer records, sales orders or invoices.
 - **Files**: a part and each assembly revision can carry files (CAD model, print file, drawing, instructions,
   datasheet, other). A part's own files (a datasheet, a drawing for the supplier) are in `get_part`; a revision's
   (the 3MF of a plate, the assembly guide) in `get_assembly`; a build's page lists both (`get_build`). Give the user
@@ -164,6 +168,15 @@ quantity (`batches` or `qty`) and that it cannot be undone, then call it and rep
 machine time. It is refused when serial-tracked components need serials: then `plan_build` and `complete_build`
 with the serials.
 
+### Deliver to a customer
+1. Find what leaves: `get_build` (a completed build's product and serial), or `search_parts` / `stock_on_hand`. A
+   serial-tracked product needs its serial, in stock (`list_moves` with the part ref shows the serials in and out).
+2. Use the customer's name as written before (`list_deliveries` shows them); ask for their order number if known.
+3. Confirm: customer, date, each part and quantity or serial, and that stock moves cannot be undone (a mistake is
+   cancelled, which puts the units back). Then `record_delivery` (one call for the whole delivery) and report its
+   number.
+4. Recorded by mistake: confirm, then `cancel_delivery` (planner). Kitting does not invoice or email the customer.
+
 ### Find the file to print or assemble
 "Which file do I print for B-0042?" or "Where is the drawing of the bracket?": `get_build` lists the files of the
 revision being built, then the part's own; otherwise `get_assembly` (the active revision, or `revision`) or `get_part`.
@@ -228,6 +241,8 @@ the one it came from, so an older revision may still hold an older file: say whi
 - **What is inside lamp serial X?** `list_builds` with `query: "X"` finds the build that made it; `get_build` on
   that number returns `as_built`: every component with its serial and frozen cost, and `made_by_build` for
   serial sub-assemblies. Follow `made_by_build` to open the sub-assembly's build the same way.
+- **Which customer has product serial X?** `list_deliveries` with `query: "X"` (shipped and cancelled ones; a
+  cancelled delivery brought it back).
 - **Where did component serial Y go?** `list_builds` with `query: "Y"` also matches consumed component serials;
   `get_build` shows which product serial it ended in. `list_moves` with the serial shows its receipt (and which
   PO) and any adjustment.

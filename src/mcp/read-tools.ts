@@ -428,7 +428,7 @@ const listMovesTool = tool({
 	name: "list_moves",
 	title: "Stock moves",
 	description:
-		"The stock ledger, newest first: receipts, build consumption and output, adjustments and counts. Each move is a signed quantity; on-hand is their sum.",
+		"The stock ledger, newest first: receipts, build consumption and output, adjustments, counts and customer deliveries (negative; positive when a delivery was cancelled). Each move is a signed quantity; on-hand is their sum.",
 	rule: { scope: "stock:read" },
 	input: z.object({
 		query: z

@@ -2,6 +2,7 @@
 // rule + a change set summary for writes + redaction (toWire, automatic on the app's integer fields) + a test.
 import { BUILD_TOOLS } from "./build-tools";
 import { CATALOG_TOOLS } from "./catalog-tools";
+import { DELIVERY_READ_TOOLS, DELIVERY_WRITE_TOOLS } from "./delivery-tools";
 import { HISTORY_TOOLS } from "./history-tools";
 import type { ToolSpec } from "./kit";
 import { LOCATION_TOOLS } from "./location-tools";
@@ -15,11 +16,13 @@ export { READ_ONLY_ANNOTATIONS, type ToolContext, ToolError, type ToolSpec } fro
 /** Every MCP tool, in the order tools/list shows them. */
 export const TOOLS: readonly ToolSpec[] = [
 	...READ_TOOLS,
+	...DELIVERY_READ_TOOLS,
 	...LOCATION_TOOLS,
 	...HISTORY_TOOLS,
 	...CATALOG_TOOLS,
 	...PRICE_TOOLS,
 	...STOCK_TOOLS,
+	...DELIVERY_WRITE_TOOLS,
 	...BUILD_TOOLS,
 	...PURCHASING_TOOLS,
 ];
