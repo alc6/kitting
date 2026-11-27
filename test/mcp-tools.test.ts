@@ -86,6 +86,14 @@ async function seed() {
 	for (const m of page.matchAll(/name="(serial:(\d+):\d+)"/g))
 		fields[m[1] as string] = Number(m[2]) === led ? "CW-24-0003" : "DRV-7A-101";
 	expect((await postForm(`/builds/${lamp}/complete`, fields)).status).toBe(303);
+	// The lamp leaves for a customer (D216).
+	const delivered = await postForm("/deliveries", {
+		customer: "Acme Retail",
+		lines: "1",
+		part_1: "LAMP-DESK",
+		serials_1: "L-0042",
+	});
+	expect(delivered.status).toBe(303);
 
 	await insertPart("WIDGET", "make");
 	await importCsv(
@@ -159,6 +167,9 @@ function calls(s: Awaited<ReturnType<typeof seed>>): [string, Record<string, unk
 		["get_location", { ref: "BOX-LAMP" }],
 		["get_location", { ref: "STOC" }],
 		["get_location", { ref: "A-3" }],
+		// Customer deliveries (D216).
+		["list_deliveries", {}],
+		["get_delivery", { number: "D-0001" }],
 	];
 }
 

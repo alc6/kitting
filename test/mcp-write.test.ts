@@ -222,6 +222,21 @@ const CASES: WriteCase[] = [
 		args: () => ({ counts: [{ ref: "PAD-FELT", qty: "390" }] }),
 		ledger: true,
 	},
+	{
+		tool: "record_delivery",
+		scope: "stock:write",
+		min: "operator",
+		args: () => ({ customer: "Acme Retail", lines: [{ ref: "LED-5W-CW", serials: ["CW-24-0001"] }] }),
+		ledger: true,
+	},
+	{
+		tool: "cancel_delivery",
+		scope: "stock:write",
+		min: "planner",
+		args: () => ({ number: "D-0001" }),
+		ledger: true,
+		prepare: () => postForm("/deliveries", { customer: "Acme Retail", lines: "1", part_1: "PAD-FELT", qty_1: "5" }),
+	},
 	{ tool: "plan_build", scope: "builds:write", min: "operator", args: () => ({ ref: "ARM-ASSY", qty: "2" }) },
 	{ tool: "complete_build", scope: "builds:write", min: "operator", args: (s) => ({ number: s.build }), ledger: true },
 	{ tool: "cancel_build", scope: "builds:write", min: "operator", args: (s) => ({ number: s.build }) },
@@ -942,6 +957,148 @@ describe("stock tools", () => {
 
 // ---------------------------------------------------------------------------
 // builds:write
+
+describe("delivery tools", () => {
+	const onHand = async (ref: string) =>
+		(
+			await one<{ q: number }>(
+				"SELECT COALESCE(SUM(qty_milli), 0) AS q FROM stock_moves WHERE part_id = ?",
+				await partId(ref),
+			)
+		).q;
+
+	it("ships serials and quantities, refuses what is not in stock, and cancels back into stock", async () => {
+		await loadDemo();
+		const token = await connect(["stock:read", "stock:write"]);
+		const leds = await onHand("LED-5W-CW");
+		const felt = await onHand("PAD-FELT");
+		const refused = async (args: Record<string, unknown>, text: string) => {
+			const res = await callTool(token, "record_delivery", { customer: "Acme Retail", ...args });
+			expect(res.isError, JSON.stringify(args)).toBe(true);
+			expect(res.text).toContain(text);
+		};
+		await refused(
+			{ lines: [{ ref: "LED-5W-CW", serials: ["NOPE-1"] }] },
+			"lines[0].serials: Serial NOPE-1 of LED-5W-CW is not in stock",
+		);
+		await refused({ lines: [{ ref: "LED-5W-CW", qty: "1" }] }, "lines[0].serials: This part is serial-tracked");
+		await refused(
+			{ lines: [{ ref: "LED-5W-CW", qty: "2", serials: ["CW-24-0001"] }] },
+			"lines[0].serials: Enter exactly one serial per unit (2)",
+		);
+		await refused(
+			{ lines: [{ ref: "PAD-FELT", serials: ["X-1"] }] },
+			"lines[0].serials: This part is not serial-tracked",
+		);
+		await refused({ lines: [{ ref: "PAD-FELT" }] }, "lines[0].qty: Required.");
+		await refused({ lines: [{ ref: "PAD-FELT", qty: "-1" }] }, "lines[0].qty: Must be more than zero.");
+		await refused({ lines: [{ ref: "HEAD-KIT-CW", qty: "1" }] }, "lines[0].ref: kit parts are never stocked.");
+		await refused({ lines: [{ ref: "NOPE", qty: "1" }] }, "lines[0].ref: Unknown part reference");
+		await refused({ customer: " ", lines: [{ ref: "PAD-FELT", qty: "1" }] }, "customer:");
+		await refused(
+			{
+				lines: [
+					{ ref: "LED-5W-CW", serials: ["CW-24-0001"] },
+					{ ref: "led-5w-cw", serials: ["CW-24-0001"] },
+				],
+			},
+			"lines[1].serials: Same serial entered twice.",
+		);
+		expect(await one("SELECT count(*) AS n FROM deliveries")).toEqual({ n: 0 });
+
+		const r = await write(token, "record_delivery", {
+			customer: "Acme Retail",
+			customer_ref: "PO-778",
+			shipped_on: "2026-11-27",
+			tracking_number: "TRK-1",
+			lines: [
+				{ ref: "led-5w-cw", serials: ["CW-24-0001", "CW-24-0002"] },
+				{ ref: "PAD-FELT", qty: "12.5" },
+			],
+		});
+		expect(r.data).toMatchObject({
+			revertible: false,
+			delivery: {
+				number: "D-0001",
+				status: "shipped",
+				customer: "Acme Retail",
+				customer_ref: "PO-778",
+				shipped_on: "2026-11-27",
+				tracking_number: "TRK-1",
+				lines: [
+					{ ref: "LED-5W-CW", qty: "1", serial: "CW-24-0001" },
+					{ ref: "LED-5W-CW", qty: "1", serial: "CW-24-0002" },
+					{ ref: "PAD-FELT", qty: "12.5" },
+				],
+			},
+		});
+		expect(await onHand("LED-5W-CW")).toBe(leds - 2000);
+		expect(await onHand("PAD-FELT")).toBe(felt - 12500);
+		// A delivered serial is no longer in stock.
+		await refused({ lines: [{ ref: "LED-5W-CW", serials: ["CW-24-0001"] }] }, "is not in stock");
+
+		expect((await callTool(token, "list_deliveries", { query: "CW-24-0002" })).data).toMatchObject({
+			count: 1,
+			deliveries: [{ number: "D-0001" }],
+		});
+		expect((await callTool(token, "list_deliveries", { query: "nobody" })).data).toMatchObject({ count: 0 });
+		expect((await callTool(token, "get_delivery", { number: "d-0001" })).data).toMatchObject({
+			delivery: { number: "D-0001", customer: "Acme Retail" },
+		});
+		expect((await callTool(token, "get_delivery", { number: "D-0404" })).isError).toBe(true);
+
+		const cancelled = await write(token, "cancel_delivery", { number: "D-0001" });
+		expect(cancelled.data).toMatchObject({ revertible: false, delivery: { number: "D-0001", status: "cancelled" } });
+		expect(await onHand("LED-5W-CW")).toBe(leds);
+		expect(await onHand("PAD-FELT")).toBe(felt);
+		const again = await write(token, "cancel_delivery", { number: "D-0001" });
+		expect(again.data).toMatchObject({ note: "D-0001 is already cancelled." });
+		expect(await onHand("LED-5W-CW")).toBe(leds);
+		// Back in stock, the serial can leave again.
+		const next = await write(token, "record_delivery", {
+			customer: "Other customer",
+			lines: [{ ref: "LED-5W-CW", serials: ["CW-24-0001"] }],
+		});
+		expect(next.data).toMatchObject({ delivery: { number: "D-0002" } });
+	});
+
+	it("takes a serial's values from its stock, and asks values for a part without serials", async () => {
+		await loadDemo();
+		const token = await connect(["stock:write"]);
+		// A serial-tracked part with options, one unit of each colour in stock under its serial.
+		const sensor = await insertPart("SENSOR", "buy", { trackSerial: true });
+		await addOption(sensor, "Colour", ["white", "black"]);
+		await adjustViaForm("SENSOR", "1", "black", "S-1");
+		await adjustViaForm("SENSOR", "1", "white", "S-2");
+		const r = await write(token, "record_delivery", {
+			customer: "Acme Retail",
+			lines: [
+				{ ref: "SENSOR", serials: ["S-1"] },
+				{ ref: "MINI-COVER", qty: "2", options: { Colour: "black" } },
+			],
+		});
+		expect(r.data).toMatchObject({
+			delivery: {
+				lines: [
+					{ ref: "SENSOR", serial: "S-1", options: { Colour: "black" } },
+					{ ref: "MINI-COVER", qty: "2", options: { Colour: "black" } },
+				],
+			},
+		});
+		const missing = await callTool(token, "record_delivery", {
+			customer: "Acme Retail",
+			lines: [{ ref: "MINI-COVER", qty: "1" }],
+		});
+		expect(missing.isError).toBe(true);
+		expect(missing.text).toContain("Colour");
+		// Serials on a part that has options but no serials: refused for the serials, not for the missing values.
+		const serials = await callTool(token, "record_delivery", {
+			customer: "Acme Retail",
+			lines: [{ ref: "MINI-COVER", serials: ["X-1"] }],
+		});
+		expect(serials.text).toContain("lines[0].serials: This part is not serial-tracked");
+	});
+});
 
 describe("build tools", () => {
 	it("plans builds with the new build form's checks", async () => {

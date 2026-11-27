@@ -21,12 +21,12 @@ export const SERVER_INFO = { name: "kitting", title: "Kitting", version: "0.8.0"
 
 /** Returned at initialize (and server/discover): what the server is and how to read its numbers. */
 export const INSTRUCTIONS = [
-	"Kitting is a small manufacturer's MRP: parts (buy, make, kit, fee), assemblies (bills of materials), stock moves, builds and purchase orders.",
+	"Kitting is a small manufacturer's MRP: parts (buy, make, kit, fee), assemblies (bills of materials), stock moves, builds, purchase orders and customer deliveries.",
 	'Quantities and prices are decimal strings ("1.5", "12.30") in the part\'s unit and the workshop\'s currency; send quantities the same way.',
 	"Read before you write: look parts and assemblies up (search_parts, get_part, get_assembly) before relying on them. The tools offered depend on what the user granted and on their role.",
 	"Confirm before writes: say exactly what you are about to change (records, quantities, prices) and wait for the user's go-ahead before calling any tool that changes data. Every change is made in the user's name.",
 	"Assembly edits go through draft revisions: set_assembly_lines never changes an active assembly, it creates a new draft revision and edits that; activate_assembly then makes it the one builds use (the previous revision is archived and can be activated again).",
-	"Every change can be undone from Recent changes in the app (each write result gives its change set and history page), except stock and build ledger operations (adjustments, counts, receipts, build completions), which are corrected with reverse movements. You cannot undo changes yourself.",
+	"Every change can be undone from Recent changes in the app (each write result gives its change set and history page), except stock and build ledger operations (adjustments, counts, receipts, build completions, customer deliveries), which are corrected with reverse movements (a delivery with cancel_delivery). You cannot undo changes yourself.",
 	'Parts can have options (colour, size): their stock, orders and builds are counted per values. Give them as options, e.g. {"Colour": "white"}; a write needs a value for every option.',
 	"Costs, prices and margins may be hidden for this user's role: they are then left out and the result has costs_hidden: true. Never guess them.",
 	'A fuller Kitting skill (domain primer, step-by-step workflows, safety rules) exists: install the Kitting plugin from the project\'s repository (Claude Code and Cowork: add the repository as a plugin marketplace), or upload the skill zip to claude.ai (see docs/mcp.md, "Using Kitting from Claude").',

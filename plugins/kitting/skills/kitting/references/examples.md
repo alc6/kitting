@@ -177,3 +177,24 @@ reconnecting the app with the scope ticked if the role allows it.
    result has `part.location` (`path` B-1-2) and the undo link; the change is named "Set the location of SWITCH-INL
    to B-1-2". Without the `catalog:write` scope or as an operator, the tool is not offered: the user sets it on the
    part's Location tab in the app.
+
+## 11. Deliver a finished lamp
+
+**User:** Lamp L-0042 leaves today for Acme Retail, their order PO-778.
+
+1. `list_builds({ "query": "L-0042", "status": "all" })` finds the done build `B-0007`; `list_deliveries({ "query":
+   "L-0042" })` returns nothing: it was never delivered. `list_deliveries({})` shows the customer is written
+   "Acme Retail".
+
+   > **Claude:** I would record delivery of lamp LAMP-DESK serial L-0042 (built in B-0007) to Acme Retail, order
+   > PO-778, shipped today. It leaves stock, which cannot be undone: a mistake is fixed by cancelling the delivery.
+   > Shall I?
+
+2. After a yes: `record_delivery({ "customer": "Acme Retail", "customer_ref": "PO-778", "lines": [{ "ref":
+   "LAMP-DESK", "serials": ["L-0042"] }] })`. The result has `delivery.number` (D-0001), `revertible: false` and
+   no undo link.
+
+   > **Claude:** Done: delivery D-0001, lamp L-0042 to Acme Retail (PO-778). Lamp stock went down by one.
+
+   A serial that is not in stock (never built here, or already delivered) is refused: say so, and look it up with
+   `list_moves` before anything else.

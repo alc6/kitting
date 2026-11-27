@@ -123,6 +123,8 @@ const RESULT_FIELDS = [
 	"in_bin",
 	"without_location",
 	"without_location_count",
+	// Customer deliveries (D216).
+	"cancelled_at",
 ];
 
 function inputFields(): Set<string> {
@@ -276,6 +278,9 @@ describe("names used by the skill and its references", () => {
 			"archive_part",
 			"get_location",
 			"update_part",
+			"record_delivery",
+			"cancel_delivery",
+			"list_deliveries",
 		])
 			expect(skill, name).toContain(name);
 	});

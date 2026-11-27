@@ -5,8 +5,8 @@ scope AND the user's role allows its permission. A tool you do not see is a tool
 scope or role it needs (below) instead of working around it.
 
 Roles, lowest to highest: viewer, operator, planner, admin. Permission minimums: `builds.plan`, `builds.complete`,
-`stock.adjust`, `stock.count`, `purchasing.receive` need operator; `parts.edit`, `suppliers.edit`, `assemblies.edit`,
-`prices.edit`, `purchasing.order` need planner; `parts.archive`, `assemblies.archive` need admin. Reading is open to every
+`stock.adjust`, `stock.count`, `deliveries.ship`, `purchasing.receive` need operator; `parts.edit`, `suppliers.edit`,
+`assemblies.edit`, `prices.edit`, `purchasing.order`, `deliveries.cancel` need planner; `parts.archive`, `assemblies.archive` need admin. Reading is open to every
 listed user, but costs need planner (or the cost option set on the Users and roles page).
 
 ## Conventions
@@ -22,8 +22,9 @@ listed user, but costs need planner (or the cost option set on the Users and rol
 - **Every write result** carries `change_set_id`, `revertible`, an `undo` sentence and, only when it can be undone,
   `history_path` and `history_url` (the page where the user clicks Undo). A call that changes nothing records
   nothing (`change_set_id: null`, `undo` says so). You cannot undo anything yourself.
-- **Ledger writes** (`adjust_stock`, `count_stock`, `complete_build`, `record_build`, `receive_po`) return `revertible: false` and no
-  link: they are corrected with reverse moves (`adjust_stock`), never undone.
+- **Ledger writes** (`adjust_stock`, `count_stock`, `complete_build`, `record_build`, `receive_po`, `record_delivery`,
+  `cancel_delivery`) return `revertible: false` and no link: they are corrected with reverse moves (`adjust_stock`; a
+  delivery with `cancel_delivery`), never undone.
 - **Refusals.** A rejected write says `Refused, nothing was changed.` followed by one `field: message` per problem
   (every problem at once; nothing is written). Lookups fail with `No part with reference "X". Use search_parts to
   find it.` (same for assemblies, builds, POs, suppliers). A call the user's role forbids answers `Refused: your role
@@ -109,7 +110,7 @@ On-hand quantities of stocked parts (buy and make; kits and fees are never stock
 ### `list_moves`
 The stock ledger, newest first. On hand is the sum of the signed moves.
 - **Scope:** `stock:read` · **Permission:** none
-- **Inputs:** `query` (part refs, names, serials, notes), `reason` (receipt, build_consume, build_output, adjust or count), `from`, `to`, `limit` (default 100, max 500).
+- **Inputs:** `query` (part refs, names, serials, notes), `reason` (receipt, build_consume, build_output, adjust, count or delivery: negative when units leave for a customer, positive when a delivery is cancelled), `from`, `to`, `limit` (default 100, max 500).
 - **Returns:** `count`, `moves[]` (`at`, `ref`, `name`, `unit`, `options` for a part with options, `qty` signed, `reason`, `serial`, `unit_cost`, `source`, `note`, `by`).
 - **Example:** `list_moves({ "query": "LED-5W-CW", "limit": 20 })`
 
@@ -128,6 +129,20 @@ Where parts are kept, on the workshop plan: where a part is, what a bin, unit or
   `part_count`, `units` standing in their bins with `in_bin`), `without_location[]` (stocked parts not put away yet:
   `ref`, `name`) and `without_location_count`. A door or landmark holds nothing (an error says so).
 - **Example:** `get_location({ "ref": "SCREW-M3X8" })`, `get_location({ "ref": "A-3" })`, `get_location({})`
+
+### `list_deliveries`
+Customer deliveries, newest first: what left the workshop, for whom, when.
+- **Scope:** `stock:read` · **Permission:** none
+- **Inputs:** `query` (delivery numbers, customers, their references, tracking numbers, part refs and names, serials: "where did serial X go?"), `status` (shipped or cancelled; default both), `limit` (default 50, max 300).
+- **Returns:** `count`, `deliveries[]` (`number` D-0001, `status`, `customer`, `customer_ref`, `shipped_on`, `carrier`, `tracking_number`, `notes`, `cancelled_at`, `by`, `lines[]` of `ref`, `name`, `unit`, `options`, `qty`, `serial`, `build` (the build that made that serial)).
+- **Example:** `list_deliveries({ "query": "L-0042" })`
+
+### `get_delivery`
+One customer delivery by number, with the same fields as `list_deliveries`.
+- **Scope:** `stock:read` · **Permission:** none
+- **Inputs:** `number` (case-insensitive).
+- **Returns:** `delivery`.
+- **Example:** `get_delivery({ "number": "D-0003" })`
 
 ## Reading: `builds:read`
 
@@ -300,6 +315,22 @@ Posts counted quantities: for each part one count move for the difference with t
 - **Inputs:** `counts[]` of `ref`, `options` (a part with options is counted per values: one entry for each values, and only those are touched), `qty` (counted, 0 or more; each part, and each values, once), `note`.
 - **Returns:** the write envelope, `adjusted`, `counts[]` (`ref`, `options`, `previous`, `counted`, `adjustment`).
 - **Example:** `count_stock({ "counts": [{ "ref": "PAD-FELT", "qty": "380" }], "note": "Monthly count" })`
+
+### `record_delivery`
+Units leave stock for a customer under a new number `D-0001`, valued at standard cost. Ledger write: not undoable; a
+mistake is fixed with `cancel_delivery`. Nothing is written if one line is wrong.
+- **Scope:** `stock:write` · **Permission:** `deliveries.ship` (operator)
+- **Inputs:** `customer` (as written before: `list_deliveries` shows them), `customer_ref` (their order number), `shipped_on` (date, default today), `carrier`, `tracking_number`, `notes`, `lines[]` of `ref`, `qty` (left out for a serial-tracked part: one per serial), `serials` (one per unit of a serial-tracked part, each in stock: a completed build's output, a receipt, a count; only then), `options` (a part with options and no serials; a serial leaves in the values it is in stock in).
+- **Returns:** the write envelope and `delivery` (as `get_delivery`).
+- **Example:** `record_delivery({ "customer": "Acme Retail", "customer_ref": "PO-778", "lines": [{ "ref": "LAMP-DESK", "serials": ["L-0042"] }, { "ref": "PAD-FELT", "qty": "8" }] })`
+
+### `cancel_delivery`
+Cancels a shipped delivery: every unit comes back into stock (opposite moves, same values and serials) and the
+delivery is marked cancelled. A second call changes nothing (`note` says it is already cancelled).
+- **Scope:** `stock:write` · **Permission:** `deliveries.cancel` (planner)
+- **Inputs:** `number`.
+- **Returns:** the write envelope and `delivery`.
+- **Example:** `cancel_delivery({ "number": "D-0003" })`
 
 ## Builds: `builds:write`
 

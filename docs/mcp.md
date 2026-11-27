@@ -45,8 +45,8 @@ the corresponding page.
 | `catalog:write` | `create_part`, `update_part`, `create_supplier`, `update_supplier`, `create_assembly`, `set_assembly_lines`, `set_assembly_production`, `new_assembly_revision`, `activate_assembly` |
 | `prices:write` | `set_standard_cost`, `set_sale_price`, `upsert_supplier_offer` |
 | `catalog:archive` | `archive_part`, `unarchive_part`, `archive_assembly` |
-| `stock:read` | `stock_on_hand`, `list_moves`, `get_location` |
-| `stock:write` | `adjust_stock`, `count_stock` |
+| `stock:read` | `stock_on_hand`, `list_moves`, `get_location`, `list_deliveries`, `get_delivery` |
+| `stock:write` | `adjust_stock`, `count_stock`, `record_delivery`, `cancel_delivery` |
 | `builds:read` | `list_builds`, `get_build` |
 | `builds:write` | `plan_build`, `complete_build`, `record_build`, `cancel_build` |
 | `purchasing:read` | `get_shortages`, `list_purchase_orders`, `get_purchase_order` |

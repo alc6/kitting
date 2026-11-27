@@ -1,6 +1,6 @@
 # Evaluations (not run in CI)
 
-Eight prompts that check the skill leads Claude to the right tool sequence on the fictional demo dataset
+Nine prompts that check the skill leads Claude to the right tool sequence on the fictional demo dataset
 (`examples/full/`). The case files use the layout of [`claude plugin eval`](https://code.claude.com/docs/en/plugin-evals) (one
 directory per case with a `prompt.md` and `graders/`), but nobody runs them in CI: they need a Kitting deployment
 loaded with the demo data and every scope (a throwaway one, the cases write), reached through OAuth.
@@ -22,7 +22,8 @@ OAuth sign-in reach a run is untested here.
 
 The check that the tool names in the skill exist runs in CI instead (`test/plugin.test.ts`). MCP tool names here
 are the plugin's: `mcp__plugin_kitting_kitting__<tool>`. Serials such as `L-0101` are examples: make a lamp
-build with a serial first when a case needs history (case 2 assumes `B-0007` made lamp `L-0042`).
+build with a serial first when a case needs history (`trace-faulty-led` and `deliver-lamp` assume `B-0007` made lamp
+`L-0042`).
 
 ## Expected tool sequences
 
@@ -36,6 +37,7 @@ build with a serial first when a case needs history (case 2 assumes `B-0007` mad
 | `plan-black-mini-lamps` | Plan 12 black mini lamps and tell me what to order (go-ahead given for the build and drafts) | `search_parts` or `get_part` (the `Colour` option) → `explode_assembly` (qty 12, `options` black, `use_stock`) → `plan_build` (`options` black) → `get_shortages` → `create_draft_pos` | `mark_po_sent`, planning without `options`, counting the white stock for black lamps |
 | `find-m3-screws` | Where are the M3 screws kept? | `search_parts` (optional, to find `SCREW-M3X8`) → `get_location` (`ref` `SCREW-M3X8`): drawer `S1-1-1`, path `A-3-3 › S1-1-1`, stockroom, on hand | any write; a bin the tools did not return |
 | `put-away-switches` | Put the inline switches in B-1-2, in bags of 20 (go-ahead given) | `get_location` (`SWITCH-INL`: no location; optionally `B-1-2`: what is there) → `update_part` (`location` `{"bin": "B-1-2", "note": ...}` only) | `adjust_stock` or `count_stock` (a location is not stock), other fields of the part |
+| `deliver-lamp` | Lamp L-0042 leaves today for Acme Retail, order PO-778 (go-ahead given) | `list_builds` (query `L-0042`: the done build) → `list_deliveries` (optional: not delivered yet, the customer's spelling) → `record_delivery` (`LAMP-DESK` with `serials` `L-0042`, `customer_ref` PO-778) | `adjust_stock` (a delivery is not an adjustment), an undo link (ledger write) |
 
 In a real conversation each write is confirmed first; the cases give the go-ahead in the prompt so one turn can
 reach the writes. A second run without that sentence should stop before the first write and ask.
