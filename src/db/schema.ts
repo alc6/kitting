@@ -30,8 +30,12 @@ export type PartKind = (typeof PART_KINDS)[number];
 export const ASSEMBLY_STATUSES = ["draft", "active", "archived"] as const;
 export type AssemblyStatus = (typeof ASSEMBLY_STATUSES)[number];
 
-export const MOVE_REASONS = ["receipt", "build_consume", "build_output", "adjust", "count"] as const;
+// `delivery`: units leaving for a customer (negative), or coming back when the delivery is cancelled (D216).
+export const MOVE_REASONS = ["receipt", "build_consume", "build_output", "adjust", "count", "delivery"] as const;
 export type MoveReason = (typeof MOVE_REASONS)[number];
+
+export const DELIVERY_STATUSES = ["shipped", "cancelled"] as const;
+export type DeliveryStatus = (typeof DELIVERY_STATUSES)[number];
 
 export const PO_STATUSES = ["draft", "sent", "partial", "received", "cancelled"] as const;
 export type PoStatus = (typeof PO_STATUSES)[number];
@@ -428,6 +432,31 @@ export const builds = sqliteTable(
 	],
 );
 
+// A delivery to a customer (D216): who received what, when, and how it travelled. Its lines are its stock moves
+// (reason `delivery`, ref_type `delivery`): what left, per part, values and serial. The customer is free text.
+export const deliveries = sqliteTable(
+	"deliveries",
+	{
+		id: integer("id").primaryKey({ autoIncrement: true }),
+		number: text("number").notNull(),
+		customer: text("customer").notNull(),
+		// The customer's own reference: their order or purchase order number.
+		customerRef: text("customer_ref").notNull().default(""),
+		shippedOn: text("shipped_on").notNull(),
+		carrier: text("carrier").notNull().default(""),
+		trackingNumber: text("tracking_number").notNull().default(""),
+		notes: text("notes").notNull().default(""),
+		status: text("status", { enum: DELIVERY_STATUSES }).notNull().default("shipped"),
+		cancelledAt: text("cancelled_at"),
+		...audit(),
+	},
+	(t) => [
+		uniqueIndex("deliveries_number_unique").on(t.number),
+		index("deliveries_customer_idx").on(t.customer),
+		check("deliveries_status_check", inList("status", DELIVERY_STATUSES)),
+	],
+);
+
 // As-built record: one row per consumed component (per serial for tracked parts).
 export const buildLines = sqliteTable(
 	"build_lines",
@@ -778,6 +807,7 @@ export const HISTORY_TABLES: SQLiteTable[] = [
 	poLines,
 	poShipments,
 	builds,
+	deliveries,
 	users,
 	settings,
 	machineTypes,
@@ -820,6 +850,7 @@ export type PoLine = typeof poLines.$inferSelect;
 export type PoShipment = typeof poShipments.$inferSelect;
 export type Build = typeof builds.$inferSelect;
 export type BuildLine = typeof buildLines.$inferSelect;
+export type Delivery = typeof deliveries.$inferSelect;
 export type PartSupplier = typeof partSuppliers.$inferSelect;
 export type PriceHistoryRow = typeof priceHistory.$inferSelect;
 export type MachineType = typeof machineTypes.$inferSelect;

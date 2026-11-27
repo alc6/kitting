@@ -170,6 +170,13 @@ const CASES: Record<string, { insert: (f: Fixtures) => D1PreparedStatement; upda
 			),
 		update: "UPDATE builds SET notes = 'first run' WHERE id = ?",
 	},
+	deliveries: {
+		insert: () =>
+			stmt(
+				"INSERT INTO deliveries (number, customer, shipped_on, created_by, updated_by) VALUES ('D-9000', 'Acme Retail', '2026-11-27', 'u', 'u') RETURNING id",
+			),
+		update: "UPDATE deliveries SET tracking_number = 'TRK-9' WHERE id = ?",
+	},
 	users: {
 		insert: () =>
 			stmt(

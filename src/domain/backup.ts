@@ -14,6 +14,7 @@ import {
 	builds,
 	changeLog,
 	changeSets,
+	deliveries,
 	files,
 	machineRateHistory,
 	machines,
@@ -57,6 +58,8 @@ const TABLES: SQLiteTable[] = [
 	buildOptionChoices,
 	buildLines,
 	buildMachineTimes,
+	// Customer deliveries (D216), before the stock moves that name them.
+	deliveries,
 	stockMoves,
 	partSuppliers,
 	priceHistory,

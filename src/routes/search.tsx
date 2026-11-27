@@ -11,6 +11,7 @@ import { page } from "../views/render";
 import { binHref, LocationBadge, whereText } from "../views/storage";
 import { Badge, Card, CardAction, CardContent, CardHeader, CardTitle, EmptyState, Kbd, KindBadge } from "../views/ui";
 import { BuildStatusBadge } from "./builds";
+import { DeliveryStatusBadge } from "./deliveries";
 import { PoStatusBadge } from "./purchasing";
 
 export const searchRoutes = new Hono<AppEnv>();
@@ -60,7 +61,13 @@ function Results(props: { q: string; r: SearchResults }) {
 	const { r, q } = props;
 	const enc = encodeURIComponent(q);
 	const total =
-		r.parts.length + r.assemblies.length + r.builds.length + r.pos.length + r.suppliers.length + r.bins.length;
+		r.parts.length +
+		r.assemblies.length +
+		r.builds.length +
+		r.pos.length +
+		r.suppliers.length +
+		r.deliveries.length +
+		r.bins.length;
 	if (total === 0) {
 		return <EmptyState icon={icons.search} title={fmt(t.search.none, { q })} description={t.search.prompt} />;
 	}
@@ -115,6 +122,20 @@ function Results(props: { q: string; r: SearchResults }) {
 						primary={b.number}
 						secondary={`${b.partRef}${b.serial ? ` · #${b.serial}` : ""}`}
 						extra={<BuildStatusBadge status={b.status} />}
+					/>
+				))}
+			</Group>
+			<Group title={t.deliveries.title} icon={icons.truck} count={r.deliveries.length} all={`/deliveries?q=${enc}`}>
+				{top(r.deliveries).map(({ delivery: d, lines }) => (
+					<Row
+						href={`/deliveries/${d.id}`}
+						primary={d.number}
+						secondary={`${d.customer} · ${d.shippedOn}${lines
+							.filter((l) => l.serial)
+							.slice(0, 3)
+							.map((l) => ` · #${l.serial}`)
+							.join("")}`}
+						extra={<DeliveryStatusBadge status={d.status} />}
 					/>
 				))}
 			</Group>
