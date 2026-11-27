@@ -11,6 +11,7 @@ import { assemblyRoutes } from "./routes/assemblies";
 import { buildRoutes } from "./routes/builds";
 import { authorizeRoutes, connectedAppRoutes } from "./routes/connect";
 import { dashboardRoutes } from "./routes/dashboard";
+import { deliveryRoutes } from "./routes/deliveries";
 import { attachRoutes, fileRoutes } from "./routes/files";
 import { historyRoutes } from "./routes/history";
 import { imageRoutes } from "./routes/images";
@@ -95,6 +96,7 @@ export function createApp() {
 	app.route("/builds", buildRoutes);
 	app.route("/assemblies", assemblyRoutes);
 	app.route("/stock", stockRoutes);
+	app.route("/deliveries", deliveryRoutes);
 	app.route("/purchasing", purchasingRoutes);
 	app.route("/locations", locationRoutes);
 	app.route("/import", importRoutes);

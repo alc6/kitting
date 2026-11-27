@@ -38,6 +38,7 @@ export const TABLE_ACTIONS: Record<string, Action> = {
 	po_lines: "purchasing.order",
 	po_shipments: "purchasing.order",
 	builds: "builds.plan",
+	deliveries: "deliveries.ship",
 	users: "users.manage",
 	settings: "users.manage",
 	machine_types: "machines.edit",

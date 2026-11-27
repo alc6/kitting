@@ -30,6 +30,7 @@ const TABLES = [
 	"build_machine_times",
 	"build_option_choices",
 	"builds",
+	"deliveries",
 	"po_lines",
 	"po_shipments",
 	"purchase_orders",

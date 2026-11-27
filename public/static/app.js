@@ -1,10 +1,12 @@
 // Kitting — progressive enhancements. Loaded as an external file (strict CSP:
 // no inline scripts). Everything works without JavaScript; this only adds comfort.
 (() => {
-	// <form data-confirm="Are you sure?"> asks before submitting.
+	// <form data-confirm="Are you sure?"> asks before submitting, unless the button used has data-no-confirm
+	// (a form's "Add a line" button, which saves nothing).
 	document.addEventListener("submit", (event) => {
 		const form = event.target;
 		if (!(form instanceof HTMLFormElement)) return;
+		if (event.submitter instanceof HTMLElement && event.submitter.dataset.noConfirm !== undefined) return;
 		const message = form.dataset.confirm;
 		if (message && !window.confirm(message)) event.preventDefault();
 	});

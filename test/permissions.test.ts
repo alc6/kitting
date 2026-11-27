@@ -64,6 +64,14 @@ async function seed() {
 		),
 	);
 	const file = returnedId(attached);
+	// A customer delivery (planners and up may cancel it).
+	const shipped = await postForm("/deliveries", {
+		customer: "Acme Retail",
+		lines: "1",
+		part_1: "BOX-LAMP",
+		qty_1: "1",
+	});
+	const delivery = Number(/\/deliveries\/(\d+)/.exec(shipped.headers.get("Location") ?? "")?.[1]);
 	// An empty storage unit (the delete is allowed) and another one to put a part in.
 	const [emptyUnit, rack] = await changeSql(
 		"Draw the plan",
@@ -84,6 +92,7 @@ async function seed() {
 		planning,
 		price,
 		file,
+		delivery,
 		emptyUnit: returnedId(emptyUnit),
 		rack: returnedId(rack),
 	};
@@ -126,6 +135,11 @@ const CALLS: Record<Action, (ids: Ids) => Call> = {
 	"builds.complete": (i) => ({ path: `/builds/${i.build}/complete` }),
 	"stock.adjust": () => ({ path: "/stock/adjust", form: { part: "BOX-LAMP", qty: "1", serial: "", note: "found" } }),
 	"stock.count": () => ({ path: "/stock/count", form: { "count:BOX-LAMP": "20" } }),
+	"deliveries.ship": () => ({
+		path: "/deliveries",
+		form: { customer: "Acme Retail", lines: "1", part_1: "BOX-LAMP", qty_1: "2" },
+	}),
+	"deliveries.cancel": (i) => ({ path: `/deliveries/${i.delivery}/cancel` }),
 	"storage.assign": (i) => ({ path: `/locations/parts/${i.part}`, form: { bin: "A-1-2", note: "" } }),
 	"storage.plan": (i) => ({
 		path: `/locations/${i.rack}`,

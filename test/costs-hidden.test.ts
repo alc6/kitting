@@ -146,7 +146,16 @@ async function seed() {
 		),
 	);
 	const file = (await one<{ id: number }>("SELECT max(id) AS id FROM files")).id;
+	const shipped = await postForm("/deliveries", {
+		customer: "Acme Retail",
+		lines: "1",
+		part_1: "BOX-LAMP",
+		qty_1: "1",
+	});
+	expect(shipped.status).toBe(303);
+	const delivery = Number(/\/deliveries\/(\d+)/.exec(shipped.headers.get("Location") ?? "")?.[1]);
 	return {
+		delivery,
 		box,
 		widget,
 		supplier,
@@ -246,6 +255,13 @@ function pages(s: Awaited<ReturnType<typeof seed>>): string[] {
 		"/locations/plan",
 		`/locations/parts/${s.box}`,
 		"/stock/count?unit=none",
+		// Customer deliveries (D216): quantities and serials only, listed so a future amount is caught.
+		"/deliveries",
+		"/deliveries?format=csv",
+		`/deliveries/${s.delivery}`,
+		"/deliveries/new",
+		`/deliveries/new?build=${s.done}`,
+		"/search?q=Acme",
 	];
 }
 

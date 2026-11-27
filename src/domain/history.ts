@@ -409,6 +409,8 @@ export function rowName(table: string, row: Snapshot | null, labels: Labels): st
 		case "purchase_orders":
 		case "builds":
 			return s("number");
+		case "deliveries":
+			return `${s("number")} (${s("customer")})`;
 		case "po_lines":
 			return `${labelOf(labels, "parts", row.part_id)} (${labelOf(labels, "purchase_orders", row.po_id)})`;
 		case "po_shipments":

@@ -46,6 +46,7 @@ import {
 	unitsToBuild,
 	updateBuildStatement,
 } from "../domain/builds";
+import { deliveriesOfSerial, serialInStock } from "../domain/deliveries";
 import { assemblyFiles, filesBucket, partFiles } from "../domain/files";
 import { buildActualCost, marginOf, salePriceOf } from "../domain/margins";
 import { defaultValue, idsOf, keyLabel, type OptionDef, type OptionKey, stockKey } from "../domain/option-keys";
@@ -70,7 +71,7 @@ import {
 } from "../lib/units";
 import { type FieldErrors, validate } from "../lib/validation";
 import { forbidden, requirePermission } from "../middleware/roles";
-import type { AppEnv } from "../types";
+import type { AppEnv, Db } from "../types";
 import { useApp } from "../views/context";
 import { BuildFilesCard } from "../views/files";
 import { Icon, icons } from "../views/icons";
@@ -962,12 +963,14 @@ buildRoutes.post("/record", requirePermission("builds.complete"), async (c) => {
 // ---------------------------------------------------------------------------
 // Detail, pick list, completion
 
-function BuildHeader(props: { data: BuildData; options: OptionDef[] }) {
+function BuildHeader(props: { data: BuildData; options: OptionDef[]; deliverable: boolean }) {
 	const view = useApp();
 	const { t } = view;
 	const { build, part, assembly } = props.data;
 	const values = keyLabel(props.options, build.optionValues);
 	const open = OPEN_STATUSES.includes(build.status) && can(view, "builds.plan");
+	// A completed build whose output is still in stock can leave for a customer (D216).
+	const deliver = props.deliverable && can(view, "deliveries.ship");
 	return (
 		<PageHeader
 			title={`${build.number} · ${part.ref}`}
@@ -991,7 +994,14 @@ function BuildHeader(props: { data: BuildData; options: OptionDef[] }) {
 				</span>
 			}
 			actions={
-				open ? (
+				deliver ? (
+					<LinkButton
+						href={`/deliveries/new?build=${build.id}`}
+						label={t.deliveries.deliver}
+						icon={icons.truck}
+						variant="outline"
+					/>
+				) : open ? (
 					<>
 						{build.status === "planned" ? (
 							<PostButton action={`/builds/${build.id}/start`} label={t.builds.start} icon={icons.play} />
@@ -1726,13 +1736,26 @@ async function renderBuild(
 		);
 	}
 	// What the person building needs to open: the revision's files, then the part's own (D159).
-	const [revisionFiles, ownFiles] = await Promise.all([assemblyFiles(db, data.assembly.id), partFiles(db, part.id)]);
+	const [revisionFiles, ownFiles, delivery] = await Promise.all([
+		assemblyFiles(db, data.assembly.id),
+		partFiles(db, part.id),
+		buildDelivery(db, build, part),
+	]);
 	return page(
 		c,
 		`${build.number} · ${part.ref}`,
 		<>
-			<BuildHeader data={data} options={options.get(part.id) ?? []} />
+			<BuildHeader data={data} options={options.get(part.id) ?? []} deliverable={delivery.deliverable} />
 			<Flash message={flash} />
+			{delivery.delivered.map((d) => (
+				<Alert variant="success">
+					<span>
+						<a href={`/deliveries/${d.id}`}>{d.number}</a>
+						{" · "}
+						{fmt(t.deliveries.deliveredTo, { customer: d.customer, date: d.shippedOn })}
+					</span>
+				</Alert>
+			))}
 			{c.req.query("err") ? <Alert variant="destructive">{errorText(t, c.req.query("err") ?? "")}</Alert> : null}
 			{/* A done build has up to six cards (costs and margin): three per row instead of four. */}
 			<div class={cn("mb-6 grid grid-cols-2 gap-3 md:grid-cols-4", build.status === "done" && "md:grid-cols-3")}>
@@ -1750,6 +1773,22 @@ async function renderBuild(
 		</>,
 		opts.status ?? 200,
 	);
+}
+
+/**
+ * Where a completed build's output went (D216): the deliveries that shipped its serial, and whether it can still be
+ * delivered: its serial in stock; a build of a part without serials always can, its quantity being ordinary stock.
+ */
+async function buildDelivery(db: Db, build: BuildData["build"], part: BuildData["part"]) {
+	if (build.status !== "done") return { delivered: [], deliverable: false };
+	if (!part.trackSerial) return { delivered: [], deliverable: true };
+	// Built before the part was serial-tracked: no serial to deliver it by from here.
+	if (!build.serial) return { delivered: [], deliverable: false };
+	const [delivered, inStock] = await Promise.all([
+		deliveriesOfSerial(db, part.id, build.serial),
+		serialInStock(db, part.id, build.serial),
+	]);
+	return { delivered: delivered.filter((d) => d.status === "shipped"), deliverable: inStock };
 }
 
 async function loadBuildData(c: Context<AppEnv>) {

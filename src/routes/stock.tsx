@@ -784,6 +784,7 @@ export function MoveReference(props: {
 	const label = t.reasons[props.reason];
 	if (props.refType === "build" && props.refId) return <a href={`/builds/${props.refId}`}>{label}</a>;
 	if (props.refType === "po" && props.refId) return <a href={`/purchasing/po/${props.refId}`}>{label}</a>;
+	if (props.refType === "delivery" && props.refId) return <a href={`/deliveries/${props.refId}`}>{label}</a>;
 	return <span>{label}</span>;
 }
 

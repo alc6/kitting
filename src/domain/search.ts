@@ -1,6 +1,7 @@
 import type { Db } from "../types";
 import { listAssemblies } from "./assemblies";
 import { listBuilds } from "./builds";
+import { listDeliveries } from "./deliveries";
 import { listParts } from "./parts";
 import { listPos } from "./purchasing";
 import { findBin, locationsOf } from "./storage";
@@ -11,16 +12,18 @@ export const SEARCH_GROUP_LIMIT = 8;
 
 /**
  * Global search across the catalogue and operations, reusing each list's own filter
- * (parts: ref, name, supplier ref; builds: number, serial, product, component serials; …).
+ * (parts: ref, name, supplier ref; builds: number, serial, product, component serials; deliveries: number, customer,
+ * serials shipped; …).
  * Archived and closed records are included: search is for finding anything.
  */
 export async function globalSearch(db: Db, q: string) {
-	const [parts, assemblies, builds, pos, suppliers] = await Promise.all([
+	const [parts, assemblies, builds, pos, suppliers, deliveries] = await Promise.all([
 		listParts(db, { q, archived: true }),
 		listAssemblies(db, { q, status: "all" }),
 		listBuilds(db, { q, status: "all", limit: 200 }),
 		listPos(db, { q, status: "all" }),
 		listSuppliers(db, q),
+		listDeliveries(db, { q, limit: 200 }),
 	]);
 	// Exact reference matches first (typing a full ref is the common case on the shop floor).
 	const needle = q.trim().toLowerCase();
@@ -33,7 +36,7 @@ export async function globalSearch(db: Db, q: string) {
 		),
 		binsMatching(db, q),
 	]);
-	return { parts, assemblies, builds, pos, suppliers, locations, bins };
+	return { parts, assemblies, builds, pos, suppliers, deliveries, locations, bins };
 }
 
 export type SearchResults = Awaited<ReturnType<typeof globalSearch>>;

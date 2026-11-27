@@ -83,6 +83,8 @@ function recordHref(table: string, rowId: number, row: Row): string | null {
 			return num(row.po_id) ? `/purchasing/po/${row.po_id}` : null;
 		case "builds":
 			return `/builds/${rowId}`;
+		case "deliveries":
+			return `/deliveries/${rowId}`;
 		case "machine_types":
 			return `/machines/types/${rowId}`;
 		case "machines":
