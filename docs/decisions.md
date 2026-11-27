@@ -1736,3 +1736,62 @@ Actions column, and the roles were explained only in tooltips that a tablet neve
     to the right of the list on wide screens, under it on a tablet.
   - **The cost option heads the table of what each role can do**, since ticking it changes that table's costs row;
     the row's hint no longer says "above".
+
+## Customer deliveries (M21)
+
+Products left the workshop without Kitting knowing: a finished lamp stayed in stock after shipping, and the only
+way out was a stock adjustment, which says nothing of the customer and keeps no link from the serial to where it went.
+
+- **D216. A delivery is a header and its stock moves.**
+  - **Model.** `deliveries` (tracked: number `D-0001`, customer, customer reference, shipped on, carrier, tracking
+    number, notes, status shipped or cancelled) and, as its lines, stock moves with the new reason `delivery`
+    (`ref_type` `delivery`, `ref_id` the delivery, note its number), negative. No `delivery_lines` table: a line is
+    exactly what a move holds (part, values, quantity, serial), and a second table would have to agree with the ledger
+    forever. The moves are written in the same batch, referencing the new delivery by number (as a recorded build's
+    moves do, D152).
+  - **The customer is free text**, suggested from earlier deliveries, not a table: a workshop with a handful of
+    customers gets the list and the search without a customers page, CSV and tools to maintain. A table can come
+    later by grouping the names.
+  - **Serials.** A serial-tracked part leaves by serial, one per unit, each in stock: the sum of that serial's moves
+    holds a unit (a completed build's output, a receipt, a count, an adjustment). This is the first place Kitting
+    checks a serial against stock (the backlog's "serial inventory"), because a delivery names one precise unit and a
+    typo would send the wrong lamp's history to a customer; it is cheap since each serial carries its own moves. The
+    unit leaves in the option values it is in stock in (the serial's moves say which), so the form asks no values
+    for it. A serial already delivered is out of stock and refused; cancelling its delivery puts it back. The check
+    is made twice: when planning (to name the serial in the refusal) and inside the batch, after the moves, where a
+    guard fails the whole batch if a serial's balance in its values went below zero (another delivery or a count took
+    it since the plan; the `revert_conflict` CHECK, as undo's guards, D109). The page and the tool then plan again,
+    as they do when another user took the number (D66), and report the serial.
+  - **Other parts** take a quantity, and values when they have options; they may go below zero, as an adjustment may
+    (D51): the ledger records what left.
+  - **Valued at the standard cost**, like an adjustment (D52). The weighted average replay (D91) needs nothing: an
+    outflow leaves at the running average whatever its reason.
+  - **Kinds.** Buy and make parts only (kits and fees are never stocked). An archived part can still leave: it may be
+    the last of its stock.
+- **D217. `stock_moves` is rebuilt to accept the `delivery` reason** (migration 0015): SQLite cannot alter a CHECK.
+  Allowed for the same reason as `price_history` (D108): nothing references `stock_moves`, so dropping it deletes no
+  other row. Rows keep their ids (`AUTOINCREMENT` carries on from the highest), the indexes are recreated with the
+  table, and the ledger trigger (`history_stock_moves_ledger`) is re-created with the regenerated history triggers.
+  Applied with `wrangler d1 execute --local` to a database holding moves from 0000–0014: rows, sums, indexes and
+  triggers survive. Recording deliveries as adjustments was rejected: the reason is what the ledger, its filters,
+  the moves page links and the costing read.
+- **D218. Who ships, who cancels, and over MCP.**
+  - `deliveries.ship` (operator: the shop floor ships, as it receives and completes builds) records a delivery and
+    edits its header; `deliveries.cancel` (planner) cancels one: putting units back is a correction for the office.
+  - **Undo.** A delivery's change set writes the ledger, so it is not revertible (D111): a mistake is cancelled. The
+    cancel posts the opposite of each move (same part, values, serial and cost, note "Cancellation of D-0001"), then
+    marks the delivery cancelled; both statements are guarded by the status in SQL, so a second cancel, even racing the
+    first, adds nothing. A cancel is refused while one of its serials is in stock again (taken back with an adjustment
+    or a count, maybe delivered again): putting it back would count it twice; the stock is then corrected by hand.
+    Checked before, to say so, and by a guard in the batch. A header edit writes no move and is undone from the history as usual. A cancelled delivery
+    stays listed (filter by status) and is no longer edited.
+  - **The build page** shows "Deliver" on a completed build while its output is in stock (always for a build
+    without serial, whose quantity is ordinary stock) and, once delivered, "Delivered to {customer} on {date}" with a
+    link; the delivery page links each serial to the build that made it.
+  - **MCP.** `list_deliveries` and `get_delivery` under `stock:read`; `record_delivery` and `cancel_delivery` under
+    `stock:write`, whose actions now include `deliveries.ship` and `deliveries.cancel`: a delivery is stock leaving, and
+    a new scope would make every connected assistant consent again for a tool its user already reaches through the
+    stock pages. `record_delivery` takes every line at once and writes nothing if one is wrong; a line names a part with
+    a quantity, or serials. The form's "Add a line" button posts the form to itself (`formnovalidate`, `data-no-confirm`
+    in `app.js` skips the form's confirmation) so it works without JavaScript.
+

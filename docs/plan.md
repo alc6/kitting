@@ -271,7 +271,26 @@ parts cost to get to the workshop (D201–D205), and POs for any parts over MCP 
       the landed cost (D205)
 - [x] `create_po` drafts a PO for a supplier with any parts, lines and charges; new PO lines refuse archived parts (D206)
 
+## M21: Customer deliveries ✅
+
+Stock leaving for a customer, recorded as such instead of an adjustment, with the serial of each product (D216–D218).
+
+- [x] `deliveries` table (migration 0015, a new tracked table) and a `delivery` move reason (`stock_moves` rebuilt
+      for its CHECK, D217); numbers `D-0001`
+- [x] Deliveries page: list with search (number, customer, reference, tracking, part, serial), status filter and CSV;
+      the form (customer as free text with suggestions, lines of parts with a quantity or serials, values for parts
+      with options); a delivery's page with its lines and the build of each serial
+- [x] Serials must be in stock and leave in their own values; other parts may go below zero (D216)
+- [x] Header edited while shipped (undoable); cancel puts every unit back with opposite moves (planner, D218)
+- [x] A completed build offers "Deliver" while its output is in stock, and says where it went once delivered;
+      deliveries in the moves ledger, the global search, backups and the history
+- [x] MCP: `list_deliveries`, `get_delivery` (`stock:read`), `record_delivery`, `cancel_delivery` (`stock:write`)
+
 ## After v1 (ideas, not planned)
+
+- Customer deliveries, beyond M21: a customer list (contacts, addresses) instead of free text, a printable delivery
+  note, customer returns and repairs (a unit back under its serial, without cancelling the delivery), selling prices
+  on deliveries for actual revenue and margins, delivery lines in CSV import.
 
 - Shipments, beyond M17: carriers with a tracking URL pattern entered by an administrator (a link from the number
   alone), which receipt came with which shipment.

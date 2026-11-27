@@ -29,6 +29,8 @@ maintain, and a small workshop fits in the free plans.
   by its components and sub-assemblies.
 - Builds with a pick list and serial traceability: what went into serial #0042, and which build used a given
   component.
+- Customer deliveries: what left for which customer and when, by serial for tracked products, from a finished build's
+  page in one click; a delivery recorded by mistake is cancelled and its units come back into stock.
 - Purchasing: shortages for the planned builds, draft purchase orders per supplier, partial receipts, shipping,
   customs and discounts spread over the lines so stock enters at its landed cost, and the carrier and tracking
   number of each shipment for the team to follow.
